@@ -1,0 +1,263 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>팀 뽑기</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.js"
+          integrity="sha384-BWcjm9OdFth9TbhCxZPdm+gAOUMAzQy9nmTs12ioXdCcbVnJaPMn+fMUoQCLt60R"
+          crossorigin="anonymous"></script>
+  <style>
+    :root {
+      --bg: #f6f7f9; --card: #fff; --text: #1b1f24; --muted: #6b7280; --line: #e5e7eb;
+      --accent: #4f46e5; --accent-text: #fff; --chip: #eef0f4; --danger: #dc2626;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root { --bg: #111317; --card: #1a1d23; --text: #e8eaed; --muted: #9aa1ab; --line: #2b2f37;
+              --accent: #818cf8; --accent-text: #0e0f13; --chip: #262a32; --danger: #f87171; }
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text);
+           font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Pretendard", "Noto Sans KR", sans-serif; }
+    main { max-width: 880px; margin: 0 auto; padding: 32px 16px 64px; }
+    h1 { font-size: 26px; margin: 0 0 4px; }
+    .sub { color: var(--muted); margin: 0 0 16px; }
+    .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 18px; margin-bottom: 16px; }
+    .card h2 { font-size: 15px; margin: 0 0 12px; display: flex; justify-content: space-between; align-items: center; }
+    .card h2 small { color: var(--muted); font-weight: 400; }
+    textarea { width: 100%; resize: vertical; min-height: 44px; padding: 10px 12px; border-radius: 10px;
+               border: 1px solid var(--line); background: var(--bg); color: var(--text); font: inherit; }
+    .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    button { font: inherit; cursor: pointer; border-radius: 10px; border: 1px solid var(--line);
+             background: var(--card); color: var(--text); padding: 8px 14px; }
+    button.primary { background: var(--accent); color: var(--accent-text); border-color: transparent; font-weight: 600; }
+    button.link { border: 0; background: none; padding: 0; color: var(--muted); font-size: 13px; }
+    button.link:hover { color: var(--danger); }
+    button:disabled { opacity: .5; cursor: default; }
+    .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+    .chip { background: var(--chip); border-radius: 999px; padding: 4px 6px 4px 12px; display: inline-flex; align-items: center; gap: 4px; }
+    .chip button { border: 0; background: none; padding: 0 6px; color: var(--muted); font-size: 16px; line-height: 1; }
+    .chip button:hover { color: var(--danger); }
+    .empty { color: var(--muted); font-size: 14px; }
+    .stepper { display: inline-flex; align-items: center; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+    .stepper button { border: 0; border-radius: 0; padding: 8px 14px; }
+    .stepper input { width: 52px; text-align: center; border: 0; background: transparent; color: var(--text); font: inherit; font-weight: 600; }
+    .hint { color: var(--muted); font-size: 13px; }
+    .draw-btn { margin-left: auto; padding: 10px 22px; font-size: 16px; }
+    .error { color: var(--danger); font-size: 14px; margin: 0 0 12px; }
+    .error:empty { display: none; }
+    .teams { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; }
+    .team { border: 1px solid var(--line); border-radius: 12px; padding: 14px; background: var(--bg);
+            animation: pop .35s ease both; }
+    .team h3 { margin: 0 0 8px; font-size: 15px; color: var(--accent); }
+    .team ol { margin: 0; padding-left: 20px; }
+    @keyframes pop { from { opacity: 0; transform: translateY(8px) scale(.97); } }
+    .history { list-style: none; margin: 0; padding: 0; }
+    .history li { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid var(--line); }
+    .history li:first-child { border-top: 0; }
+    .history .open { flex: 1; text-align: left; border: 0; background: none; padding: 0; }
+    .history .open:hover { color: var(--accent); }
+    .history .meta { color: var(--muted); font-size: 13px; }
+    @media (prefers-reduced-motion: reduce) { .team { animation: none; } }
+  </style>
+</head>
+<body>
+<main>
+  <h1>팀 뽑기</h1>
+  <p class="sub">명단을 넣고 팀 수를 정한 뒤 뽑으면, 결과가 저장되고 이 링크로 누구나 볼 수 있어요.</p>
+  <p class="error" id="error" role="alert"></p>
+
+  <section class="card">
+    <h2>명단 <small><span id="count">0</span>명 · <button class="link" id="clearMembers">전체 삭제</button></small></h2>
+    <textarea id="nameInput" rows="1" placeholder="이름 입력 후 Enter (쉼표나 줄바꿈으로 여러 명 한 번에)"></textarea>
+    <div class="chips" id="chips"><span class="empty">불러오는 중…</span></div>
+  </section>
+
+  <section class="card">
+    <div class="row">
+      <span>팀 수</span>
+      <div class="stepper">
+        <button id="minus" aria-label="팀 수 줄이기">−</button>
+        <input id="teamCount" type="number" min="1" value="2" aria-label="팀 수" />
+        <button id="plus" aria-label="팀 수 늘리기">+</button>
+      </div>
+      <span class="hint" id="sizeHint"></span>
+      <button class="primary draw-btn" id="drawBtn">팀 뽑기</button>
+    </div>
+  </section>
+
+  <section class="card" id="resultCard" hidden>
+    <h2>결과 <small id="resultMeta"></small></h2>
+    <div class="teams" id="teams"></div>
+  </section>
+
+  <section class="card">
+    <h2>기록 <small><button class="link" id="clearDraws">전체 삭제</button></small></h2>
+    <ul class="history" id="history"></ul>
+  </section>
+</main>
+
+<script>
+  // ── Supabase 설정: 대시보드 → Project Settings → API 에서 복사 ──
+  // 키는 공개용(publishable / anon) 키만 넣으세요. service_role / secret 키는 절대 넣지 마세요.
+  const SUPABASE_URL = 'https://YOUR-PROJECT.supabase.co';
+  const SUPABASE_KEY = 'YOUR-PUBLISHABLE-KEY';
+
+  const $ = (s) => document.querySelector(s);
+  const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const fmt = (d) => new Date(d).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  const showError = (msg) => { $('#error').textContent = msg || ''; };
+
+  const db = SUPABASE_URL.includes('YOUR-') ? null : supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+  // Supabase 응답에서 data만 꺼내고, 오류면 throw
+  async function q(request) {
+    const { data, error } = await request;
+    if (error) throw new Error(error.message);
+    return data;
+  }
+  // 버튼 핸들러 공통: 오류를 화면에 표시
+  const guard = (fn) => async (...args) => {
+    try { showError(''); await fn(...args); } catch (e) { showError(`오류: ${e.message}`); }
+  };
+
+  const fetchMembers = () => q(db.from('members').select('id, name').order('id'));
+  const fetchDraws = () => q(db.from('draws').select('id, team_count, teams, created_at').order('id', { ascending: false }).limit(30));
+
+  // ── 명단 ──
+  let members = [];
+  function renderMembers(list) {
+    members = list;
+    $('#count').textContent = list.length;
+    $('#chips').innerHTML = list.length
+      ? list.map((m) => `<span class="chip">${esc(m.name)}<button data-id="${m.id}" aria-label="${esc(m.name)} 삭제">×</button></span>`).join('')
+      : '<span class="empty">아직 아무도 없어요.</span>';
+    updateHint();
+  }
+
+  const addNames = guard(async () => {
+    const typed = $('#nameInput').value.split(/[\n,]+/).map((s) => s.trim().slice(0, 50)).filter(Boolean);
+    if (!typed.length) return;
+    const existing = new Set(members.map((m) => m.name));
+    const fresh = [...new Set(typed)].filter((n) => !existing.has(n));
+    $('#nameInput').value = '';
+    try {
+      if (fresh.length) await q(db.from('members').insert(fresh.map((name) => ({ name }))));
+    } finally {
+      renderMembers(await fetchMembers()); // 다른 사람이 동시에 넣었어도 최신으로 맞춤
+    }
+  });
+
+  $('#nameInput').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); addNames(); }
+  });
+  $('#nameInput').addEventListener('paste', () => setTimeout(() => {
+    if ($('#nameInput').value.includes('\n')) addNames();
+  }));
+  $('#chips').addEventListener('click', guard(async (e) => {
+    const id = e.target.dataset.id;
+    if (!id) return;
+    await q(db.from('members').delete().eq('id', id));
+    renderMembers(await fetchMembers());
+  }));
+  $('#clearMembers').addEventListener('click', guard(async () => {
+    if (!members.length || !confirm('명단을 모두 지울까요?')) return;
+    await q(db.from('members').delete().gt('id', 0));
+    renderMembers(await fetchMembers());
+  }));
+
+  // ── 팀 수 ──
+  const teamCount = () => Math.max(1, parseInt($('#teamCount').value, 10) || 1);
+  function updateHint() {
+    const n = teamCount(), total = members.length;
+    const lo = Math.floor(total / n), hi = Math.ceil(total / n);
+    $('#sizeHint').textContent = total ? `팀당 ${lo === hi ? lo : `${lo}~${hi}`}명` : '';
+  }
+  $('#minus').onclick = () => { $('#teamCount').value = Math.max(1, teamCount() - 1); updateHint(); };
+  $('#plus').onclick = () => { $('#teamCount').value = teamCount() + 1; updateHint(); };
+  $('#teamCount').oninput = updateHint;
+
+  // ── 뽑기: 셔플 후 라운드로빈 → 팀 인원 차이는 최대 1명 ──
+  function makeTeams(names, n) {
+    const a = [...names];
+    const rand = new Uint32Array(1);
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = crypto.getRandomValues(rand)[0] % (i + 1);
+      [a[i], a[j]] = [a[j], a[i]];
+    }
+    const teams = Array.from({ length: n }, () => []);
+    a.forEach((name, i) => teams[i % n].push(name));
+    return teams;
+  }
+
+  function showTeams(draw) {
+    $('#resultCard').hidden = false;
+    $('#resultMeta').textContent = `#${draw.id} · ${fmt(draw.created_at)}`;
+    $('#teams').innerHTML = draw.teams.map((t, i) => `
+      <div class="team" style="animation-delay:${i * 70}ms">
+        <h3>${i + 1}팀 <small class="hint">${t.length}명</small></h3>
+        <ol>${t.map((n) => `<li>${esc(n)}</li>`).join('')}</ol>
+      </div>`).join('');
+  }
+
+  $('#drawBtn').addEventListener('click', guard(async () => {
+    $('#drawBtn').disabled = true;
+    try {
+      const list = await fetchMembers(); // 뽑기 직전 최신 명단
+      renderMembers(list);
+      const n = teamCount();
+      if (list.length < n) throw new Error(`인원(${list.length}명)이 팀 수(${n})보다 적어요.`);
+      const teams = makeTeams(list.map((m) => m.name), n);
+      const [row] = await q(db.from('draws').insert({ team_count: n, teams }).select());
+      showTeams(row);
+      $('#resultCard').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      renderHistory(await fetchDraws());
+    } finally {
+      $('#drawBtn').disabled = false;
+    }
+  }));
+
+  // ── 기록 ──
+  let draws = [];
+  function renderHistory(list) {
+    draws = list;
+    $('#history').innerHTML = list.length
+      ? list.map((d) => `
+          <li>
+            <button class="open" data-open="${d.id}">#${d.id} · ${d.team_count}팀 · ${d.teams.flat().length}명</button>
+            <span class="meta">${fmt(d.created_at)}</span>
+            <button class="link" data-del="${d.id}" aria-label="기록 삭제">삭제</button>
+          </li>`).join('')
+      : '<li class="empty">아직 뽑은 기록이 없어요.</li>';
+  }
+
+  $('#history').addEventListener('click', guard(async (e) => {
+    const { open, del } = e.target.dataset;
+    if (open) showTeams(draws.find((d) => d.id === Number(open)));
+    if (del) {
+      await q(db.from('draws').delete().eq('id', del));
+      renderHistory(await fetchDraws());
+    }
+  }));
+  $('#clearDraws').addEventListener('click', guard(async () => {
+    if (!draws.length || !confirm('기록을 모두 지울까요?')) return;
+    await q(db.from('draws').delete().gt('id', 0));
+    renderHistory(await fetchDraws());
+  }));
+
+  // ── 시작: 명단·기록을 불러오고, 가장 최근 결과를 보여줌 ──
+  if (!db) {
+    showError('Supabase 설정이 아직 없어요. index.html 의 SUPABASE_URL / SUPABASE_KEY 를 채워 주세요.');
+    document.querySelectorAll('button, textarea, input').forEach((el) => (el.disabled = true));
+    $('#chips').innerHTML = '';
+  } else {
+    guard(async () => {
+      const [m, d] = await Promise.all([fetchMembers(), fetchDraws()]);
+      renderMembers(m);
+      renderHistory(d);
+      if (d.length) showTeams(d[0]);
+    })();
+  }
+</script>
+</body>
+</html>
