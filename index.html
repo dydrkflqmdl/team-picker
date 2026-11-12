@@ -4,260 +4,149 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>팀 뽑기</title>
+  <link rel="stylesheet" href="style.css" />
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.js"
           integrity="sha384-BWcjm9OdFth9TbhCxZPdm+gAOUMAzQy9nmTs12ioXdCcbVnJaPMn+fMUoQCLt60R"
           crossorigin="anonymous"></script>
+  <script src="common.js"></script>
   <style>
-    :root {
-      --bg: #f6f7f9; --card: #fff; --text: #1b1f24; --muted: #6b7280; --line: #e5e7eb;
-      --accent: #4f46e5; --accent-text: #fff; --chip: #eef0f4; --danger: #dc2626;
-    }
-    @media (prefers-color-scheme: dark) {
-      :root { --bg: #111317; --card: #1a1d23; --text: #e8eaed; --muted: #9aa1ab; --line: #2b2f37;
-              --accent: #818cf8; --accent-text: #0e0f13; --chip: #262a32; --danger: #f87171; }
-    }
-    * { box-sizing: border-box; }
-    body { margin: 0; background: var(--bg); color: var(--text);
-           font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Pretendard", "Noto Sans KR", sans-serif; }
-    main { max-width: 880px; margin: 0 auto; padding: 32px 16px 64px; }
-    h1 { font-size: 26px; margin: 0 0 4px; }
-    .sub { color: var(--muted); margin: 0 0 16px; }
-    .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 18px; margin-bottom: 16px; }
-    .card h2 { font-size: 15px; margin: 0 0 12px; display: flex; justify-content: space-between; align-items: center; }
-    .card h2 small { color: var(--muted); font-weight: 400; }
-    textarea { width: 100%; resize: vertical; min-height: 44px; padding: 10px 12px; border-radius: 10px;
-               border: 1px solid var(--line); background: var(--bg); color: var(--text); font: inherit; }
-    .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-    button { font: inherit; cursor: pointer; border-radius: 10px; border: 1px solid var(--line);
-             background: var(--card); color: var(--text); padding: 8px 14px; }
-    button.primary { background: var(--accent); color: var(--accent-text); border-color: transparent; font-weight: 600; }
-    button.link { border: 0; background: none; padding: 0; color: var(--muted); font-size: 13px; }
-    button.link:hover { color: var(--danger); }
-    button:disabled { opacity: .5; cursor: default; }
-    .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
-    .chip { background: var(--chip); border-radius: 999px; padding: 4px 6px 4px 12px; display: inline-flex; align-items: center; gap: 4px; }
-    .chip button { border: 0; background: none; padding: 0 6px; color: var(--muted); font-size: 16px; line-height: 1; }
-    .chip button:hover { color: var(--danger); }
-    .empty { color: var(--muted); font-size: 14px; }
-    .stepper { display: inline-flex; align-items: center; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
-    .stepper button { border: 0; border-radius: 0; padding: 8px 14px; }
-    .stepper input { width: 52px; text-align: center; border: 0; background: transparent; color: var(--text); font: inherit; font-weight: 600; }
-    .hint { color: var(--muted); font-size: 13px; }
-    .draw-btn { margin-left: auto; padding: 10px 22px; font-size: 16px; }
-    .error { color: var(--danger); font-size: 14px; margin: 0 0 12px; }
-    .error:empty { display: none; }
-    .teams { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; }
-    .team { border: 1px solid var(--line); border-radius: 12px; padding: 14px; background: var(--bg);
-            animation: pop .35s ease both; }
-    .team h3 { margin: 0 0 8px; font-size: 15px; color: var(--accent); }
-    .team ol { margin: 0; padding-left: 20px; }
-    @keyframes pop { from { opacity: 0; transform: translateY(8px) scale(.97); } }
-    .history { list-style: none; margin: 0; padding: 0; }
-    .history li { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid var(--line); }
-    .history li:first-child { border-top: 0; }
-    .history .open { flex: 1; text-align: left; border: 0; background: none; padding: 0; }
-    .history .open:hover { color: var(--accent); }
-    .history .meta { color: var(--muted); font-size: 13px; }
-    @media (prefers-reduced-motion: reduce) { .team { animation: none; } }
+    .me { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 16px; }
+    .me b { font-size: 17px; }
+    .slot { aspect-ratio: 1; max-width: 260px; margin: 0 auto 16px; border-radius: 24px; display: grid; place-items: center;
+            font-size: 44px; font-weight: 800; transition: background .08s; }
+    :where(.slot) { background: var(--chip); color: var(--muted); } /* 우선순위 0 → .team-* 색이 항상 이김 */
+    .slot.landed { animation: land .5s cubic-bezier(.2, 1.6, .4, 1); }
+    @keyframes land { from { transform: scale(.85); } }
+    .result-text { text-align: center; font-size: 17px; margin: 0 0 16px; min-height: 1.5em; }
+    .result-text b { font-size: 20px; }
+    @media (prefers-reduced-motion: reduce) { .slot, .slot.landed { transition: none; animation: none; } }
   </style>
 </head>
 <body>
-<main>
+<main class="narrow">
   <h1>팀 뽑기</h1>
-  <p class="sub">명단을 넣고 팀 수를 정한 뒤 뽑으면, 결과가 저장되고 이 링크로 누구나 볼 수 있어요.</p>
+  <p class="sub">부서와 이름으로 로그인한 뒤 <b>랜덤</b>을 누르면 팀 색이 정해져요.</p>
   <p class="error" id="error" role="alert"></p>
 
-  <section class="card">
-    <h2>명단 <small><span id="count">0</span>명 · <button class="link" id="clearMembers">전체 삭제</button></small></h2>
-    <textarea id="nameInput" rows="1" placeholder="이름 입력 후 Enter (쉼표나 줄바꿈으로 여러 명 한 번에)"></textarea>
-    <div class="chips" id="chips"><span class="empty">불러오는 중…</span></div>
+  <section class="card" id="loginCard" hidden>
+    <form id="loginForm">
+      <label>부서
+        <select id="dept" required><option value="">불러오는 중…</option></select>
+      </label>
+      <label>이름
+        <input id="name" required maxlength="50" autocomplete="off" placeholder="이름 입력" />
+      </label>
+      <button class="primary block" type="submit" id="loginBtn">로그인</button>
+    </form>
   </section>
 
-  <section class="card">
-    <div class="row">
-      <span>팀 수</span>
-      <div class="stepper">
-        <button id="minus" aria-label="팀 수 줄이기">−</button>
-        <input id="teamCount" type="number" min="1" value="4" aria-label="팀 수" />
-        <button id="plus" aria-label="팀 수 늘리기">+</button>
-      </div>
-      <span class="hint" id="sizeHint"></span>
-      <button class="primary draw-btn" id="drawBtn">팀 뽑기</button>
+  <section class="card" id="meCard" hidden>
+    <div class="me">
+      <span><span class="hint" id="whoDept"></span> <b id="whoName"></b>님</span>
+      <button class="link" id="logout">다른 사람으로 로그인</button>
     </div>
-  </section>
-
-  <section class="card" id="resultCard" hidden>
-    <h2>결과 <small id="resultMeta"></small></h2>
-    <div class="teams" id="teams"></div>
-  </section>
-
-  <section class="card">
-    <h2>기록 <small><button class="link" id="clearDraws">전체 삭제</button></small></h2>
-    <ul class="history" id="history"></ul>
+    <div class="slot" id="slot" aria-live="polite">?</div>
+    <p class="result-text" id="resultText"></p>
+    <button class="primary block" id="randomBtn">랜덤</button>
   </section>
 </main>
 
 <script>
-  // ── Supabase 설정: 대시보드 → Project Settings → API 에서 복사 ──
-  // 키는 공개용(publishable / anon) 키만 넣으세요. service_role / secret 키는 절대 넣지 마세요.
-  const SUPABASE_URL = 'https://qvplrrhxlrzqvnqfpfsu.supabase.co';
-  const SUPABASE_KEY = 'sb_publishable_qC654tfLhn9u0OrPk2xtqA_7zIMTeCO';
+  const ME_KEY = 'team-picker-me';
+  let me = null; // { dept, name, team }
 
-  const $ = (s) => document.querySelector(s);
-  const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-  const fmt = (d) => new Date(d).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-  const showError = (msg) => { $('#error').textContent = msg || ''; };
-
-  const db = SUPABASE_URL.includes('YOUR-') ? null : supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
-
-  // Supabase 응답에서 data만 꺼내고, 오류면 throw
-  async function q(request) {
-    const { data, error } = await request;
-    if (error) throw new Error(error.message);
-    return data;
-  }
-  // 버튼 핸들러 공통: 오류를 화면에 표시
-  const guard = (fn) => async (...args) => {
-    try { showError(''); await fn(...args); } catch (e) { showError(`오류: ${e.message}`); }
-  };
-
-  const fetchMembers = () => q(db.from('members').select('id, name').order('id'));
-  const fetchDraws = () => q(db.from('draws').select('id, team_count, teams, created_at').order('id', { ascending: false }).limit(30));
-
-  // ── 명단 ──
-  let members = [];
-  function renderMembers(list) {
-    members = list;
-    $('#count').textContent = list.length;
-    $('#chips').innerHTML = list.length
-      ? list.map((m) => `<span class="chip">${esc(m.name)}<button data-id="${m.id}" aria-label="${esc(m.name)} 삭제">×</button></span>`).join('')
-      : '<span class="empty">아직 아무도 없어요.</span>';
-    updateHint();
+  function paint(team, landed = false) {
+    const slot = $('#slot');
+    slot.className = 'slot' + (team ? ` team-${team}` : '');
+    slot.textContent = team ? TEAMS[team] : '?';
+    if (landed) { void slot.offsetWidth; slot.classList.add('landed'); }
   }
 
-  const addNames = guard(async () => {
-    const typed = $('#nameInput').value.split(/[\n,]+/).map((s) => s.trim().slice(0, 50)).filter(Boolean);
-    if (!typed.length) return;
-    const existing = new Set(members.map((m) => m.name));
-    const fresh = [...new Set(typed)].filter((n) => !existing.has(n));
-    $('#nameInput').value = '';
+  function showMe() {
+    $('#loginCard').hidden = true;
+    $('#meCard').hidden = false;
+    $('#whoDept').textContent = me.dept;
+    $('#whoName').textContent = me.name;
+    if (me.team) {
+      paint(me.team);
+      $('#resultText').innerHTML = `<b>${TEAMS[me.team]}팀</b>이에요!`;
+      $('#randomBtn').hidden = true;
+    } else {
+      paint(null);
+      $('#resultText').textContent = '버튼을 눌러 팀을 뽑으세요. 한 번만 뽑을 수 있어요.';
+      $('#randomBtn').hidden = false;
+    }
+  }
+
+  async function showLogin() {
+    me = null;
+    store.set(ME_KEY, null);
+    $('#meCard').hidden = true;
+    $('#loginCard').hidden = false;
+    const depts = await rpc('departments');
+    $('#dept').innerHTML = depts.length
+      ? '<option value="">부서 선택</option>' + depts.map((d) => `<option>${esc(d)}</option>`).join('')
+      : '<option value="">아직 명단이 없어요</option>';
+  }
+
+  $('#loginForm').addEventListener('submit', guard(async (e) => {
+    e.preventDefault();
+    $('#loginBtn').disabled = true;
     try {
-      if (fresh.length) await q(db.from('members').insert(fresh.map((name) => ({ name }))));
+      const found = await rpc('login', { p_dept: $('#dept').value, p_name: $('#name').value });
+      if (!found) throw new Error('명단에 없는 부서·이름이에요. 철자를 확인하거나 진행자에게 말해 주세요.');
+      me = found;
+      store.set(ME_KEY, { dept: me.dept, name: me.name });
+      showMe();
     } finally {
-      renderMembers(await fetchMembers()); // 다른 사람이 동시에 넣었어도 최신으로 맞춤
+      $('#loginBtn').disabled = false;
     }
-  });
-
-  $('#nameInput').addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); addNames(); }
-  });
-  $('#nameInput').addEventListener('paste', () => setTimeout(() => {
-    if ($('#nameInput').value.includes('\n')) addNames();
-  }));
-  $('#chips').addEventListener('click', guard(async (e) => {
-    const id = e.target.dataset.id;
-    if (!id) return;
-    await q(db.from('members').delete().eq('id', id));
-    renderMembers(await fetchMembers());
-  }));
-  $('#clearMembers').addEventListener('click', guard(async () => {
-    if (!members.length || !confirm('명단을 모두 지울까요?')) return;
-    await q(db.from('members').delete().gt('id', 0));
-    renderMembers(await fetchMembers());
   }));
 
-  // ── 팀 수 ──
-  const teamCount = () => Math.max(1, parseInt($('#teamCount').value, 10) || 1);
-  function updateHint() {
-    const n = teamCount(), total = members.length;
-    const lo = Math.floor(total / n), hi = Math.ceil(total / n);
-    $('#sizeHint').textContent = total ? `팀당 ${lo === hi ? lo : `${lo}~${hi}`}명` : '';
-  }
-  $('#minus').onclick = () => { $('#teamCount').value = Math.max(1, teamCount() - 1); updateHint(); };
-  $('#plus').onclick = () => { $('#teamCount').value = teamCount() + 1; updateHint(); };
-  $('#teamCount').oninput = updateHint;
+  $('#logout').addEventListener('click', guard(showLogin));
 
-  // ── 뽑기: 셔플 후 라운드로빈 → 팀 인원 차이는 최대 1명 ──
-  function makeTeams(names, n) {
-    const a = [...names];
-    const rand = new Uint32Array(1);
-    for (let i = a.length - 1; i > 0; i--) {
-      const j = crypto.getRandomValues(rand)[0] % (i + 1);
-      [a[i], a[j]] = [a[j], a[i]];
+  // 색이 빠르게 돌다가 점점 느려지며 결과에서 멈춤
+  async function spin(resultPromise) {
+    if (matchMedia('(prefers-reduced-motion: reduce)').matches) return resultPromise;
+    let final = null, failed = null;
+    resultPromise.then((t) => (final = t), (e) => (failed = e));
+    const t0 = performance.now();
+    let i = 0, delay = 60;
+    for (;;) {
+      if (failed) throw failed;
+      const team = TEAM_KEYS[i++ % TEAM_KEYS.length];
+      paint(team);
+      if (final && performance.now() - t0 > 1500) {
+        delay = Math.min(delay * 1.35, 420);
+        if (delay >= 300 && team === final) return final;
+      }
+      await sleep(delay);
     }
-    const teams = Array.from({ length: n }, () => []);
-    a.forEach((name, i) => teams[i % n].push(name));
-    return teams;
   }
 
-  function showTeams(draw) {
-    $('#resultCard').hidden = false;
-    $('#resultMeta').textContent = fmt(draw.created_at);
-    $('#teams').innerHTML = draw.teams.map((t, i) => `
-      <div class="team" style="animation-delay:${i * 70}ms">
-        <h3>${i + 1}팀 <small class="hint">${t.length}명</small></h3>
-        <ol>${t.map((n) => `<li>${esc(n)}</li>`).join('')}</ol>
-      </div>`).join('');
-  }
-
-  $('#drawBtn').addEventListener('click', guard(async () => {
-    $('#drawBtn').disabled = true;
+  $('#randomBtn').addEventListener('click', guard(async () => {
+    $('#randomBtn').disabled = true;
+    $('#logout').disabled = true;
+    $('#resultText').textContent = '두구두구…';
     try {
-      const list = await fetchMembers(); // 뽑기 직전 최신 명단
-      renderMembers(list);
-      const n = teamCount();
-      if (list.length < n) throw new Error(`인원(${list.length}명)이 팀 수(${n})보다 적어요.`);
-      const teams = makeTeams(list.map((m) => m.name), n);
-      const [row] = await q(db.from('draws').insert({ team_count: n, teams }).select());
-      showTeams(row);
-      $('#resultCard').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-      renderHistory(await fetchDraws());
+      me.team = await spin(rpc('pick', { p_dept: me.dept, p_name: me.name }));
+      showMe();
+      paint(me.team, true);
+    } catch (e) {
+      showMe(); // 실패하면 원래 상태로
+      throw e;
     } finally {
-      $('#drawBtn').disabled = false;
+      $('#randomBtn').disabled = false;
+      $('#logout').disabled = false;
     }
   }));
 
-  // ── 기록 ──
-  let draws = [];
-  function renderHistory(list) {
-    draws = list;
-    $('#history').innerHTML = list.length
-      ? list.map((d) => `
-          <li>
-            <button class="open" data-open="${d.id}">${d.team_count}팀 · ${d.teams.flat().length}명</button>
-            <span class="meta">${fmt(d.created_at)}</span>
-            <button class="link" data-del="${d.id}" aria-label="기록 삭제">삭제</button>
-          </li>`).join('')
-      : '<li class="empty">아직 뽑은 기록이 없어요.</li>';
-  }
-
-  $('#history').addEventListener('click', guard(async (e) => {
-    const { open, del } = e.target.dataset;
-    if (open) showTeams(draws.find((d) => d.id === Number(open)));
-    if (del) {
-      await q(db.from('draws').delete().eq('id', del));
-      renderHistory(await fetchDraws());
-    }
-  }));
-  $('#clearDraws').addEventListener('click', guard(async () => {
-    if (!draws.length || !confirm('기록을 모두 지울까요?')) return;
-    await q(db.from('draws').delete().gt('id', 0));
-    renderHistory(await fetchDraws());
-  }));
-
-  // ── 시작: 명단·기록을 불러오고, 가장 최근 결과를 보여줌 ──
-  if (!db) {
-    showError('Supabase 설정이 아직 없어요. index.html 의 SUPABASE_URL / SUPABASE_KEY 를 채워 주세요.');
-    document.querySelectorAll('button, textarea, input').forEach((el) => (el.disabled = true));
-    $('#chips').innerHTML = '';
-  } else {
-    guard(async () => {
-      const [m, d] = await Promise.all([fetchMembers(), fetchDraws()]);
-      renderMembers(m);
-      renderHistory(d);
-      if (d.length) showTeams(d[0]);
-    })();
-  }
+  // 시작: 이 기기에서 로그인했던 사람이면 바로 이어서
+  guard(async () => {
+    const saved = store.get(ME_KEY);
+    me = saved ? await rpc('login', { p_dept: saved.dept, p_name: saved.name }) : null;
+    me ? showMe() : await showLogin();
+  })();
 </script>
 </body>
 </html>

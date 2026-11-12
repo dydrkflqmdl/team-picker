@@ -1,2 +1,6 @@
 .DS_Store
 .claude/
+# 명단(실명)은 공개 저장소에 올리지 않는다
+roster*
+*.xlsx
+*.csv

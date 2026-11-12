@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>팀 현황</title>
+  <meta name="robots" content="noindex" />
+  <link rel="stylesheet" href="style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.js"
+          integrity="sha384-BWcjm9OdFth9TbhCxZPdm+gAOUMAzQy9nmTs12ioXdCcbVnJaPMn+fMUoQCLt60R"
+          crossorigin="anonymous"></script>
+  <script src="common.js"></script>
+  <style>
+    .head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+    .stats { color: var(--muted); }
+    .stats b { color: var(--text); font-size: 18px; }
+    .columns { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 16px; }
+    @media (max-width: 900px) { .columns { grid-template-columns: repeat(2, 1fr); } }
+    @media (max-width: 480px) { .columns { grid-template-columns: 1fr; } }
+    .col { background: var(--card); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
+    .col h3 { margin: 0; padding: 12px 14px; font-size: 18px; display: flex; justify-content: space-between; }
+    .col ol { margin: 0; padding: 10px 14px 14px 36px; min-height: 60px; }
+    .col li { padding: 3px 0; }
+    .col li.new { animation: flash 2.5s ease-out; border-radius: 6px; }
+    @keyframes flash { from { background: color-mix(in srgb, var(--accent) 35%, transparent); } }
+    .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+    .chip { background: var(--chip); border-radius: 999px; padding: 3px 12px; font-size: 14px; }
+    .empty { color: var(--muted); font-size: 14px; }
+    details.card > summary { cursor: pointer; font-weight: 600; }
+    details.card[open] > summary { margin-bottom: 14px; }
+    .people { width: 100%; border-collapse: collapse; font-size: 14px; margin: 8px 0 16px; }
+    .people th, .people td { text-align: left; padding: 6px 8px; border-top: 1px solid var(--line); }
+    .people th { color: var(--muted); font-weight: 500; }
+    .people td:last-child { text-align: right; white-space: nowrap; }
+    .people .dot { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; }
+    .table-wrap { max-height: 360px; overflow: auto; }
+    .msg { font-size: 14px; color: var(--muted); }
+    @media (prefers-reduced-motion: reduce) { .col li.new { animation: none; } }
+  </style>
+</head>
+<body>
+<main>
+  <div class="head">
+    <h1>팀 현황</h1>
+    <span class="stats" id="stats"></span>
+  </div>
+  <p class="error" id="error" role="alert"></p>
+
+  <section class="card" id="codeCard" hidden style="max-width: 420px">
+    <form id="codeForm">
+      <label>관리자 비밀번호
+        <input id="code" type="password" required autocomplete="current-password" />
+      </label>
+      <button class="primary block" type="submit">확인</button>
+    </form>
+  </section>
+
+  <div id="boardView" hidden>
+    <div class="columns" id="columns"></div>
+
+    <section class="card">
+      <h2>아직 안 뽑은 사람 <small id="waitingCount"></small></h2>
+      <div class="chips" id="waiting"></div>
+    </section>
+
+    <details class="card" id="admin">
+      <summary>명단 관리</summary>
+
+      <label>명단 추가 — 한 줄에 한 명, <b>부서, 이름</b> (엑셀에서 두 칸 복사해 붙여넣어도 돼요)
+        <textarea id="rosterInput" placeholder="개발팀, 홍길동&#10;영업팀, 김철수"></textarea>
+      </label>
+      <div class="row">
+        <button class="primary" id="addBtn">추가</button>
+        <span class="msg" id="addMsg"></span>
+      </div>
+
+      <div class="table-wrap">
+        <table class="people">
+          <thead><tr><th>부서</th><th>이름</th><th>팀</th><th></th></tr></thead>
+          <tbody id="peopleBody"></tbody>
+        </table>
+      </div>
+
+      <div class="row">
+        <button class="danger" id="resetAll">전체 다시 뽑기(팀 초기화)</button>
+        <button class="danger" id="removeAll">명단 전체 삭제</button>
+        <button class="link" id="forget" style="margin-left:auto">이 기기에서 비밀번호 지우기</button>
+      </div>
+    </details>
+  </div>
+</main>
+
+<script>
+  const CODE_KEY = 'team-picker-admin';
+  let code = store.get(CODE_KEY);
+  let people = [];
+  let seen = null; // 이미 화면에 나온 배정(id) — 새로 뽑힌 사람만 깜빡이게
+
+  function render() {
+    const picked = people.filter((p) => p.team);
+    const waiting = people.filter((p) => !p.team);
+    $('#stats').innerHTML = `전체 <b>${people.length}</b>명 · 뽑음 <b>${picked.length}</b>명 · 남음 <b>${waiting.length}</b>명`;
+
+    $('#columns').innerHTML = TEAM_KEYS.map((t) => {
+      const list = picked.filter((p) => p.team === t);
+      return `
+        <div class="col">
+          <h3 class="team-${t}"><span>${TEAMS[t]}</span><span>${list.length}명</span></h3>
+          <ol>${list.map((p) => `<li class="${seen && !seen.has(p.id) ? 'new' : ''}">${esc(p.name)} <span class="hint">${esc(p.dept)}</span></li>`).join('')}</ol>
+        </div>`;
+    }).join('');
+    seen = new Set(picked.map((p) => p.id));
+
+    $('#waitingCount').textContent = `${waiting.length}명`;
+    $('#waiting').innerHTML = waiting.length
+      ? waiting.map((p) => `<span class="chip">${esc(p.name)} <span class="hint">${esc(p.dept)}</span></span>`).join('')
+      : `<span class="empty">${people.length ? '모두 뽑았어요!' : '아직 명단이 없어요. 아래 명단 관리에서 추가하세요.'}</span>`;
+
+    const sorted = [...people].sort((a, b) => a.dept.localeCompare(b.dept, 'ko') || a.name.localeCompare(b.name, 'ko'));
+    $('#peopleBody').innerHTML = sorted.map((p) => `
+      <tr>
+        <td>${esc(p.dept)}</td>
+        <td>${esc(p.name)}</td>
+        <td>${p.team ? `<span class="dot team-${p.team}">${TEAMS[p.team]}</span>` : '<span class="hint">-</span>'}</td>
+        <td>
+          ${p.team ? `<button class="link" data-reset="${p.id}">다시 뽑기</button> · ` : ''}
+          <button class="link danger" data-remove="${p.id}" data-name="${esc(p.name)}">삭제</button>
+        </td>
+      </tr>`).join('') || '<tr><td colspan="4" class="empty">명단이 비어 있어요.</td></tr>';
+  }
+
+  async function refresh() {
+    try {
+      people = await rpc('board', { p_code: code });
+      $('#codeCard').hidden = true;
+      $('#boardView').hidden = false;
+      render();
+    } catch (e) {
+      if (e.message.includes('비밀번호')) { // 틀렸거나 미설정 → 다시 입력
+        code = null;
+        store.set(CODE_KEY, null);
+        $('#boardView').hidden = true;
+        $('#codeCard').hidden = false;
+      }
+      throw e;
+    }
+  }
+
+  $('#codeForm').addEventListener('submit', guard(async (e) => {
+    e.preventDefault();
+    code = $('#code').value;
+    await refresh();
+    store.set(CODE_KEY, code);
+    $('#code').value = '';
+  }));
+
+  // 명단 추가: "부서, 이름" 또는 엑셀의 탭 구분
+  $('#addBtn').addEventListener('click', guard(async () => {
+    const rows = [], bad = [];
+    for (const line of $('#rosterInput').value.split('\n')) {
+      if (!line.trim()) continue;
+      const [dept, name] = line.split(/\t|,/).map((s) => s.trim());
+      if (/^부서$/.test(dept) && /^이름$/.test(name)) continue; // 머리글 줄
+      dept && name ? rows.push({ dept, name }) : bad.push(line.trim());
+    }
+    if (!rows.length) throw new Error('추가할 줄이 없어요. "부서, 이름" 형식으로 적어 주세요.');
+    const added = await rpc('admin_add', { p_code: code, p_rows: rows });
+    const skipped = rows.length - added;
+    $('#addMsg').textContent = `${added}명 추가` + (skipped ? ` · 이미 있어서 건너뜀 ${skipped}명` : '') + (bad.length ? ` · 형식이 안 맞는 줄 ${bad.length}개: ${bad.slice(0, 3).join(' / ')}` : '');
+    if (!bad.length) $('#rosterInput').value = '';
+    await refresh();
+  }));
+
+  $('#peopleBody').addEventListener('click', guard(async (e) => {
+    const { reset, remove, name } = e.target.dataset;
+    if (reset) await rpc('admin_reset', { p_code: code, p_id: Number(reset) });
+    if (remove) {
+      if (!confirm(`${name} 님을 명단에서 지울까요?`)) return;
+      await rpc('admin_remove', { p_code: code, p_id: Number(remove) });
+    }
+    if (reset || remove) await refresh();
+  }));
+
+  $('#resetAll').addEventListener('click', guard(async () => {
+    if (!confirm('모든 사람의 팀을 지우고 처음부터 다시 뽑게 할까요?')) return;
+    await rpc('admin_reset', { p_code: code, p_id: null });
+    seen = null;
+    await refresh();
+  }));
+  $('#removeAll').addEventListener('click', guard(async () => {
+    if (!confirm('명단을 전부 지울까요? 되돌릴 수 없어요.')) return;
+    await rpc('admin_remove', { p_code: code, p_id: null });
+    await refresh();
+  }));
+  $('#forget').addEventListener('click', () => { store.set(CODE_KEY, null); location.reload(); });
+
+  // 시작 + 5초마다 새로고침(화면이 보일 때만)
+  if (code) guard(refresh)(); else $('#codeCard').hidden = false;
+  setInterval(() => { if (code && !document.hidden) guard(refresh)(); }, 5000);
+</script>
+</body>
+</html>
