@@ -17,7 +17,7 @@ create table if not exists public.draws (
 alter table public.members enable row level security;
 alter table public.draws   enable row level security;
 
--- 수정(update)은 화면에 없으니 권한도 주지 않는다.
+-- 수정(update) 정책은 일부러 만들지 않는다 → RLS 가 update 를 막는다(화면에도 수정 기능 없음).
 grant select, insert, delete on public.members, public.draws to anon;
 
 create policy "members: 누구나 읽기" on public.members for select to anon using (true);

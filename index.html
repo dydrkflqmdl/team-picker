@@ -100,8 +100,8 @@
 <script>
   // ── Supabase 설정: 대시보드 → Project Settings → API 에서 복사 ──
   // 키는 공개용(publishable / anon) 키만 넣으세요. service_role / secret 키는 절대 넣지 마세요.
-  const SUPABASE_URL = 'https://YOUR-PROJECT.supabase.co';
-  const SUPABASE_KEY = 'YOUR-PUBLISHABLE-KEY';
+  const SUPABASE_URL = 'https://qvplrrhxlrzqvnqfpfsu.supabase.co';
+  const SUPABASE_KEY = 'sb_publishable_qC654tfLhn9u0OrPk2xtqA_7zIMTeCO';
 
   const $ = (s) => document.querySelector(s);
   const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -192,7 +192,7 @@
 
   function showTeams(draw) {
     $('#resultCard').hidden = false;
-    $('#resultMeta').textContent = `#${draw.id} · ${fmt(draw.created_at)}`;
+    $('#resultMeta').textContent = fmt(draw.created_at);
     $('#teams').innerHTML = draw.teams.map((t, i) => `
       <div class="team" style="animation-delay:${i * 70}ms">
         <h3>${i + 1}팀 <small class="hint">${t.length}명</small></h3>
@@ -224,7 +224,7 @@
     $('#history').innerHTML = list.length
       ? list.map((d) => `
           <li>
-            <button class="open" data-open="${d.id}">#${d.id} · ${d.team_count}팀 · ${d.teams.flat().length}명</button>
+            <button class="open" data-open="${d.id}">${d.team_count}팀 · ${d.teams.flat().length}명</button>
             <span class="meta">${fmt(d.created_at)}</span>
             <button class="link" data-del="${d.id}" aria-label="기록 삭제">삭제</button>
           </li>`).join('')
