@@ -19,7 +19,8 @@
     @media (max-width: 480px) { .columns { grid-template-columns: 1fr; } }
     .col { background: var(--card); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
     .col h3 { margin: 0; padding: 12px 14px; font-size: 18px; display: flex; justify-content: space-between; }
-    .col ol { margin: 0; padding: 10px 14px 14px 36px; min-height: 60px; }
+    .col .mix { padding: 6px 14px 0; font-size: 13px; color: var(--muted); }
+    .col ol { margin: 0; padding: 6px 14px 14px 36px; min-height: 60px; }
     .col li { padding: 3px 0; }
     .col li.new { animation: flash 2.5s ease-out; border-radius: 6px; }
     @keyframes flash { from { background: color-mix(in srgb, var(--accent) 35%, transparent); } }
@@ -66,8 +67,8 @@
     <details class="card" id="admin">
       <summary>명단 관리</summary>
 
-      <label>명단 추가 — 한 줄에 한 명, <b>부서, 이름</b> (엑셀에서 두 칸 복사해 붙여넣어도 돼요)
-        <textarea id="rosterInput" placeholder="개발팀, 홍길동&#10;영업팀, 김철수"></textarea>
+      <label>명단 추가 — 엑셀에서 <b>이름·직급·성별·부서</b> 4칸을 그대로 복사해 붙여넣거나, 한 줄에 <b>이름, 부서</b>
+        <textarea id="rosterInput" placeholder="홍길동	대리	남	영상사업부&#10;김철수, 영상사업부"></textarea>
       </label>
       <div class="row">
         <button class="primary" id="addBtn">추가</button>
@@ -76,7 +77,7 @@
 
       <div class="table-wrap">
         <table class="people">
-          <thead><tr><th>부서</th><th>이름</th><th>팀</th><th></th></tr></thead>
+          <thead><tr><th>부서</th><th>이름</th><th>직급</th><th>성별</th><th>팀</th><th></th></tr></thead>
           <tbody id="peopleBody"></tbody>
         </table>
       </div>
@@ -103,10 +104,13 @@
 
     $('#columns').innerHTML = TEAM_KEYS.map((t) => {
       const list = picked.filter((p) => p.team === t);
+      const execs = list.filter((p) => p.is_exec).length;
+      const women = list.filter((p) => p.gender === '여').length;
       return `
         <div class="col">
           <h3 class="team-${t}"><span>${TEAMS[t]}</span><span>${list.length}명</span></h3>
-          <ol>${list.map((p) => `<li class="${seen && !seen.has(p.id) ? 'new' : ''}">${esc(p.name)} <span class="hint">${esc(p.dept)}</span></li>`).join('')}</ol>
+          <div class="mix">임원 ${execs} · 여성 ${women}</div>
+          <ol>${list.map((p) => `<li class="${seen && !seen.has(p.id) ? 'new' : ''}">${esc(p.name)} <span class="hint">${p.title ? esc(p.title) + ' · ' : ''}${esc(p.dept)}</span></li>`).join('')}</ol>
         </div>`;
     }).join('');
     seen = new Set(picked.map((p) => p.id));
@@ -121,6 +125,8 @@
       <tr>
         <td>${esc(p.dept)}</td>
         <td>${esc(p.name)}</td>
+        <td>${esc(p.title || '-')}</td>
+        <td>${esc(p.gender || '-')}</td>
         <td>${p.team ? `<span class="dot team-${p.team}">${TEAMS[p.team]}</span>` : '<span class="hint">-</span>'}</td>
         <td>
           ${p.team ? `<button class="link" data-reset="${p.id}">다시 뽑기</button> · ` : ''}
@@ -154,14 +160,20 @@
     $('#code').value = '';
   }));
 
-  // 명단 추가: "부서, 이름" 또는 엑셀의 탭 구분
+  // 명단 추가: 엑셀 4칸(이름·직급·성별·부서) 또는 "이름, 부서". 탭이나 쉼표로 구분 — 항상 첫 칸 이름, 마지막 칸 부서
   $('#addBtn').addEventListener('click', guard(async () => {
     const rows = [], bad = [];
     for (const line of $('#rosterInput').value.split('\n')) {
       if (!line.trim()) continue;
-      const [dept, name] = line.split(/\t|,/).map((s) => s.trim());
-      if (/^부서$/.test(dept) && /^이름$/.test(name)) continue; // 머리글 줄
-      dept && name ? rows.push({ dept, name }) : bad.push(line.trim());
+      const cells = line.split(/\t|,/).map((s) => s.trim());
+      if (cells.includes('이름') && cells.includes('부서')) continue; // 머리글 줄
+      if (cells.length >= 4 && cells[0] && cells[3]) {
+        rows.push({ name: cells[0], title: cells[1], gender: cells[2], dept: cells[3] });
+      } else if (cells.length === 2 && cells[0] && cells[1]) {
+        rows.push({ name: cells[0], dept: cells[1] });
+      } else {
+        bad.push(line.trim());
+      }
     }
     if (!rows.length) throw new Error('추가할 줄이 없어요. "부서, 이름" 형식으로 적어 주세요.');
     const added = await rpc('admin_add', { p_code: code, p_rows: rows });

@@ -20,6 +20,12 @@ create table if not exists public.people (
   picked_at timestamptz,
   unique (dept, name)
 );
+-- 직급·성별(없어도 됨). 임원 여부는 직급 이름으로 자동 판단: 대표·이사·고문·상무·전무·사장·회장
+alter table public.people
+  add column if not exists title   text check (char_length(title) <= 30),
+  add column if not exists gender  text check (gender in ('남', '여')),
+  add column if not exists is_exec boolean
+    generated always as (coalesce(title ~ '(대표|이사|고문|상무|전무|사장|회장)', false)) stored;
 
 create table if not exists public.config (
   key   text primary key,
@@ -74,14 +80,20 @@ language sql stable security definer set search_path = public as $$
 $$;
 
 -- 팀 뽑기. 이미 뽑았으면 그 팀을 그대로 돌려준다(한 번만).
--- 1) 지금 인원이 가장 적은 팀들 중에서 → 팀 인원 차이는 항상 최대 1명
--- 2) 내 부서 사람이 가장 적은 팀을 고르고 → 부서가 흩어짐
--- 3) 그래도 같으면 랜덤
+-- 1) 지금 인원이 가장 적은 팀들 중에서만 고른다 → 팀 인원 차이는 항상 최대 1명
+-- 2) 그중 '내 그룹이 이미 많이 들어간 팀'을 피한다. 그룹은 임원 여부·부서·성별 세 가지이고,
+--    각 그룹 전체 인원 중 그 팀에 이미 들어간 비율을 더해 점수로 쓴다(임원은 2배).
+--    드문 그룹(임원 7명, 대표부서 3명 등)일수록 한 명의 비중이 커서 더 잘 흩어진다.
+-- 3) 점수가 같으면 랜덤
+-- (명단 29명으로 300번 시뮬레이션: 팀 인원 항상 8·7·7·7, 임원 3명 이상 몰림 0번)
 create or replace function public.pick(p_dept text, p_name text) returns text
 language plpgsql security definer set search_path = public as $$
 declare
-  me     people;
-  chosen text;
+  me       people;
+  chosen   text;
+  n_exec   int;  -- 나와 임원 여부가 같은 전체 인원
+  n_dept   int;  -- 나와 같은 부서 전체 인원
+  n_gender int;  -- 나와 같은 성별 전체 인원
 begin
   -- 동시에 여러 명이 눌러도 한 명씩 처리(읽기는 막지 않음)
   lock table people in share row exclusive mode;
@@ -95,18 +107,29 @@ begin
     return me.team;
   end if;
 
+  select count(*) filter (where is_exec = me.is_exec),
+         count(*) filter (where dept = me.dept),
+         count(*) filter (where gender = me.gender)
+  into n_exec, n_dept, n_gender
+  from people;
+
   with t(team) as (values ('red'), ('blue'), ('yellow'), ('green')),
   c as (
     select t.team,
            count(p.id) as total,
-           count(p.id) filter (where p.dept = me.dept) as same_dept
+           count(p.id) filter (where p.is_exec = me.is_exec) as same_exec,
+           count(p.id) filter (where p.dept = me.dept) as same_dept,
+           count(p.id) filter (where p.gender = me.gender) as same_gender
     from t left join people p on p.team = t.team
     group by t.team
   )
   select c.team into chosen
   from c
   where c.total = (select min(total) from c)
-  order by c.same_dept, random()
+  order by 2.0 * c.same_exec / n_exec
+         + 1.0 * c.same_dept / n_dept
+         + 1.0 * c.same_gender / greatest(n_gender, 1),
+           random()
   limit 1;
 
   update people set team = chosen, picked_at = now() where id = me.id;
@@ -114,27 +137,33 @@ begin
 end $$;
 
 -- ── 진행자용 (관리자 비밀번호 필요) ───────────────────────
--- 전체 현황: [{id, dept, name, team, picked_at}, ...]
+-- 전체 현황: [{id, dept, name, title, gender, is_exec, team, picked_at}, ...]
 create or replace function public.board(p_code text) returns json
 language plpgsql security definer set search_path = public as $$
 begin
   perform check_admin(p_code);
   return (
     select coalesce(json_agg(json_build_object(
-             'id', id, 'dept', dept, 'name', name, 'team', team, 'picked_at', picked_at)
+             'id', id, 'dept', dept, 'name', name, 'title', title, 'gender', gender,
+             'is_exec', is_exec, 'team', team, 'picked_at', picked_at)
              order by picked_at nulls last, dept, name), '[]'::json)
     from people
   );
 end $$;
 
--- 명단 추가: p_rows = [{"dept": "개발팀", "name": "홍길동"}, ...]. 이미 있으면 건너뜀. 추가된 수를 돌려줌.
+-- 명단 추가: p_rows = [{"dept": "개발팀", "name": "홍길동", "title": "대리", "gender": "남"}, ...]
+-- title·gender 는 없어도 됨. 이미 있는 (부서, 이름)은 건너뜀. 추가된 수를 돌려줌.
 create or replace function public.admin_add(p_code text, p_rows jsonb) returns int
 language plpgsql security definer set search_path = public as $$
 declare n int;
 begin
   perform check_admin(p_code);
-  insert into people (dept, name)
-  select distinct norm_dept(r->>'dept'), norm_name(r->>'name')
+  insert into people (dept, name, title, gender)
+  select distinct on (norm_dept(r->>'dept'), norm_name(r->>'name'))
+         norm_dept(r->>'dept'), norm_name(r->>'name'),
+         nullif(btrim(r->>'title'), ''),
+         case when btrim(r->>'gender') ~* '^(남|남자|남성|m|male)$' then '남'
+              when btrim(r->>'gender') ~* '^(여|여자|여성|f|female)$' then '여' end
   from jsonb_array_elements(p_rows) r
   where norm_dept(r->>'dept') <> '' and norm_name(r->>'name') <> ''
   on conflict (dept, name) do nothing;
