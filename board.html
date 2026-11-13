@@ -34,6 +34,8 @@
     .people th { color: var(--muted); font-weight: 500; }
     .people td:last-child { text-align: right; white-space: nowrap; }
     .people .dot { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; }
+    .people tr.editing td { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+    .people input, .people select { margin: 0; padding: 4px 6px; font-size: 14px; border-radius: 6px; min-width: 64px; }
     .table-wrap { max-height: 360px; overflow: auto; }
     .msg { font-size: 14px; color: var(--muted); }
     @media (prefers-reduced-motion: reduce) { .col li.new { animation: none; } }
@@ -80,6 +82,7 @@
           <thead><tr><th>부서</th><th>이름</th><th>직급</th><th>성별</th><th>팀</th><th></th></tr></thead>
           <tbody id="peopleBody"></tbody>
         </table>
+        <datalist id="deptList"></datalist>
       </div>
 
       <div class="row">
@@ -96,6 +99,7 @@
   let code = store.get(CODE_KEY);
   let people = [];
   let seen = null; // 이미 화면에 나온 배정(id) — 새로 뽑힌 사람만 깜빡이게
+  let editing = null; // 수정 중인 사람 id — 그동안은 5초 새로고침이 입력칸을 지우지 않게 명단 표를 다시 그리지 않음
 
   function render() {
     const picked = people.filter((p) => p.team);
@@ -120,19 +124,54 @@
       ? waiting.map((p) => `<span class="chip">${esc(p.name)} <span class="hint">${esc(p.dept)}</span></span>`).join('')
       : `<span class="empty">${people.length ? '모두 뽑았어요!' : '아직 명단이 없어요. 아래 명단 관리에서 추가하세요.'}</span>`;
 
+    if (editing == null) renderTable();
+  }
+
+  // 명단 표. 수정 중인 줄은 입력칸으로 보여줌
+  function renderTable() {
     const sorted = [...people].sort((a, b) => a.dept.localeCompare(b.dept, 'ko') || a.name.localeCompare(b.name, 'ko'));
-    $('#peopleBody').innerHTML = sorted.map((p) => `
+    const team = (p) => (p.team ? `<span class="dot team-${p.team}">${TEAMS[p.team]}</span>` : '<span class="hint">-</span>');
+    $('#deptList').innerHTML = [...new Set(people.map((p) => p.dept))].map((d) => `<option value="${esc(d)}">`).join('');
+    $('#peopleBody').innerHTML = sorted.map((p) => p.id === editing ? `
+      <tr class="editing">
+        <td><input name="dept" value="${esc(p.dept)}" maxlength="50" list="deptList" aria-label="부서" /></td>
+        <td><input name="name" value="${esc(p.name)}" maxlength="50" aria-label="이름" /></td>
+        <td><input name="title" value="${esc(p.title || '')}" maxlength="30" placeholder="없음" aria-label="직급" /></td>
+        <td><select name="gender" aria-label="성별">${['', '남', '여'].map((g) => `<option value="${g}"${(p.gender || '') === g ? ' selected' : ''}>${g || '-'}</option>`).join('')}</select></td>
+        <td>${team(p)}</td>
+        <td><button class="link" data-save>저장</button> · <button class="link" data-cancel>취소</button></td>
+      </tr>` : `
       <tr>
         <td>${esc(p.dept)}</td>
         <td>${esc(p.name)}</td>
         <td>${esc(p.title || '-')}</td>
         <td>${esc(p.gender || '-')}</td>
-        <td>${p.team ? `<span class="dot team-${p.team}">${TEAMS[p.team]}</span>` : '<span class="hint">-</span>'}</td>
+        <td>${team(p)}</td>
         <td>
+          <button class="link" data-edit="${p.id}">수정</button> ·
           ${p.team ? `<button class="link" data-reset="${p.id}">다시 뽑기</button> · ` : ''}
           <button class="link danger" data-remove="${p.id}" data-name="${esc(p.name)}">삭제</button>
         </td>
-      </tr>`).join('') || '<tr><td colspan="4" class="empty">명단이 비어 있어요.</td></tr>';
+      </tr>`).join('') || '<tr><td colspan="6" class="empty">명단이 비어 있어요.</td></tr>';
+  }
+
+  function stopEditing() { editing = null; renderTable(); }
+  // 버튼으로 명단을 바꾼 뒤에는 수정 중이던 줄을 닫고 표 전체를 새로 그림
+  function reload() { editing = null; return refresh(); }
+
+  // 수정 저장. 실패하면(같은 이름 등) 입력칸을 그대로 두고 위쪽에 이유를 보여줌
+  async function saveEdit() {
+    const row = $('#peopleBody tr.editing');
+    if (!row) return;
+    const v = (n) => row.querySelector(`[name="${n}"]`).value;
+    const controls = row.querySelectorAll('input, select, button');
+    controls.forEach((el) => { el.disabled = true; });
+    try {
+      await rpc('admin_update', { p_code: code, p_id: editing, p_row: { dept: v('dept'), name: v('name'), title: v('title'), gender: v('gender') } });
+      await reload();
+    } finally {
+      controls.forEach((el) => { el.disabled = false; });
+    }
   }
 
   async function refresh() {
@@ -180,29 +219,43 @@
     const skipped = rows.length - added;
     $('#addMsg').textContent = `${added}명 추가` + (skipped ? ` · 이미 있어서 건너뜀 ${skipped}명` : '') + (bad.length ? ` · 형식이 안 맞는 줄 ${bad.length}개: ${bad.slice(0, 3).join(' / ')}` : '');
     if (!bad.length) $('#rosterInput').value = '';
-    await refresh();
+    await reload();
   }));
 
   $('#peopleBody').addEventListener('click', guard(async (e) => {
-    const { reset, remove, name } = e.target.dataset;
+    const { reset, remove, name, edit } = e.target.dataset;
+    if (edit) { // 다른 줄을 고치던 중이면 그건 저장하지 않고 넘어감
+      editing = Number(edit);
+      renderTable();
+      $('#peopleBody tr.editing input[name="name"]').focus();
+      return;
+    }
+    if ('cancel' in e.target.dataset) return stopEditing();
+    if ('save' in e.target.dataset) return saveEdit();
     if (reset) await rpc('admin_reset', { p_code: code, p_id: Number(reset) });
     if (remove) {
       if (!confirm(`${name} 님을 명단에서 지울까요?`)) return;
       await rpc('admin_remove', { p_code: code, p_id: Number(remove) });
     }
-    if (reset || remove) await refresh();
+    if (reset || remove) await reload();
   }));
+  // 입력칸에서 Enter = 저장, Esc = 취소 (한글 입력 중의 Enter는 무시)
+  $('#peopleBody').addEventListener('keydown', (e) => {
+    if (!e.target.closest('tr.editing')) return;
+    if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); guard(saveEdit)(); }
+    if (e.key === 'Escape') stopEditing();
+  });
 
   $('#resetAll').addEventListener('click', guard(async () => {
     if (!confirm('모든 사람의 팀을 지우고 처음부터 다시 뽑게 할까요?')) return;
     await rpc('admin_reset', { p_code: code, p_id: null });
     seen = null;
-    await refresh();
+    await reload();
   }));
   $('#removeAll').addEventListener('click', guard(async () => {
     if (!confirm('명단을 전부 지울까요? 되돌릴 수 없어요.')) return;
     await rpc('admin_remove', { p_code: code, p_id: null });
-    await refresh();
+    await reload();
   }));
   $('#forget').addEventListener('click', () => { store.set(CODE_KEY, null); location.reload(); });
 
