@@ -51,4 +51,5 @@
 | `board.html` | 진행자 화면 (현황·명단 관리) |
 | `common.js` | Supabase 연결 설정, 두 화면이 같이 쓰는 코드 |
 | `style.css` | 공통 스타일 |
+| `shake.jpg` | 참가자 화면의 진행자 그림 (상자를 흔드는 8컷을 가로로 붙인 그림) |
 | `supabase.sql` | 테이블·함수·권한 (SQL Editor에서 실행) |

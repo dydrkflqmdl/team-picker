@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>팀 뽑기</title>
   <link rel="stylesheet" href="style.css" />
+  <link rel="preload" href="shake.jpg" as="image" />
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.js"
           integrity="sha384-BWcjm9OdFth9TbhCxZPdm+gAOUMAzQy9nmTs12ioXdCcbVnJaPMn+fMUoQCLt60R"
           crossorigin="anonymous"></script>
@@ -12,14 +13,32 @@
   <style>
     .me { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 16px; }
     .me b { font-size: 17px; }
-    .slot { aspect-ratio: 1; max-width: 260px; margin: 0 auto 16px; border-radius: 24px; display: grid; place-items: center;
-            font-size: 44px; font-weight: 800; transition: background .08s; }
-    :where(.slot) { background: var(--chip); color: var(--muted); } /* 우선순위 0 → .team-* 색이 항상 이김 */
-    .slot.landed { animation: land .5s cubic-bezier(.2, 1.6, .4, 1); }
-    @keyframes land { from { transform: scale(.85); } }
+    /* 뽑기 장면: 상자를 흔드는 진행자(shake.jpg = 8컷을 가로로 붙인 그림) + 팀 공. 바탕은 그림 배경색과 같게 */
+    .scene { position: relative; height: 270px; margin: 0 0 12px; background: #fefefe; border-radius: 18px; }
+    .figure { position: relative; height: 100%; aspect-ratio: 379 / 507; margin: 0 auto; transform-origin: 50% 85%; }
+    .sprite { width: 100%; height: 100%; background: url(shake.jpg) 0 0 / 800% 100% no-repeat; }
+    .scene[data-state="shake"] .figure { animation: jiggle .24s linear infinite; }
+    @keyframes jiggle { 25% { transform: rotate(-1.2deg); } 75% { transform: rotate(1.2deg); } }
+    /* 말풍선: 누르기 전에만 */
+    .bubble { position: absolute; left: 8px; top: 44px; z-index: 1; padding: 5px 11px; border-radius: 999px;
+              background: var(--accent); color: var(--accent-text); font-size: 13px; font-weight: 800; white-space: nowrap;
+              animation: nudge 1.6s ease-in-out infinite; }
+    .bubble::after { content: ''; position: absolute; z-index: -1; right: 12px; bottom: -4px; width: 11px; height: 11px;
+                     background: inherit; border-radius: 2px; transform: rotate(45deg); }
+    .scene:not([data-state="idle"]) .bubble { display: none; }
+    @keyframes nudge { 50% { transform: translateY(-4px); } }
+    /* 팀 공: 머리 오른쪽에 떠 있음. 색·글자색은 style.css의 .team-* */
+    .ball { position: absolute; left: 104%; top: 22%; width: 36%; aspect-ratio: 1; translate: -50% -50%; border-radius: 50%;
+            display: grid; place-items: center; font-size: 18px; font-weight: 800;
+            box-shadow: inset -5px -7px 0 rgba(0, 0, 0, .15), 0 6px 14px rgba(0, 0, 0, .25); }
+    .ball::before { content: ''; position: absolute; left: 20%; top: 15%; width: 24%; height: 17%; border-radius: 50%; background: rgba(255, 255, 255, .45); }
+    .ball .ring { position: absolute; inset: -16%; border-radius: 50%; border: 4px dotted var(--accent); opacity: 0; }
+    .scene:not([data-state="done"]) .ball { display: none; }
+    #randomBtn:not(:disabled) { animation: breathe 1.8s ease-in-out infinite; }
+    @keyframes breathe { 50% { transform: scale(1.02); box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent) 25%, transparent); } }
     .result-text { text-align: center; font-size: 17px; margin: 0 0 16px; min-height: 1.5em; }
     .result-text b { font-size: 20px; }
-    @media (prefers-reduced-motion: reduce) { .slot, .slot.landed { transition: none; animation: none; } }
+    @media (prefers-reduced-motion: reduce) { .scene *, #randomBtn { animation: none !important; } }
   </style>
 </head>
 <body>
@@ -45,8 +64,14 @@
       <span><span class="hint" id="whoDept"></span> <b id="whoName"></b>님</span>
       <button class="link" id="logout">다른 사람으로 로그인</button>
     </div>
-    <div class="slot" id="slot" aria-live="polite">?</div>
-    <p class="result-text" id="resultText"></p>
+    <div class="scene" id="scene" role="img" aria-label="진행자가 뽑기함을 들고 기다리고 있어요" data-state="idle">
+      <div class="figure">
+        <div class="sprite" id="sprite"></div>
+        <div class="ball" id="ball"><span id="ballText"></span><span class="ring" id="ring"></span></div>
+      </div>
+      <div class="bubble">눌러봐요!</div>
+    </div>
+    <p class="result-text" id="resultText" aria-live="polite"></p>
     <button class="primary block" id="randomBtn">랜덤</button>
   </section>
 </main>
@@ -55,11 +80,44 @@
   const ME_KEY = 'team-picker-me';
   let me = null; // { dept, name, team }
 
+  const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  // 진행자 그림: 0·7번 컷은 상자를 들고 있고, 1~6번 컷은 상자를 흔듦
+  const IDLE = [0, 1, 2, 3, 4, 5, 6, 7];           // 원래 GIF처럼 한 컷 0.45초
+  const SHAKE = [1, 2, 3, 4, 5, 6, 5, 4, 3, 2];    // 뽑는 중: 흔드는 컷만 빠르게 왔다 갔다
+  let spriteTimer = 0;
+  const frame = (i) => { $('#sprite').style.backgroundPositionX = `${(i * 100) / 7}%`; };
+  function play(frames, ms) {
+    clearTimeout(spriteTimer);
+    let k = 0;
+    const tick = () => { frame(frames[k++ % frames.length]); spriteTimer = setTimeout(tick, ms); };
+    tick();
+  }
+  function still(i = 0) { clearTimeout(spriteTimer); frame(i); }
+
+  // team 없으면 대기 장면(상자 흔들기 + 말풍선), 있으면 공이 떠 있는 결과 장면. landed면 공이 상자에서 튀어나옴
   function paint(team, landed = false) {
-    const slot = $('#slot');
-    slot.className = 'slot' + (team ? ` team-${team}` : '');
-    slot.textContent = team ? TEAMS[team] : '?';
-    if (landed) { void slot.offsetWidth; slot.classList.add('landed'); }
+    const scene = $('#scene');
+    scene.dataset.state = team ? 'done' : 'idle';
+    $('#ball').className = 'ball' + (team ? ` team-${team}` : '');
+    $('#ballText').textContent = team ? TEAMS[team] : '';
+    scene.setAttribute('aria-label', team ? `진행자가 ${TEAMS[team]}팀 공을 꺼냈어요` : '진행자가 뽑기함을 들고 기다리고 있어요');
+    if (team || reduced()) still(0); else play(IDLE, 450);
+    if (landed && !reduced()) {
+      // 상자 구멍(그림 가로 50%·세로 68%)에서 얼굴을 피해 오른쪽으로 돌아 공 자리(가로 104%·세로 22%)까지 튀어 오름
+      const f = $('.figure').getBoundingClientRect();
+      const at = (x, y, s, more = {}) => ({ transform: `translate(${(x - 1.04) * f.width}px, ${(y - 0.22) * f.height}px) scale(${s})`, ...more });
+      $('#ball').animate([
+        at(0.5, 0.68, 0.2, { opacity: 0 }),
+        at(0.62, 0.62, 0.45, { opacity: 1, offset: 0.25 }),
+        at(0.9, 0.46, 0.8, { offset: 0.55 }),
+        at(1.04, 0.22, 1.15, { offset: 0.8 }),
+        { transform: 'none' },
+      ], { duration: 1100, easing: 'ease-out' });
+      $('#ring').animate([{ opacity: 0, transform: 'scale(.7)' }, { opacity: 1, offset: 0.3 }, { opacity: 0, transform: 'scale(1.5)' }],
+        { duration: 700, delay: 800, easing: 'ease-out' });
+      $('#resultText').animate([{ opacity: 0 }, { opacity: 0, offset: 0.7 }, { opacity: 1 }], { duration: 1100 }); // 공이 자리 잡을 때 문구
+    }
   }
 
   function showMe() {
@@ -81,6 +139,7 @@
   async function showLogin() {
     me = null;
     store.set(ME_KEY, null);
+    still(0);
     $('#meCard').hidden = true;
     $('#loginCard').hidden = false;
     const depts = await rpc('departments');
@@ -105,23 +164,15 @@
 
   $('#logout').addEventListener('click', guard(showLogin));
 
-  // 색이 빠르게 돌다가 점점 느려지며 결과에서 멈춤
-  async function spin(resultPromise) {
-    if (matchMedia('(prefers-reduced-motion: reduce)').matches) return resultPromise;
-    let final = null, failed = null;
-    resultPromise.then((t) => (final = t), (e) => (failed = e));
-    const t0 = performance.now();
-    let i = 0, delay = 60;
-    for (;;) {
-      if (failed) throw failed;
-      const team = TEAM_KEYS[i++ % TEAM_KEYS.length];
-      paint(team);
-      if (final && performance.now() - t0 > 1500) {
-        delay = Math.min(delay * 1.35, 420);
-        if (delay >= 300 && team === final) return final;
-      }
-      await sleep(delay);
-    }
+  // 상자를 힘차게 흔들다가(결과 올 때까지, 최소 1.8초) 결과로 넘어감. 실패하면 바로 throw → 호출한 쪽에서 대기 장면으로
+  async function drawBall(resultPromise) {
+    if (reduced()) return resultPromise;
+    const scene = $('#scene');
+    scene.dataset.state = 'shake';
+    scene.setAttribute('aria-label', '진행자가 뽑기함을 힘차게 흔들고 있어요');
+    play(SHAKE, 90);
+    const [team] = await Promise.all([resultPromise, sleep(1800)]);
+    return team;
   }
 
   $('#randomBtn').addEventListener('click', guard(async () => {
@@ -129,7 +180,7 @@
     $('#logout').disabled = true;
     $('#resultText').textContent = '두구두구…';
     try {
-      me.team = await spin(rpc('pick', { p_dept: me.dept, p_name: me.name }));
+      me.team = await drawBall(rpc('pick', { p_dept: me.dept, p_name: me.name }));
       showMe();
       paint(me.team, true);
     } catch (e) {
