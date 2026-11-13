@@ -6,7 +6,7 @@
 --
 -- 구조: 참가자 화면은 테이블에 직접 접근하지 못하고, 아래 함수들만 부를 수 있다.
 --   departments() / login() / pick()          ← 참가자용 (누구나)
---   board() / admin_add() / admin_remove() / admin_reset()  ← 진행자용 (관리자 비밀번호 필요)
+--   board() / admin_add() / admin_update() / admin_remove() / admin_reset()  ← 진행자용 (관리자 비밀번호 필요)
 
 -- 이전 버전(명단·기록) 테이블 정리 — 비어 있음
 drop table if exists public.members, public.draws;
@@ -80,20 +80,33 @@ language sql stable security definer set search_path = public as $$
 $$;
 
 -- 팀 뽑기. 이미 뽑았으면 그 팀을 그대로 돌려준다(한 번만).
--- 1) 지금 인원이 가장 적은 팀들 중에서만 고른다 → 팀 인원 차이는 항상 최대 1명
--- 2) 그중 '내 그룹이 이미 많이 들어간 팀'을 피한다. 그룹은 임원 여부·부서·성별 세 가지이고,
---    각 그룹 전체 인원 중 그 팀에 이미 들어간 비율을 더해 점수로 쓴다(임원은 2배).
---    드문 그룹(임원 7명, 대표부서 3명 등)일수록 한 명의 비중이 커서 더 잘 흩어진다.
--- 3) 점수가 같으면 랜덤
--- (명단 29명으로 300번 시뮬레이션: 팀 인원 항상 8·7·7·7, 임원 3명 이상 몰림 0번)
+-- 누를 때마다 '아직 안 뽑은 사람 전원(나 포함)을 어떻게 나누면 가장 고른지' 계획을 새로 세우고, 그 계획의 내 팀을 준다.
+-- 1) 고른 기준: 팀 인원, 임원·비임원, 부서마다, 남·여 인원이 팀마다 (그 인원 ÷ 4)의 내림~올림 사이면 완벽.
+--    벗어난 만큼 벌점(팀 인원 10000 → 반드시 맞춤, 임원 20, 부서·성별 10).
+-- 2) 벌점이 같으면 지금까지 뽑은 인원이 적은 팀을 고른다(안 누르는 사람이 있어도 인원이 덜 벌어지게).
+-- 3) 계획은 무작위로 시작해 2000번 바꿔 보며 다듬으므로 매번 랜덤이다.
+-- 4) 뽑는 도중에도 팀 인원 차이는 최대 3명(이미 3명 더 많은 팀으로는 안 감).
+-- (명단 29명으로 400번 시뮬레이션: 팀 인원·임원·남녀는 400번 모두 고르게, 부서까지 모두 고른 건 98%. 예전 규칙은 7%)
+-- ⚠️ 명단에 있는데 안 누르는 사람이 있으면 그 자리만큼 팀 인원이 어긋날 수 있다 → 안 온 사람은 뽑기 전에 명단에서 지운다.
 create or replace function public.pick(p_dept text, p_name text) returns text
 language plpgsql security definer set search_path = public as $$
 declare
-  me       people;
-  chosen   text;
-  n_exec   int;  -- 나와 임원 여부가 같은 전체 인원
-  n_dept   int;  -- 나와 같은 부서 전체 인원
-  n_gender int;  -- 나와 같은 성별 전체 인원
+  teams constant text[] := array['red', 'blue', 'yellow', 'green'];
+  me     people;
+  pid    bigint[];                     -- 명단 전체 id (id 순)
+  cur    int[];                        -- 사람별 팀 번호 1~4. 뽑은 사람은 고정, 나머지는 계획
+  pg     int[];                        -- 사람마다 그룹 번호 4칸(전체·임원 여부·부서·성별), 0 = 없음
+  w      int[];                        -- 그룹별 무게
+  lo     int[];                        -- 그룹별 팀당 최소 = 내림(그룹 인원 / 4)
+  hi     int[];                        -- 그룹별 팀당 최대 = 올림(그룹 인원 / 4)
+  cnt    int[];                        -- (그룹, 팀)별 계획 인원: cnt[(그룹-1)*4 + 팀]
+  todo   int[] := '{}';                -- 아직 안 뽑은 사람(나 포함)
+  ok     int[];                        -- 내가 갈 수 있는 팀
+  done   int[] := array[0, 0, 0, 0];   -- 팀별 이미 뽑은 인원
+  sz     int[];
+  mv     int[];                        -- 이번에 해 볼 변경: (사람, 원래 팀, 새 팀) × 1~2
+  n int; nf int; mi int; i int; k int; g int; a int; b int; p int; q int; d int; ca int; cb int;
+  cost int := 0; best int; myteam int;
 begin
   -- 동시에 여러 명이 눌러도 한 명씩 처리(읽기는 막지 않음)
   lock table people in share row exclusive mode;
@@ -107,33 +120,113 @@ begin
     return me.team;
   end if;
 
-  select count(*) filter (where is_exec = me.is_exec),
-         count(*) filter (where dept = me.dept),
-         count(*) filter (where gender = me.gender)
-  into n_exec, n_dept, n_gender
-  from people;
+  select array_agg(id order by id), array_agg(coalesce(array_position(teams, team), 0) order by id)
+  into pid, cur from people;
+  n  := cardinality(pid);
+  mi := array_position(pid, me.id);
 
-  with t(team) as (values ('red'), ('blue'), ('yellow'), ('green')),
-  c as (
-    select t.team,
-           count(p.id) as total,
-           count(p.id) filter (where p.is_exec = me.is_exec) as same_exec,
-           count(p.id) filter (where p.dept = me.dept) as same_dept,
-           count(p.id) filter (where p.gender = me.gender) as same_gender
-    from t left join people p on p.team = t.team
-    group by t.team
-  )
-  select c.team into chosen
-  from c
-  where c.total = (select min(total) from c)
-  order by 2.0 * c.same_exec / n_exec
-         + 1.0 * c.same_dept / n_dept
-         + 1.0 * c.same_gender / greatest(n_gender, 1),
-           random()
-  limit 1;
+  with u as (
+    select id, o, gkey from people,
+      unnest(array['all', 'x' || is_exec::text, 'd' || dept, 'g' || gender]) with ordinality as t(gkey, o)),
+  gs as (
+    select gkey, count(*)::int as gsize, row_number() over (order by gkey)::int as gno
+    from u where gkey is not null group by gkey)
+  select (select array_agg(coalesce(gs.gno, 0) order by u.id, u.o) from u left join gs using (gkey)),
+         (select array_agg(case when gkey = 'all' then 10000 when gkey like 'x%' then 20 else 10 end order by gno) from gs),
+         (select array_agg(gsize / 4 order by gno) from gs),
+         (select array_agg((gsize + 3) / 4 order by gno) from gs)
+  into pg, w, lo, hi;
 
-  update people set team = chosen, picked_at = now() where id = me.id;
-  return chosen;
+  for i in 1..n loop
+    if cur[i] > 0 then done[cur[i]] := done[cur[i]] + 1; else todo := todo || i; end if;
+  end loop;
+  nf := cardinality(todo);
+
+  -- 내가 갈 수 있는 팀: 지금까지 뽑은 인원이 (가장 적은 팀 + 3)명 미만인 팀
+  select array_agg(x) into ok from generate_series(1, 4) x
+  where done[x] < (select min(y) from unnest(done) y) + 3;
+
+  -- 첫 계획: 나는 갈 수 있는 팀 중 아무 데나, 나머지는 무작위 순서로 인원 적은 팀부터 채움
+  cur[mi] := ok[1 + floor(random() * cardinality(ok))::int];
+  sz := done;
+  sz[cur[mi]] := sz[cur[mi]] + 1;
+  for i in select x from unnest(todo) x where x <> mi order by random() loop
+    select x into b from generate_series(1, 4) x order by sz[x], random() limit 1;
+    cur[i] := b;
+    sz[b] := sz[b] + 1;
+  end loop;
+
+  cnt := array_fill(0, array[cardinality(w) * 4]);
+  for i in 1..n loop
+    for k in 1..4 loop
+      g := pg[(i - 1) * 4 + k];
+      if g > 0 then cnt[(g - 1) * 4 + cur[i]] := cnt[(g - 1) * 4 + cur[i]] + 1; end if;
+    end loop;
+  end loop;
+
+  for g in 1..cardinality(w) loop
+    for k in 1..4 loop
+      cost := cost + w[g] * (greatest(0, cnt[(g - 1) * 4 + k] - hi[g]) + greatest(0, lo[g] - cnt[(g - 1) * 4 + k]));
+    end loop;
+  end loop;
+  cost := cost + done[cur[mi]] - (select min(y) from unnest(done) y);
+  best := cost;
+  myteam := cur[mi];
+
+  -- 계획 다듬기: 안 뽑은 사람 둘을 골라 팀을 맞바꾸거나(같은 팀이면 한 명을 다른 팀으로 옮김),
+  -- 벌점이 늘지 않으면 받아들인다. 초반에는 조금 늘어나는 것도 가끔 받아들여 막다른 곳을 빠져나온다.
+  -- 벌점이 가장 낮았던 계획의 내 팀을 고른다.
+  for step in 1..2000 loop
+    p := todo[1 + floor(random() * nf)::int];
+    q := todo[1 + floor(random() * nf)::int];
+    if cur[p] = cur[q] then
+      b := 1 + floor(random() * 3)::int;
+      if b >= cur[p] then b := b + 1; end if;
+      mv := array[p, cur[p], b];
+      q := 0;
+    else
+      mv := array[p, cur[p], cur[q], q, cur[q], cur[p]];
+    end if;
+    if (p = mi and not mv[3] = any(ok)) or (q = mi and not mv[6] = any(ok)) then
+      continue;
+    end if;
+
+    d := 0;
+    for m in 0..cardinality(mv) / 3 - 1 loop
+      i := mv[m * 3 + 1]; a := mv[m * 3 + 2]; b := mv[m * 3 + 3];
+      for k in 1..4 loop
+        g := pg[(i - 1) * 4 + k];
+        continue when g = 0;
+        ca := cnt[(g - 1) * 4 + a];
+        cb := cnt[(g - 1) * 4 + b];
+        d := d + w[g] * ((case when ca <= lo[g] then 1 when ca > hi[g] then -1 else 0 end)
+                       + (case when cb >= hi[g] then 1 when cb < lo[g] then -1 else 0 end));
+        cnt[(g - 1) * 4 + a] := ca - 1;
+        cnt[(g - 1) * 4 + b] := cb + 1;
+      end loop;
+      if i = mi then d := d + done[b] - done[a]; end if;
+      cur[i] := b;
+    end loop;
+
+    if d <= 0 or (d < 100 and random() < exp(-d / greatest(0.3, 15 * (1 - step / 2000.0)))) then
+      cost := cost + d;
+      if cost <= best then best := cost; myteam := cur[mi]; end if;
+    else -- 받아들이지 않으면 되돌림
+      for m in 0..cardinality(mv) / 3 - 1 loop
+        i := mv[m * 3 + 1]; a := mv[m * 3 + 2]; b := mv[m * 3 + 3];
+        for k in 1..4 loop
+          g := pg[(i - 1) * 4 + k];
+          continue when g = 0;
+          cnt[(g - 1) * 4 + a] := cnt[(g - 1) * 4 + a] + 1;
+          cnt[(g - 1) * 4 + b] := cnt[(g - 1) * 4 + b] - 1;
+        end loop;
+        cur[i] := a;
+      end loop;
+    end if;
+  end loop;
+
+  update people set team = teams[myteam], picked_at = now() where id = me.id;
+  return teams[myteam];
 end $$;
 
 -- ── 진행자용 (관리자 비밀번호 필요) ───────────────────────
@@ -171,6 +264,33 @@ begin
   return n;
 end $$;
 
+-- 사람 정보 고치기: p_row = {"dept": "영상사업부", "name": "홍길동", "title": "대리", "gender": "남"}
+-- 부서·이름은 비울 수 없고, 같은 부서에 같은 이름이 이미 있으면 막는다. 이미 뽑은 팀은 그대로 둔다.
+create or replace function public.admin_update(p_code text, p_id bigint, p_row jsonb) returns void
+language plpgsql security definer set search_path = public as $$
+declare
+  v_dept text := norm_dept(p_row->>'dept');
+  v_name text := norm_name(p_row->>'name');
+begin
+  perform check_admin(p_code);
+  if v_dept = '' or v_name = '' then
+    raise exception '부서와 이름은 비울 수 없어요.';
+  end if;
+  if exists (select 1 from people where dept = v_dept and name = v_name and id <> p_id) then
+    raise exception '%의 % 님이 이미 명단에 있어요.', v_dept, v_name;
+  end if;
+  update people
+  set dept   = v_dept,
+      name   = v_name,
+      title  = nullif(btrim(p_row->>'title'), ''),
+      gender = case when btrim(p_row->>'gender') ~* '^(남|남자|남성|m|male)$' then '남'
+                    when btrim(p_row->>'gender') ~* '^(여|여자|여성|f|female)$' then '여' end
+  where id = p_id;
+  if not found then
+    raise exception '명단에서 그 사람을 찾을 수 없어요. 새로고침해 주세요.';
+  end if;
+end $$;
+
 -- 사람 삭제. p_id 가 null 이면 명단 전체 삭제.
 create or replace function public.admin_remove(p_code text, p_id bigint) returns void
 language plpgsql security definer set search_path = public as $$
@@ -193,11 +313,11 @@ revoke all on function public.norm_dept(text), public.norm_name(text), public.ch
 
 revoke all on function
   public.departments(), public.login(text, text), public.pick(text, text),
-  public.board(text), public.admin_add(text, jsonb),
+  public.board(text), public.admin_add(text, jsonb), public.admin_update(text, bigint, jsonb),
   public.admin_remove(text, bigint), public.admin_reset(text, bigint)
   from public;
 grant execute on function
   public.departments(), public.login(text, text), public.pick(text, text),
-  public.board(text), public.admin_add(text, jsonb),
+  public.board(text), public.admin_add(text, jsonb), public.admin_update(text, bigint, jsonb),
   public.admin_remove(text, bigint), public.admin_reset(text, bigint)
   to anon, authenticated;
