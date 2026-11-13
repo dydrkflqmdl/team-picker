@@ -14,11 +14,13 @@
     .me { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 16px; }
     .me b { font-size: 17px; }
     /* 뽑기 장면: 상자를 흔드는 진행자(shake.jpg = 9컷을 가로로 붙인 그림) + 팀 공. 바탕은 그림 배경색과 같게 */
-    .scene { position: relative; height: 270px; margin: 0 0 12px; background: #fefefe; border-radius: 18px; }
+    .scene { position: relative; height: 270px; margin: 0 0 12px; background: #fefefe; border-radius: 18px; overflow: hidden; }
     .figure { position: relative; height: 100%; aspect-ratio: 379 / 507; margin: 0 auto; transform-origin: 50% 85%; }
     .sprite { width: 100%; height: 100%; background: url(shake.jpg) 0 0 / 900% 100% no-repeat; }
     .scene[data-state="shake"] .figure { animation: jiggle .24s linear infinite; }
-    @keyframes jiggle { 25% { transform: rotate(-1.2deg); } 75% { transform: rotate(1.2deg); } }
+    /* 흔들 때 그림 전체가 좌우로 기욺. 기운 그림이 장면 밖으로 삐져나오지 않게 .scene이 잘라내고(overflow),
+       기울면 아래 모서리가 2.1px 들리므로 그 밑이 비어 보이지 않게 3px 내림 */
+    @keyframes jiggle { 25% { transform: translateY(3px) rotate(-1.2deg); } 75% { transform: translateY(3px) rotate(1.2deg); } }
     /* 말풍선: 누르기 전에만 */
     .bubble { position: absolute; left: 8px; top: 44px; z-index: 1; padding: 5px 11px; border-radius: 999px;
               background: var(--accent); color: var(--accent-text); font-size: 13px; font-weight: 800; white-space: nowrap;
@@ -40,7 +42,7 @@
 <body>
 <main class="narrow">
   <h1>팀 뽑기</h1>
-  <p class="sub">부서와 이름으로 로그인한 뒤 <b>랜덤</b>을 누르면 팀 색이 정해져요.</p>
+  <p class="sub">부서와 이름으로 로그인한 뒤 <b>뽑아봐!</b>를 누르면 팀 색이 정해져요.</p>
   <p class="error" id="error" role="alert"></p>
 
   <section class="card" id="loginCard" hidden>
@@ -68,7 +70,7 @@
       <div class="bubble">눌러봐요!</div>
     </div>
     <p class="result-text" id="resultText" aria-live="polite"></p>
-    <button class="primary block" id="randomBtn">랜덤</button>
+    <button class="primary block" id="randomBtn">뽑아봐!</button>
   </section>
 </main>
 
