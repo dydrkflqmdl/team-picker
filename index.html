@@ -13,10 +13,10 @@
   <style>
     .me { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 16px; }
     .me b { font-size: 17px; }
-    /* 뽑기 장면: 상자를 흔드는 진행자(shake.jpg = 8컷을 가로로 붙인 그림) + 팀 공. 바탕은 그림 배경색과 같게 */
+    /* 뽑기 장면: 상자를 흔드는 진행자(shake.jpg = 9컷을 가로로 붙인 그림) + 팀 공. 바탕은 그림 배경색과 같게 */
     .scene { position: relative; height: 270px; margin: 0 0 12px; background: #fefefe; border-radius: 18px; }
     .figure { position: relative; height: 100%; aspect-ratio: 379 / 507; margin: 0 auto; transform-origin: 50% 85%; }
-    .sprite { width: 100%; height: 100%; background: url(shake.jpg) 0 0 / 800% 100% no-repeat; }
+    .sprite { width: 100%; height: 100%; background: url(shake.jpg) 0 0 / 900% 100% no-repeat; }
     .scene[data-state="shake"] .figure { animation: jiggle .24s linear infinite; }
     @keyframes jiggle { 25% { transform: rotate(-1.2deg); } 75% { transform: rotate(1.2deg); } }
     /* 말풍선: 누르기 전에만 */
@@ -27,13 +27,9 @@
                      background: inherit; border-radius: 2px; transform: rotate(45deg); }
     .scene:not([data-state="idle"]) .bubble { display: none; }
     @keyframes nudge { 50% { transform: translateY(-4px); } }
-    /* 팀 공: 머리 오른쪽에 떠 있음. 색·글자색은 style.css의 .team-* */
-    .ball { position: absolute; left: 104%; top: 22%; width: 36%; aspect-ratio: 1; translate: -50% -50%; border-radius: 50%;
-            display: grid; place-items: center; font-size: 18px; font-weight: 800;
-            box-shadow: inset -5px -7px 0 rgba(0, 0, 0, .15), 0 6px 14px rgba(0, 0, 0, .25); }
-    .ball::before { content: ''; position: absolute; left: 20%; top: 15%; width: 24%; height: 17%; border-radius: 50%; background: rgba(255, 255, 255, .45); }
-    .ball .ring { position: absolute; inset: -16%; border-radius: 50%; border: 4px dotted var(--accent); opacity: 0; }
-    .scene:not([data-state="done"]) .ball { display: none; }
+    /* 팀 공: 뽑은 뒤 진행자 그림을 덮는 그림(ball_팀.jpg = 상자에서 공이 튀어나와 떠 있는 18컷을 가로로 붙인 그림). 어느 팀 그림인지는 paint()가 정함 */
+    .pop { position: absolute; inset: 0; background: 0 0 / 1800% 100% no-repeat; }
+    .scene:not([data-state="done"]) .pop { display: none; }
     #randomBtn:not(:disabled) { animation: breathe 1.8s ease-in-out infinite; }
     @keyframes breathe { 50% { transform: scale(1.02); box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent) 25%, transparent); } }
     .result-text { text-align: center; font-size: 17px; margin: 0 0 16px; min-height: 1.5em; }
@@ -67,7 +63,7 @@
     <div class="scene" id="scene" role="img" aria-label="진행자가 뽑기함을 들고 기다리고 있어요" data-state="idle">
       <div class="figure">
         <div class="sprite" id="sprite"></div>
-        <div class="ball" id="ball"><span id="ballText"></span><span class="ring" id="ring"></span></div>
+        <div class="pop" id="pop"></div>
       </div>
       <div class="bubble">눌러봐요!</div>
     </div>
@@ -82,51 +78,56 @@
 
   const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-  // 진행자 그림: 0·7번 컷은 상자를 들고 있고, 1~6번 컷은 상자를 흔듦
+  // 진행자 그림(shake.jpg): 0·7번 컷은 상자를 들고 있고(옆에 주황 반짝임), 1~6번 컷은 상자를 흔듦
   const IDLE = [0, 1, 2, 3, 4, 5, 6, 7];           // 원래 GIF처럼 한 컷 0.45초
   const SHAKE = [1, 2, 3, 4, 5, 6, 5, 4, 3, 2];    // 뽑는 중: 흔드는 컷만 빠르게 왔다 갔다
-  let spriteTimer = 0;
-  const frame = (i) => { $('#sprite').style.backgroundPositionX = `${(i * 100) / 7}%`; };
-  function play(frames, ms) {
-    clearTimeout(spriteTimer);
+  const HOLD = 8;                                  // 반짝임 없이 상자를 든 컷. 팀 공 그림의 밑그림(공 그림 0번 컷과 같은 자세)
+  // 팀 공 그림(ball_팀.jpg): 0~12번 컷은 공이 상자에서 튀어나오고, 12~17번 컷은 공이 상자 위에 떠서 반짝임
+  const POP = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+  const POP_MS = [90, 90, 90, 90, 90, 90, 150, 70, 70, 70, 70, 70, 80]; // 컷마다 머무는 시간(원래 GIF 그대로)
+  const FLOAT = [13, 14, 13, 12, 15, 16, 15, 17];  // 한 컷 0.1초로 계속 되풀이
+
+  // 컷을 가로로 n장 붙인 그림에서 i번 컷을 보여주는 함수를 만듦
+  const cutter = (el, n) => (i) => { el.style.backgroundPositionX = `${(i * 100) / (n - 1)}%`; };
+  const figureCut = cutter($('#sprite'), 9);
+  const ballCut = cutter($('#pop'), 18);
+
+  let timer = 0;
+  // cuts를 차례로 보여줌. ms = 한 컷 시간(컷마다 다르면 배열). 끝까지 가면 then()을 부르고, then이 없으면 처음부터 되풀이
+  function play(show, cuts, ms, then) {
+    clearTimeout(timer);
     let k = 0;
-    const tick = () => { frame(frames[k++ % frames.length]); spriteTimer = setTimeout(tick, ms); };
+    const tick = () => {
+      if (k === cuts.length) { if (then) return then(); k = 0; }
+      show(cuts[k]);
+      timer = setTimeout(tick, ms[k] ?? ms);
+      k++;
+    };
     tick();
   }
-  function still(i = 0) { clearTimeout(spriteTimer); frame(i); }
+  function still(i = 0) { clearTimeout(timer); figureCut(i); }
 
-  // team 없으면 대기 장면(상자 흔들기 + 말풍선), 있으면 공이 떠 있는 결과 장면. landed면 공이 상자에서 튀어나옴
+  // team 없으면 대기 장면(상자 흔들기 + 말풍선), 있으면 그 팀 색 공이 상자 위에 떠 있는 결과 장면. landed면 공이 상자에서 튀어나오는 것부터 보여줌
   function paint(team, landed = false) {
     const scene = $('#scene');
     scene.dataset.state = team ? 'done' : 'idle';
-    $('#ball').className = 'ball' + (team ? ` team-${team}` : '');
-    $('#ballText').textContent = team ? TEAMS[team] : '';
     scene.setAttribute('aria-label', team ? `진행자가 ${TEAMS[team]}팀 공을 꺼냈어요` : '진행자가 뽑기함을 들고 기다리고 있어요');
-    if (team || reduced()) still(0); else play(IDLE, 450);
-    if (landed && !reduced()) {
-      // 상자 구멍(그림 가로 50%·세로 68%)에서 얼굴을 피해 오른쪽으로 돌아 공 자리(가로 104%·세로 22%)까지 튀어 오름
-      const f = $('.figure').getBoundingClientRect();
-      const at = (x, y, s, more = {}) => ({ transform: `translate(${(x - 1.04) * f.width}px, ${(y - 0.22) * f.height}px) scale(${s})`, ...more });
-      $('#ball').animate([
-        at(0.5, 0.68, 0.2, { opacity: 0 }),
-        at(0.62, 0.62, 0.45, { opacity: 1, offset: 0.25 }),
-        at(0.9, 0.46, 0.8, { offset: 0.55 }),
-        at(1.04, 0.22, 1.15, { offset: 0.8 }),
-        { transform: 'none' },
-      ], { duration: 1100, easing: 'ease-out' });
-      $('#ring').animate([{ opacity: 0, transform: 'scale(.7)' }, { opacity: 1, offset: 0.3 }, { opacity: 0, transform: 'scale(1.5)' }],
-        { duration: 700, delay: 800, easing: 'ease-out' });
-      $('#resultText').animate([{ opacity: 0 }, { opacity: 0, offset: 0.7 }, { opacity: 1 }], { duration: 1100 }); // 공이 자리 잡을 때 문구
-    }
+    $('#pop').style.backgroundImage = team ? `url(ball_${team}.jpg)` : '';
+    if (!team) return reduced() ? still() : play(figureCut, IDLE, 450);
+    still(HOLD); // 공 그림이 덮기 전이나 못 받았을 때 비치는 밑그림
+    if (reduced()) return ballCut(FLOAT[0]);
+    if (!landed) return play(ballCut, FLOAT, 100);
+    play(ballCut, POP, POP_MS, () => play(ballCut, FLOAT, 100));
+    $('#resultText').animate([{ opacity: 0 }, { opacity: 0, offset: 0.7 }, { opacity: 1 }], { duration: 1100 }); // 공이 다 올라왔을 때 문구
   }
 
-  function showMe() {
+  function showMe(landed = false) {
     $('#loginCard').hidden = true;
     $('#meCard').hidden = false;
     $('#whoDept').textContent = me.dept;
     $('#whoName').textContent = me.name;
     if (me.team) {
-      paint(me.team);
+      paint(me.team, landed);
       $('#resultText').innerHTML = `<b>${TEAMS[me.team]}팀</b>이에요!`;
       $('#randomBtn').hidden = true;
     } else {
@@ -139,7 +140,7 @@
   async function showLogin() {
     me = null;
     store.set(ME_KEY, null);
-    still(0);
+    still();
     $('#meCard').hidden = true;
     $('#loginCard').hidden = false;
     const depts = await rpc('departments');
@@ -164,14 +165,26 @@
 
   $('#logout').addEventListener('click', guard(showLogin));
 
-  // 상자를 힘차게 흔들다가(결과 올 때까지, 최소 1.8초) 결과로 넘어감. 실패하면 바로 throw → 호출한 쪽에서 대기 장면으로
+  // 그림을 다 받을 때까지 기다림. 못 받아도 4초 뒤에는 그냥 넘어감(그림은 받는 대로 나타남)
+  const fetched = (src) => new Promise((done) => {
+    const img = new Image();
+    img.onload = img.onerror = done;
+    img.src = src;
+    setTimeout(done, 4000);
+  });
+
+  // 상자를 힘차게 흔들다가 결과로 넘어감. 결과가 오고 그 팀 공 그림까지 받아야 넘어가고, 아무리 빨라도 1.8초는 흔듦.
+  // 실패하면 바로 throw → 호출한 쪽에서 대기 장면으로
   async function drawBall(resultPromise) {
     if (reduced()) return resultPromise;
     const scene = $('#scene');
     scene.dataset.state = 'shake';
     scene.setAttribute('aria-label', '진행자가 뽑기함을 힘차게 흔들고 있어요');
-    play(SHAKE, 90);
-    const [team] = await Promise.all([resultPromise, sleep(1800)]);
+    play(figureCut, SHAKE, 90);
+    const [team] = await Promise.all([
+      resultPromise.then(async (t) => { await fetched(`ball_${t}.jpg`); return t; }),
+      sleep(1800),
+    ]);
     return team;
   }
 
@@ -181,8 +194,7 @@
     $('#resultText').textContent = '두구두구…';
     try {
       me.team = await drawBall(rpc('pick', { p_dept: me.dept, p_name: me.name }));
-      showMe();
-      paint(me.team, true);
+      showMe(true);
     } catch (e) {
       showMe(); // 실패하면 원래 상태로
       throw e;
