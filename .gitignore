@@ -4,3 +4,5 @@
 roster*
 *.xlsx
 *.csv
+# 원본 GIF(사이트는 8컷을 붙인 shake.jpg만 씀)
+*.gif
