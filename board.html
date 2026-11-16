@@ -10,7 +10,7 @@
           integrity="sha384-BWcjm9OdFth9TbhCxZPdm+gAOUMAzQy9nmTs12ioXdCcbVnJaPMn+fMUoQCLt60R"
           crossorigin="anonymous"></script>
   <!-- common.js 를 고치면 v 숫자를 올린다(브라우저에 남아 있는 예전 common.js 를 새 화면이 쓰지 않게) -->
-  <script src="common.js?v=2"></script>
+  <script src="common.js?v=3"></script>
   <style>
     .head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
     .stats { color: var(--muted); }
@@ -44,6 +44,10 @@
     .people input, .people select { margin: 0; padding: 4px 6px; font-size: 14px; border-radius: 6px; min-width: 64px; }
     .table-wrap { max-height: 360px; overflow: auto; }
     .msg { font-size: 14px; color: var(--muted); }
+    /* 오류 문구: 아래쪽 명단 표에서 일하는 중에도 보이게, 화면을 내려도 위에 붙어 있음 */
+    #error:not(:empty) { position: sticky; top: 8px; z-index: 5; padding: 10px 12px; border-radius: 10px;
+                         background: var(--card); border: 1px solid var(--danger); box-shadow: 0 4px 16px rgb(0 0 0 / .12); }
+    .people td:last-child button { padding: 6px 3px; } /* 수정·다시 뽑기·삭제를 잘못 누르지 않게 누르는 자리를 조금 넓힘 */
     @media (prefers-reduced-motion: reduce) { .col li.new { animation: none; } }
   </style>
 </head>
@@ -97,7 +101,7 @@
       </div>
 
       <div class="row">
-        <button class="danger" id="resetAll">전체 다시 뽑기(팀 초기화)</button>
+        <button class="danger" id="resetAll">전체 다시 뽑기(팀·조식 초기화)</button>
         <button class="danger" id="removeAll">명단 전체 삭제</button>
         <button class="link" id="forget" style="margin-left:auto">이 기기에서 비밀번호 지우기</button>
       </div>
@@ -109,7 +113,10 @@
   const CODE_KEY = 'team-picker-admin';
   let code = store.get(CODE_KEY);
   let people = [];
-  let seen = null; // 이미 화면에 나온 배정(id) — 새로 뽑힌 사람만 깜빡이게
+  let seen = null; // 이미 화면에 나온 배정("id:팀") — 새로 뽑힌 사람만 깜빡이게
+  let drawn = '';  // 마지막으로 그린 명단. 바뀐 게 없으면 다시 그리지 않음(누르려던 단추가 그 순간 새로 그려져 눌림이 사라지는 일을 막음)
+  let seq = 0;     // 새로고침 요청 번호. 늦게 도착한 예전 답이 더 새 화면을 덮어쓰지 않게 함
+  let loading = 0; // 답을 기다리는 새로고침 수
   let editing = null; // 수정 중인 사람 id — 그동안은 5초 새로고침이 입력칸을 지우지 않게 명단 표를 다시 그리지 않음
 
   function render() {
@@ -125,10 +132,10 @@
         <div class="col">
           <h3 class="team-${t}"><span>${TEAMS[t]}</span><span>${list.length}명</span></h3>
           <div class="mix">임원 ${execs} · 여성 ${women}</div>
-          <ol>${list.map((p) => `<li class="${seen && !seen.has(p.id) ? 'new' : ''}">${esc(p.name)} <span class="hint">${p.title ? esc(p.title) + ' · ' : ''}${esc(p.dept)}</span></li>`).join('')}</ol>
+          <ol>${list.map((p) => `<li class="${seen && !seen.has(`${p.id}:${p.team}`) ? 'new' : ''}">${esc(p.name)} <span class="hint">${p.title ? esc(p.title) + ' · ' : ''}${esc(p.dept)}</span></li>`).join('')}</ol>
         </div>`;
     }).join('');
-    seen = new Set(picked.map((p) => p.id));
+    seen = new Set(picked.map((p) => `${p.id}:${p.team}`));
 
     const chip = (p) => `<span class="chip">${esc(p.name)} <span class="hint">${esc(p.dept)}</span></span>`;
     $('#waitingCount').textContent = `${waiting.length}명`;
@@ -157,13 +164,13 @@
     const team = (p) => (p.team ? `<span class="dot team-${p.team}">${TEAMS[p.team]}</span>` : '<span class="hint">-</span>');
     $('#deptList').innerHTML = [...new Set(people.map((p) => p.dept))].map((d) => `<option value="${esc(d)}">`).join('');
     $('#peopleBody').innerHTML = sorted.map((p) => p.id === editing ? `
-      <tr class="editing">
+      <tr class="editing" data-id="${p.id}">
         <td><input name="dept" value="${esc(p.dept)}" maxlength="50" list="deptList" aria-label="부서" /></td>
         <td><input name="name" value="${esc(p.name)}" maxlength="50" aria-label="이름" /></td>
         <td><input name="title" value="${esc(p.title || '')}" maxlength="30" placeholder="없음" aria-label="직급" /></td>
         <td><select name="gender" aria-label="성별">${['', '남', '여'].map((g) => `<option value="${g}"${(p.gender || '') === g ? ' selected' : ''}>${g || '-'}</option>`).join('')}</select></td>
         <td>${team(p)}</td>
-        <td><select name="menu" aria-label="조식" data-was="${p.menu || ''}">${['', ...MENU_KEYS].map((m) => `<option value="${m}"${(p.menu || '') === m ? ' selected' : ''}>${MENUS[m] || '-'}</option>`).join('')}</select></td>
+        <td><select name="menu" aria-label="조식" data-was="${esc(p.menu || '')}">${['', ...MENU_KEYS].map((m) => `<option value="${m}"${(p.menu || '') === m ? ' selected' : ''}>${MENUS[m] || '-'}</option>`).join('')}</select></td>
         <td><button class="link" data-save>저장</button> · <button class="link" data-cancel>취소</button></td>
       </tr>` : `
       <tr>
@@ -175,7 +182,7 @@
         <td>${MENUS[p.menu] || '<span class="hint">-</span>'}</td>
         <td>
           <button class="link" data-edit="${p.id}">수정</button> ·
-          ${p.team ? `<button class="link" data-reset="${p.id}">다시 뽑기</button> · ` : ''}
+          ${p.team ? `<button class="link" data-reset="${p.id}" data-name="${esc(p.name)}">다시 뽑기</button> · ` : ''}
           <button class="link danger" data-remove="${p.id}" data-name="${esc(p.name)}">삭제</button>
         </td>
       </tr>`).join('') || '<tr><td colspan="7" class="empty">명단이 비어 있어요.</td></tr>';
@@ -183,7 +190,8 @@
 
   function stopEditing() { editing = null; renderTable(); }
   // 버튼으로 명단을 바꾼 뒤에는 수정 중이던 줄을 닫고 표 전체를 새로 그림
-  function reload() { editing = null; return refresh(); }
+  // (drawn 을 비워 두면, 이 새로고침이 통신 문제로 실패해도 다음 자동 새로고침이 표를 꼭 다시 그려 수정 줄이 닫힘)
+  function reload() { editing = null; drawn = ''; return refresh(true); }
 
   // 수정 저장. 실패하면(같은 이름 등) 입력칸을 그대로 두고 위쪽에 이유를 보여줌
   async function saveEdit() {
@@ -196,27 +204,37 @@
     // 조식은 진행자가 바꿨을 때만 보냄. 수정 줄을 열어 둔 사이 그 사람이 직접 고른 메뉴를 덮어쓰지 않게
     if (v('menu') !== row.querySelector('[name="menu"]').dataset.was) p_row.menu = v('menu');
     try {
-      await rpc('admin_update', { p_code: code, p_id: editing, p_row });
+      await rpc('admin_update', { p_code: code, p_id: Number(row.dataset.id), p_row });
       await reload();
     } finally {
       controls.forEach((el) => { el.disabled = false; });
     }
   }
 
-  async function refresh() {
+  // 명단을 다시 받아 그림. force 가 아니면 바뀐 게 있을 때만 다시 그림
+  async function refresh(force = false) {
+    const mine = ++seq;
+    loading++;
     try {
-      people = await rpc('board', { p_code: code });
+      const data = await rpc('board', { p_code: code });
+      if (mine !== seq) return; // 기다리는 사이 더 새 요청이 나갔으면 이 답은 버림
       $('#codeCard').hidden = true;
       $('#boardView').hidden = false;
+      const snap = JSON.stringify(data);
+      if (!force && snap === drawn) return;
+      drawn = snap;
+      people = data;
       render();
     } catch (e) {
-      if (e.message.includes('비밀번호')) { // 틀렸거나 미설정 → 다시 입력
+      if (mine === seq && e.message.includes('비밀번호')) { // 틀렸거나 미설정 → 다시 입력
         code = null;
         store.set(CODE_KEY, null);
         $('#boardView').hidden = true;
         $('#codeCard').hidden = false;
       }
       throw e;
+    } finally {
+      loading--;
     }
   }
 
@@ -228,30 +246,40 @@
     $('#code').value = '';
   }));
 
-  // 명단 추가: 엑셀 4칸(이름·직급·성별·부서) 또는 "이름, 부서". 탭이나 쉼표로 구분 — 항상 첫 칸 이름, 마지막 칸 부서
+  // 명단 추가: 엑셀 4칸(이름·직급·성별·부서) 또는 "이름, 부서".
+  // 줄에 탭이 있으면 탭으로만 나누고(엑셀에서 복사한 줄 — 칸 안의 쉼표는 그대로 둠), 없으면 쉼표로 나눈다.
+  // 칸이 4개도 2개도 아니면 엉뚱한 칸이 이름·부서로 들어갈 수 있으므로 넣지 않고 알려준다. 너무 긴 값도 마찬가지(DB가 한 줄 때문에 전체를 거절함)
   $('#addBtn').addEventListener('click', guard(async () => {
+    $('#addMsg').textContent = ''; // 지난번 결과("N명 추가")가 이번 실패 옆에 남아 있지 않게
     const rows = [], bad = [];
-    for (const line of $('#rosterInput').value.split('\n')) {
-      if (!line.trim()) continue;
-      const cells = line.split(/\t|,/).map((s) => s.trim());
+    for (const raw of $('#rosterInput').value.split(/\r?\n/)) {
+      if (!raw.trim()) continue;
+      const cells = (raw.includes('\t') ? raw.split('\t') : raw.split(',')).map((s) => s.trim());
+      if (cells.length > 4 && cells.slice(4).every((c) => !c)) cells.length = 4; // 엑셀에서 빈 열까지 같이 복사한 경우: 뒤쪽 빈 칸은 버림
       if (cells.includes('이름') && cells.includes('부서')) continue; // 머리글 줄
-      if (cells.length >= 4 && cells[0] && cells[3]) {
-        rows.push({ name: cells[0], title: cells[1], gender: cells[2], dept: cells[3] });
-      } else if (cells.length === 2 && cells[0] && cells[1]) {
-        rows.push({ name: cells[0], dept: cells[1] });
-      } else {
-        bad.push(line.trim());
-      }
+      const row = cells.length === 4 ? { name: cells[0], title: cells[1], gender: cells[2], dept: cells[3] }
+        : cells.length === 2 ? { name: cells[0], dept: cells[1] } : null;
+      if (row && row.name && row.dept && row.name.length <= 50 && row.dept.length <= 50 && (row.title || '').length <= 30) rows.push(row);
+      else bad.push(raw.trim());
     }
-    if (!rows.length) throw new Error('추가할 줄이 없어요. "부서, 이름" 형식으로 적어 주세요.');
+    if (!rows.length) {
+      throw new Error(bad.length
+        ? `형식이 안 맞아 한 줄도 추가하지 못했어요(${bad.length}줄). 엑셀의 이름·직급·성별·부서 4칸이나 "이름, 부서"로 적어 주세요.`
+        : '추가할 줄이 없어요. "이름, 부서" 형식으로 적어 주세요.');
+    }
     const added = await rpc('admin_add', { p_code: code, p_rows: rows });
     const skipped = rows.length - added;
-    $('#addMsg').textContent = `${added}명 추가` + (skipped ? ` · 이미 있어서 건너뜀 ${skipped}명` : '') + (bad.length ? ` · 형식이 안 맞는 줄 ${bad.length}개: ${bad.slice(0, 3).join(' / ')}` : '');
-    if (!bad.length) $('#rosterInput').value = '';
+    $('#addMsg').textContent = `${added}명 추가` + (skipped ? ` · 이미 있어서 건너뜀 ${skipped}명` : '') + (bad.length ? ` · 형식이 안 맞는 ${bad.length}줄은 입력칸에 남겨 뒀어요` : '');
+    $('#rosterInput').value = bad.join('\n'); // 넣은 줄은 지우고, 못 넣은 줄만 남겨 고쳐서 다시 추가할 수 있게
     await reload();
   }));
 
-  $('#peopleBody').addEventListener('click', guard(async (e) => {
+  $('#peopleBody').addEventListener('click', (e) => {
+    const d = e.target.dataset;
+    // 단추가 아닌 곳(입력칸 등)을 누른 것은 그냥 둠 — 저장 실패 이유를 보며 입력칸을 고치는 중에 그 문구가 지워지지 않게
+    if (d.edit || d.reset || d.remove || 'cancel' in d || 'save' in d) onRowButton(e);
+  });
+  const onRowButton = guard(async (e) => {
     const { reset, remove, name, edit } = e.target.dataset;
     if (edit) { // 다른 줄을 고치던 중이면 그건 저장하지 않고 넘어감
       editing = Number(edit);
@@ -261,36 +289,52 @@
     }
     if ('cancel' in e.target.dataset) return stopEditing();
     if ('save' in e.target.dataset) return saveEdit();
-    if (reset) await rpc('admin_reset', { p_code: code, p_id: Number(reset) });
+    if (reset) {
+      if (!confirm(`${name} 님의 팀을 지우고 다시 뽑게 할까요? 조식 메뉴는 그대로 남아요.`)) return;
+      await rpc('admin_reset', { p_code: code, p_id: Number(reset) });
+    }
     if (remove) {
       if (!confirm(`${name} 님을 명단에서 지울까요?`)) return;
       await rpc('admin_remove', { p_code: code, p_id: Number(remove) });
     }
     if (reset || remove) await reload();
-  }));
-  // 입력칸에서 Enter = 저장, Esc = 취소 (한글 입력 중의 Enter는 무시)
+  });
+  // 입력칸에서 Enter = 저장, Esc = 취소. 한글을 조합하는 중의 Enter·Esc 는 글자 입력의 일부라 무시하고,
+  // 저장·취소 단추 위에서의 Enter 는 그 단추를 누르는 것이므로 건드리지 않음
   $('#peopleBody').addEventListener('keydown', (e) => {
-    if (!e.target.closest('tr.editing')) return;
-    if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); guard(saveEdit)(); }
+    if (!e.target.closest('tr.editing') || e.isComposing || e.keyCode === 229) return;
+    if (e.key === 'Enter' && e.target.matches('input, select')) { e.preventDefault(); guard(saveEdit)(); }
     if (e.key === 'Escape') stopEditing();
   });
 
   $('#resetAll').addEventListener('click', guard(async () => {
-    if (!confirm('모든 사람의 팀을 지우고 처음부터 다시 뽑게 할까요?')) return;
-    await rpc('admin_reset', { p_code: code, p_id: null });
+    const teams = people.filter((p) => p.team).length, menus = people.filter((p) => p.menu).length;
+    if (!confirm(`모든 사람의 팀과 조식 메뉴를 지우고 처음부터 다시 하게 할까요?\n지금 팀을 뽑은 ${teams}명, 조식을 고른 ${menus}명의 기록이 지워지고 되돌릴 수 없어요.`)) return;
+    await rpc('admin_reset_all', { p_code: code }); // 팀 + 조식. (admin_reset 은 팀만 지움)
     seen = null;
     await reload();
   }));
   $('#removeAll').addEventListener('click', guard(async () => {
-    if (!confirm('명단을 전부 지울까요? 되돌릴 수 없어요.')) return;
+    if (!confirm(`명단 ${people.length}명을 전부 지울까요?\n뽑은 팀과 고른 조식도 함께 사라지고 되돌릴 수 없어요.`)) return;
     await rpc('admin_remove', { p_code: code, p_id: null });
     await reload();
   }));
   $('#forget').addEventListener('click', () => { store.set(CODE_KEY, null); location.reload(); });
 
-  // 시작 + 5초마다 새로고침(화면이 보일 때만)
-  if (code) guard(refresh)(); else $('#codeCard').hidden = false;
-  setInterval(() => { if (code && !document.hidden) guard(refresh)(); }, 5000);
+  // 시작 + 5초마다 새로고침(화면이 보일 때만, 앞선 새로고침의 답을 기다리는 중이면 건너뜀). 다른 탭에 갔다 돌아오면 바로 한 번.
+  // 자동 새로고침은 화면 위의 오류 문구를 지우지 않는다(저장 실패 이유가 5초 만에 사라지지 않게).
+  // 새로고침 자체가 실패하면 그 이유를 보여주고, 다시 성공하면 그 문구만 지운다(처음 열 때의 새로고침도 같은 방식)
+  let autoMsg = '';
+  const autoRefresh = () => {
+    if (!code || document.hidden || loading) return;
+    refresh().then(
+      () => { if (autoMsg && $('#error').textContent === autoMsg) showError(''); autoMsg = ''; },
+      (e) => { autoMsg = e.message; showError(autoMsg); },
+    );
+  };
+  if (code) autoRefresh(); else $('#codeCard').hidden = false;
+  setInterval(autoRefresh, 5000);
+  document.addEventListener('visibilitychange', autoRefresh);
 </script>
 </body>
 </html>

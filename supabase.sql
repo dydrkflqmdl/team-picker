@@ -6,7 +6,7 @@
 --
 -- 구조: 참가자 화면은 테이블에 직접 접근하지 못하고, 아래 함수들만 부를 수 있다.
 --   departments() / login() / choose_menu() / pick()  ← 참가자용 (누구나)
---   board() / admin_add() / admin_update() / admin_remove() / admin_reset()  ← 진행자용 (관리자 비밀번호 필요)
+--   board() / admin_add() / admin_update() / admin_remove() / admin_reset() / admin_reset_all()  ← 진행자용 (관리자 비밀번호 필요)
 
 -- 이전 버전(명단·기록) 테이블 정리 — 비어 있음
 drop table if exists public.members, public.draws;
@@ -41,7 +41,7 @@ alter table public.people enable row level security;
 alter table public.config enable row level security;
 revoke all on public.people, public.config from anon, authenticated;
 
--- [관리자 비밀번호] 8자 이상 권장
+-- [관리자 비밀번호] 추측하기 어려운 12자 이상 권장(틀리면 1초 늦게 답하지만, 짧거나 쉬운 비밀번호는 그래도 뚫릴 수 있다)
 insert into public.config (key, value) values ('admin_code', '여기를-바꾸세요')
 on conflict (key) do update set value = excluded.value
   where excluded.value <> '여기를-바꾸세요';
@@ -102,7 +102,7 @@ begin
   return v;
 end $$;
 
--- 팀 뽑기. 이미 뽑았으면 그 팀을 그대로 돌려준다(한 번만).
+-- 팀 뽑기. 이미 뽑았으면 그 팀을 그대로 돌려준다(한 번만). 조식 메뉴를 아직 안 골랐으면 뽑을 수 없다.
 -- 누를 때마다 '아직 안 뽑은 사람 전원(나 포함)을 어떻게 나누면 가장 고른지' 계획을 새로 세우고, 그 계획의 내 팀을 준다.
 -- 1) 고른 기준: 팀 인원, 임원·비임원, 부서마다, 남·여 인원이 팀마다 (그 인원 ÷ 4)의 내림~올림 사이면 완벽.
 --    벗어난 만큼 벌점(팀 인원 10000 → 반드시 맞춤, 임원 20, 부서·성별 10).
@@ -141,6 +141,10 @@ begin
   end if;
   if me.team is not null then
     return me.team;
+  end if;
+  -- 조식 메뉴를 먼저 골라야 한다(진행자가 메뉴를 지운 뒤 예전에 열어 둔 화면에서 누른 경우도 여기서 막힘)
+  if me.menu is null then
+    raise exception '조식 메뉴를 먼저 골라 주세요.';
   end if;
 
   select array_agg(id order by id), array_agg(coalesce(array_position(teams, team), 0) order by id)
@@ -324,12 +328,23 @@ begin
   delete from people where p_id is null or id = p_id;
 end $$;
 
--- 다시 뽑을 수 있게 초기화. p_id 가 null 이면 전체 초기화.
+-- 팀만 다시 뽑을 수 있게 초기화(조식 메뉴는 그대로). p_id 가 null 이면 모든 사람의 팀.
 create or replace function public.admin_reset(p_code text, p_id bigint) returns void
 language plpgsql security definer set search_path = public as $$
 begin
   perform check_admin(p_code);
   update people set team = null, picked_at = null where p_id is null or id = p_id;
+end $$;
+
+-- 전체 다시 뽑기: 모든 사람의 팀과 조식 메뉴를 지워 처음부터 다시 하게 한다.
+-- admin_reset 과 이름을 달리한 이유: 예전에 열어 둔 진행자 화면의 "전체 다시 뽑기(팀 초기화)"는 admin_reset 을 부르는데,
+-- 그 단추가 묻지도 않고 조식까지 지우는 일이 없어야 한다.
+create or replace function public.admin_reset_all(p_code text) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  perform check_admin(p_code);
+  update people set team = null, picked_at = null, menu = null
+  where team is not null or menu is not null;
 end $$;
 
 -- ── 실행 권한 ────────────────────────────────────────────
@@ -339,10 +354,10 @@ revoke all on function public.norm_dept(text), public.norm_name(text), public.ch
 revoke all on function
   public.departments(), public.login(text, text), public.choose_menu(text, text, text), public.pick(text, text),
   public.board(text), public.admin_add(text, jsonb), public.admin_update(text, bigint, jsonb),
-  public.admin_remove(text, bigint), public.admin_reset(text, bigint)
+  public.admin_remove(text, bigint), public.admin_reset(text, bigint), public.admin_reset_all(text)
   from public;
 grant execute on function
   public.departments(), public.login(text, text), public.choose_menu(text, text, text), public.pick(text, text),
   public.board(text), public.admin_add(text, jsonb), public.admin_update(text, bigint, jsonb),
-  public.admin_remove(text, bigint), public.admin_reset(text, bigint)
+  public.admin_remove(text, bigint), public.admin_reset(text, bigint), public.admin_reset_all(text)
   to anon, authenticated;

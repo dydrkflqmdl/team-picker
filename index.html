@@ -4,16 +4,25 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>팀 뽑기</title>
+  <meta name="robots" content="noindex" />
   <link rel="stylesheet" href="style.css" />
   <link rel="preload" href="shake.jpg" as="image" />
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.js"
           integrity="sha384-BWcjm9OdFth9TbhCxZPdm+gAOUMAzQy9nmTs12ioXdCcbVnJaPMn+fMUoQCLt60R"
           crossorigin="anonymous"></script>
   <!-- common.js 를 고치면 v 숫자를 올린다(휴대폰에 남아 있는 예전 common.js 를 새 화면이 쓰지 않게) -->
-  <script src="common.js?v=2"></script>
+  <script src="common.js?v=3"></script>
   <style>
+    /* 가로로 돌려도 글자가 멋대로 커지지 않게. 키보드로 옮겨 간 메뉴 카드가 화면 아래에 붙은 단추 줄에 가리지 않게 */
+    html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; scroll-padding-bottom: 120px; }
+    button, .dish { touch-action: manipulation; } /* 연달아 눌러도 화면이 확대되지 않게 */
+    /* 화면에는 안 보이고 화면 낭독기에만 읽히는 글 */
+    .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+    h1:focus { outline: none; } /* 화면이 바뀔 때 제목으로 초점을 옮기는데, 그때 테두리는 그리지 않음 */
+    #loading { text-align: center; }
     .me { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 16px; }
     .me b { font-size: 17px; }
+    .me .logout { margin: -12px 0; padding: 12px 0 12px 12px; } /* 글자는 그대로, 누르는 자리만 넓게 */
     /* 뽑기 장면: 상자를 흔드는 진행자(shake.jpg = 9컷을 가로로 붙인 그림) + 팀 공. 바탕은 그림 배경색과 같게 */
     .scene { position: relative; height: 270px; margin: 0 0 12px; background: #fefefe; border-radius: 18px; overflow: hidden; }
     .figure { position: relative; height: 100%; aspect-ratio: 379 / 507; margin: 0 auto; transform-origin: 50% 85%; }
@@ -31,7 +40,7 @@
     .scene:not([data-state="idle"]) .bubble { display: none; }
     @keyframes nudge { 50% { transform: translateY(-4px); } }
     /* 팀 공: 뽑은 뒤 진행자 그림을 덮는 그림(ball_팀.jpg = 상자에서 공이 튀어나와 떠 있는 18컷을 가로로 붙인 그림). 어느 팀 그림인지는 paint()가 정함 */
-    .pop { position: absolute; inset: 0; background: 0 0 / 1800% 100% no-repeat; }
+    .pop { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: 0 0 / 1800% 100% no-repeat; }
     .scene:not([data-state="done"]) .pop { display: none; }
     #randomBtn:not(:disabled) { animation: breathe 1.8s ease-in-out infinite; }
     @keyframes breathe { 50% { transform: scale(1.02); box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent) 25%, transparent); } }
@@ -46,19 +55,22 @@
     #headLogin img { display: block; width: 100%; height: auto; border-radius: 14px; }
 
     /* 조식 메뉴 고르기 */
-    .notice { margin: 0 0 14px; padding: 10px 12px; border-radius: 10px; font-weight: 700; color: var(--danger);
-              background: color-mix(in srgb, var(--danger) 10%, transparent); }
-    .dish { position: relative; z-index: 0; margin: 0 0 12px; font-size: inherit; color: inherit; cursor: pointer; }
+    /* 색을 섞는 color-mix()를 모르는 예전 브라우저를 위해 같은 속성을 비슷한 색으로 한 번 먼저 적어 둠(아래 몇 군데도 같음) */
+    .notice { margin: 0 0 14px; padding: 10px 12px; border-radius: 10px; font-weight: 700; color: #b91c1c;
+              background: rgb(220 38 38 / .1); background: color-mix(in srgb, var(--danger) 10%, transparent); }
+    @media (prefers-color-scheme: dark) { .notice { color: var(--danger); } }
+    .dish { position: relative; z-index: 0; margin: 0 0 12px; font-size: inherit; color: inherit; cursor: pointer; -webkit-tap-highlight-color: transparent; }
     /* 체크 상자는 카드 전체를 덮는 투명한 층(키보드·화면 낭독기로도 그대로 고를 수 있음). 고르면 테두리로 표시.
        구석에 작게 숨기면, 카드 위쪽이 화면 밖일 때 이름을 누르는 순간 브라우저가 체크 상자를 보여 주려고 화면을 위로 튕김.
        이 층은 카드 안에서만 맨 위(.dish 의 z-index: 0). 화면 아래에 붙은 단추 줄(.choose)은 카드들보다 위라서 단추가 먼저 눌림 */
     .dish input { position: absolute; inset: 0; z-index: 1; width: 100%; height: 100%; margin: 0; padding: 0; border: 0; opacity: 0;
-                  cursor: pointer; -webkit-appearance: none; appearance: none; }
+                  cursor: pointer; -webkit-appearance: none; appearance: none; -webkit-tap-highlight-color: transparent; }
     .dish-box { display: block; border: 2px solid var(--line); border-radius: 14px; overflow: hidden; background: var(--card); }
-    .dish input:checked + .dish-box { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent); }
+    .dish input:checked + .dish-box { border-color: var(--accent); box-shadow: 0 0 0 3px rgb(99 102 241 / .3); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent); }
     .dish input:focus-visible + .dish-box { outline: 2px solid var(--accent); outline-offset: 3px; }
     /* 그림 두 장: 왼쪽 일러스트(정사각형) + 오른쪽 사진(4:3)을 같은 높이로. 너비를 3:4로 나누면 높이가 같아짐 */
     .dish-pics { display: block; position: relative; aspect-ratio: 7 / 3; background: #1e2326; }
+    @supports not (aspect-ratio: 1) { .dish-pics { height: 0; padding-top: 42.857%; } } /* aspect-ratio 를 모르는 예전 브라우저용(3/7) */
     .dish-pics img { position: absolute; top: 0; height: 100%; object-fit: cover; }
     .dish-pics img:first-child { left: 0; width: calc(300% / 7 - 1px); }
     .dish-pics img:last-child { right: 0; width: calc(400% / 7 - 1px); }
@@ -68,11 +80,14 @@
     /* 이미 하나 골랐는데 또 누른 메뉴: 골라졌다가 스르르 풀리는 모습을 잠깐 보여줌(실제로는 바로 빠짐) */
     .dish.letgo .dish-box { animation: letgo .9s ease-out; }
     .dish.letgo .dish-name::before { animation: letgo-dot .9s ease-out; }
-    @keyframes letgo { 0%, 45% { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent); } }
+    @keyframes letgo { 0%, 45% { border-color: var(--accent); box-shadow: 0 0 0 3px rgb(99 102 241 / .3); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent); } }
     @keyframes letgo-dot { 0%, 45% { border-color: var(--accent); background: radial-gradient(var(--accent) 45%, transparent 50%); } }
     .fine { margin: 0 0 12px; text-align: center; }
     /* 고르기 단추: 메뉴를 보며 화면을 내려도 항상 화면 아래에 붙어 있음 */
-    .choose { position: sticky; bottom: 0; z-index: 1; margin: 0 -16px; padding: 12px 16px; background: var(--bg); border-top: 1px solid var(--line); }
+    .choose { position: sticky; bottom: 0; z-index: 1; margin: 0 -16px; padding: 12px 16px 20px; background: var(--bg); border-top: 1px solid var(--line); }
+    @media (max-height: 520px) { .choose { position: static; } } /* 가로로 돌렸을 때처럼 화면이 낮으면 붙이지 않음(메뉴를 다 가리므로) */
+    /* 아직 못 누르는 단추: 흐리게 하면 안내 글자("메뉴를 골라 주세요")가 안 읽히므로 색으로 구분 */
+    #menuBtn:disabled { opacity: 1; background: var(--chip); color: var(--muted); }
     .choose p { margin: 0 0 10px; text-align: center; font-size: 16px; }
     .choose .swap { margin: 8px 0 0; font-size: 13px; }
     .choose .row button { flex: 1; padding: 12px; font-size: 16px; }
@@ -88,19 +103,23 @@
 <main class="narrow">
   <!-- 화면마다 맨 위에 하나씩: 로그인 = 워크숍 안내 그림, 메뉴 고르기 = 날짜, 팀 뽑기 = 제목. 처음에는 안내 그림부터 보임 -->
   <header id="headLogin">
+    <h1 class="sr-only" tabindex="-1">2026 시스테크 워크숍 · 조식 고르기와 팀 뽑기</h1>
     <!-- 그림을 바꾸면 v 숫자를 올린다(휴대폰에 남아 있는 예전 그림이 계속 보이지 않게) -->
     <img src="poster.jpg?v=2" width="1136" height="1248"
          alt="2026 시스테크 워크숍 in 오크밸리. 12월 17일(목)부터 19일(토)까지 2박 3일. 1. 12월 18일(금) 조식 고르기, 2. 팀 랜덤 뽑기" />
   </header>
   <header id="headPick" hidden>
-    <h1>팀 뽑기</h1>
+    <h1 tabindex="-1">팀 뽑기</h1>
     <p class="sub"><b>뽑아봐!</b>를 누르면 팀 색이 정해져요.</p>
   </header>
   <header id="headMenu" hidden>
-    <h1>12월 18일 금요일 조식</h1>
+    <h1 tabindex="-1">12월 18일 금요일 조식</h1>
     <p class="sub">세 가지 메뉴 중 <b>하나만</b> 고를 수 있어요.</p>
   </header>
   <p class="error" id="error" role="alert"></p>
+  <noscript><p class="error">이 페이지는 자바스크립트가 켜져 있어야 쓸 수 있어요.</p></noscript>
+  <p class="hint" id="loading">불러오는 중…</p>
+  <button class="block" id="retry" hidden>다시 시도</button>
 
   <section class="card" id="loginCard" hidden>
     <form id="loginForm">
@@ -158,11 +177,13 @@
 <script>
   const ME_KEY = 'team-picker-me';
   let me = null; // { dept, name, team, menu }
+  let busy = false; // 메뉴를 저장하거나 팀을 뽑는 중
 
   const all = (s) => [...document.querySelectorAll(s)];
   const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 
   // 화면 바꾸기: 'login'(로그인) → 'menu'(조식 메뉴 고르기) → 'team'(팀 뽑기)
+  let shown = null; // 지금 보이는 화면
   function screen(name) {
     $('#loginCard').hidden = name !== 'login';
     $('#menuCard').hidden = name !== 'menu';
@@ -170,6 +191,13 @@
     $('#headLogin').hidden = name !== 'login';
     $('#headMenu').hidden = name !== 'menu';
     $('#headPick').hidden = name !== 'team';
+    $('#loading').hidden = true;
+    $('#retry').hidden = true;
+    if (name === shown) return;
+    shown = name;
+    scrollTo(0, 0); // 앞 화면에서 내려가 있던 위치가 남지 않게
+    // 화면 낭독기·키보드를 쓰는 사람이 새 화면의 처음부터 이어 가도록 제목으로 초점을 옮김
+    $(`#${{ login: 'headLogin', menu: 'headMenu', team: 'headPick' }[name]} h1`).focus({ preventScroll: true });
   }
 
   // 진행자 그림(shake.jpg): 0·7번 컷은 상자를 들고 있고(옆에 주황 반짝임), 1~6번 컷은 상자를 흔듦
@@ -262,10 +290,10 @@
       $('#dishes').innerHTML = MENU_KEYS.map((key) => `
         <label class="dish">
           <input type="checkbox" name="menu" value="${key}" aria-label="${MENUS[key]}" />
-          <span class="dish-box">
+          <span class="dish-box" aria-hidden="true"><!-- 화면 낭독기는 위 체크 상자의 이름만 읽으면 됨(같은 이름을 네 번 읽지 않게) -->
             <span class="dish-pics">
-              <img src="menu_${key}_art.jpg" alt="${MENUS[key]} 그림" />
-              <img src="menu_${key}_photo.jpg" alt="${MENUS[key]} 실제 상차림 사진" />
+              <img src="menu_${key}_art.jpg" alt="" />
+              <img src="menu_${key}_photo.jpg" alt="" />
             </span>
             <span class="dish-name">${MENUS[key]}</span>
           </span>
@@ -276,7 +304,6 @@
     hideNag();
     syncMenu();
     screen('menu');
-    scrollTo(0, 0);
   }
 
   // 고른 메뉴에 맞춰 아래 단추 글자를 바꾸고, "정할까요?" 물음은 닫음. 딱 하나 골랐을 때만 단추를 누를 수 있음
@@ -289,6 +316,7 @@
     $('#menuSwap').hidden = keys.length !== 1;
   }
   $('#dishes').addEventListener('change', (e) => {
+    showError('');
     // 이미 하나 골랐는데 또 고름 → 나중에 누른 것은 바로 빼고 한마디. 먼저 고른 메뉴와 열려 있던 "정할까요?" 물음은 그대로
     if (e.target.checked && picks().length > 1) {
       e.target.checked = false;
@@ -300,27 +328,41 @@
     }
     syncMenu();
   });
-  $('#menuBack').addEventListener('click', syncMenu);
+  $('#menuBack').addEventListener('click', () => {
+    showError('');
+    syncMenu();
+    $('#menuBtn').focus({ preventScroll: true });
+  });
 
   // 한 번 정하면 못 바꾸므로 바로 저장하지 않고 한 번 더 물어봄
+  let askedAt = 0; // 물음을 띄운 시각
   $('#menuBtn').addEventListener('click', () => {
     const keys = picks();
     if (keys.length !== 1) return syncMenu();
+    showError('');
     $('#menuPicked').textContent = MENUS[keys[0]];
     $('#menuBtn').hidden = true;
     $('#menuSwap').hidden = true;
     $('#menuConfirm').hidden = false;
+    askedAt = performance.now();
+    $('#menuBack').focus({ preventScroll: true }); // 초점은 되돌릴 수 있는 쪽에(키보드를 두 번 눌러도 확정되지 않게)
   });
 
   $('#menuOk').addEventListener('click', guard(async () => {
+    // 선택 단추를 습관처럼 두 번 누른 손가락이 같은 자리에 뜬 이 단추까지 누르지 않게, 물음이 뜨고 0.5초는 받지 않음
+    if (performance.now() - askedAt < 500) return;
     const keys = picks();
     if (keys.length !== 1) return syncMenu();
     const key = keys[0];
     const controls = all('#menuCard button, #menuCard input');
     controls.forEach((el) => { el.disabled = true; });
+    busy = true;
     try {
-      me.menu = await rpc('choose_menu', { p_dept: me.dept, p_name: me.name, p_menu: key });
+      const saved = await rpc('choose_menu', { p_dept: me.dept, p_name: me.name, p_menu: key });
+      if (!saved) throw new Error('메뉴가 저장되지 않았어요. 다시 눌러 주세요.'); // 바로 그 순간 진행자가 메뉴를 지운 경우
+      me.menu = saved;
     } finally {
+      busy = false;
       controls.forEach((el) => { el.disabled = false; });
       scrollTo(0, 0); // 다음 화면도, 실패했을 때의 오류 문구도 맨 위에 있음
     }
@@ -333,12 +375,39 @@
     me = null;
     store.set(ME_KEY, null);
     still();
+    $('#name').value = ''; // 앞사람의 이름·부서가 남아 있지 않게
+    $('#dept').value = '';
     screen('login');
-    const depts = await rpc('departments');
+    let depts;
+    try {
+      depts = await rpc('departments');
+    } catch (e) { // 부서 목록을 못 받으면 로그인할 수 없으므로 다시 시도할 단추를 보여줌
+      $('#dept').innerHTML = '<option value="">부서를 불러오지 못했어요</option>';
+      $('#retry').hidden = false;
+      throw e;
+    }
+    const picked = $('#dept').value; // 목록을 기다리는 사이에 고른 부서는 그대로 둠
     $('#dept').innerHTML = depts.length
       ? '<option value="">부서 선택</option>' + depts.map((d) => `<option>${esc(d)}</option>`).join('')
       : '<option value="">아직 명단이 없어요</option>';
+    if (depts.includes(picked)) $('#dept').value = picked;
   }
+
+  // 서버에 저장된 내 상태를 다시 받아, 달라졌으면 화면을 맞춤(진행자가 그사이 내 팀이나 메뉴를 지웠을 수 있음).
+  // 기다리는 사이 사용자가 뭔가 했으면(로그인·저장·뽑기) 그쪽이 더 새 것이므로 받은 답은 버림
+  async function resync(force = false) {
+    const mine = me, before = `${me.team}/${me.menu}`;
+    const fresh = await rpc('login', { p_dept: me.dept, p_name: me.name });
+    if (me !== mine || (busy && !force) || `${me.team}/${me.menu}` !== before) return;
+    if (!fresh) return showLogin(); // 명단에서 지워짐
+    if (fresh.team === me.team && fresh.menu === me.menu) return;
+    me = fresh;
+    showMe();
+  }
+  // 다른 앱에 갔다가 돌아왔을 때 조용히 확인(로그인 전이거나 저장·뽑기 중이면 건너뜀)
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && me && !busy) resync().catch(() => {});
+  });
 
   $('#loginForm').addEventListener('submit', guard(async (e) => {
     e.preventDefault();
@@ -383,23 +452,36 @@
     $('#randomBtn').disabled = true;
     $('#meCard .logout').disabled = true;
     $('#resultText').textContent = '두구두구…';
+    busy = true;
     try {
       me.team = await drawBall(rpc('pick', { p_dept: me.dept, p_name: me.name }));
       showMe(true);
     } catch (e) {
       showMe(); // 실패하면 원래 상태로
+      showError(e.message); // 아래 확인이 오래 걸려도 이유는 바로 보이게
+      await resync(true).catch(() => {}); // 진행자가 그사이 메뉴를 지워서 실패한 것이면 메뉴 고르기 화면으로
+      if (me && me.team) return showError(''); // 답이 늦었을 뿐 팀은 이미 뽑혔음 → 결과가 보이므로 "다시 눌러 주세요"는 지움
       throw e;
     } finally {
+      busy = false;
       $('#randomBtn').disabled = false;
       $('#meCard .logout').disabled = false;
     }
   }));
 
-  // 시작: 이 기기에서 로그인했던 사람이면 바로 이어서
+  // 시작: 이 기기에서 로그인했던 사람이면 바로 이어서. 통신이 안 돼 실패하면 "다시 시도" 단추를 보여줌
+  $('#retry').addEventListener('click', () => location.reload());
   guard(async () => {
-    const saved = store.get(ME_KEY);
-    me = saved ? await rpc('login', { p_dept: saved.dept, p_name: saved.name }) : null;
-    me ? showMe() : await showLogin();
+    try {
+      const saved = store.get(ME_KEY);
+      const usable = saved && typeof saved.dept === 'string' && typeof saved.name === 'string'; // 저장된 값이 이상하면 로그인부터
+      me = usable ? await rpc('login', { p_dept: saved.dept, p_name: saved.name }) : null;
+      me ? showMe() : await showLogin();
+    } catch (e) {
+      $('#loading').hidden = true;
+      $('#retry').hidden = false;
+      throw e;
+    }
   })();
 </script>
 </body>
