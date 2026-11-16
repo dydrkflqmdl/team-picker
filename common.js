@@ -7,6 +7,9 @@ const db = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
 const TEAMS = { red: '빨강', blue: '파랑', yellow: '노랑', green: '초록' };
 const TEAM_KEYS = Object.keys(TEAMS);
+// 조식 메뉴. 앞의 영어 이름은 DB에 저장되는 값이자 그림 파일 이름(menu_이름_art.jpg = 일러스트, menu_이름_photo.jpg = 사진)
+const MENUS = { ugeoji: '우거지 해장국', miyeok: '소고기 미역국', hwangtae: '버섯 황태 해장국' };
+const MENU_KEYS = Object.keys(MENUS);
 
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
