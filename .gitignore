@@ -6,3 +6,8 @@ roster*
 *.csv
 # 원본 GIF(사이트는 컷을 가로로 붙인 shake.jpg·ball_*.jpg만 씀)
 *.gif
+# 원본 음식 그림(사이트는 줄여서 촬영 정보를 지운 menu_*.jpg만 씀)
+*@1x.png
+*@실사.jpg
+# 원본 워크숍 안내 그림(사이트는 줄인 poster.jpg만 씀)
+2026_*.png

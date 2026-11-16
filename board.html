@@ -9,7 +9,8 @@
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.js"
           integrity="sha384-BWcjm9OdFth9TbhCxZPdm+gAOUMAzQy9nmTs12ioXdCcbVnJaPMn+fMUoQCLt60R"
           crossorigin="anonymous"></script>
-  <script src="common.js"></script>
+  <!-- common.js 를 고치면 v 숫자를 올린다(브라우저에 남아 있는 예전 common.js 를 새 화면이 쓰지 않게) -->
+  <script src="common.js?v=2"></script>
   <style>
     .head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
     .stats { color: var(--muted); }
@@ -66,6 +67,15 @@
       <div class="chips" id="waiting"></div>
     </section>
 
+    <section class="card">
+      <h2>12월 18일 금요일 조식 <small id="menuCount"></small></h2>
+      <div class="chips" id="menus"></div>
+      <div id="noMenuBox" hidden>
+        <p class="hint" style="margin: 14px 0 6px">아직 메뉴를 안 고른 사람</p>
+        <div class="chips" id="noMenu"></div>
+      </div>
+    </section>
+
     <details class="card" id="admin">
       <summary>명단 관리</summary>
 
@@ -79,7 +89,7 @@
 
       <div class="table-wrap">
         <table class="people">
-          <thead><tr><th>부서</th><th>이름</th><th>직급</th><th>성별</th><th>팀</th><th></th></tr></thead>
+          <thead><tr><th>부서</th><th>이름</th><th>직급</th><th>성별</th><th>팀</th><th>조식</th><th></th></tr></thead>
           <tbody id="peopleBody"></tbody>
         </table>
         <datalist id="deptList"></datalist>
@@ -119,10 +129,18 @@
     }).join('');
     seen = new Set(picked.map((p) => p.id));
 
+    const chip = (p) => `<span class="chip">${esc(p.name)} <span class="hint">${esc(p.dept)}</span></span>`;
     $('#waitingCount').textContent = `${waiting.length}명`;
     $('#waiting').innerHTML = waiting.length
-      ? waiting.map((p) => `<span class="chip">${esc(p.name)} <span class="hint">${esc(p.dept)}</span></span>`).join('')
+      ? waiting.map(chip).join('')
       : `<span class="empty">${people.length ? '모두 뽑았어요!' : '아직 명단이 없어요. 아래 명단 관리에서 추가하세요.'}</span>`;
+
+    // 조식: 메뉴별 인원 + 아직 안 고른 사람
+    const noMenu = people.filter((p) => !p.menu);
+    $('#menuCount').textContent = `고름 ${people.length - noMenu.length}명 · 안 고름 ${noMenu.length}명`;
+    $('#menus').innerHTML = MENU_KEYS.map((m) => `<span class="chip">${MENUS[m]} <b>${people.filter((p) => p.menu === m).length}</b>명</span>`).join('');
+    $('#noMenuBox').hidden = !noMenu.length;
+    $('#noMenu').innerHTML = noMenu.map(chip).join('');
 
     if (editing == null) renderTable();
   }
@@ -139,6 +157,7 @@
         <td><input name="title" value="${esc(p.title || '')}" maxlength="30" placeholder="없음" aria-label="직급" /></td>
         <td><select name="gender" aria-label="성별">${['', '남', '여'].map((g) => `<option value="${g}"${(p.gender || '') === g ? ' selected' : ''}>${g || '-'}</option>`).join('')}</select></td>
         <td>${team(p)}</td>
+        <td><select name="menu" aria-label="조식" data-was="${p.menu || ''}">${['', ...MENU_KEYS].map((m) => `<option value="${m}"${(p.menu || '') === m ? ' selected' : ''}>${MENUS[m] || '-'}</option>`).join('')}</select></td>
         <td><button class="link" data-save>저장</button> · <button class="link" data-cancel>취소</button></td>
       </tr>` : `
       <tr>
@@ -147,12 +166,13 @@
         <td>${esc(p.title || '-')}</td>
         <td>${esc(p.gender || '-')}</td>
         <td>${team(p)}</td>
+        <td>${MENUS[p.menu] || '<span class="hint">-</span>'}</td>
         <td>
           <button class="link" data-edit="${p.id}">수정</button> ·
           ${p.team ? `<button class="link" data-reset="${p.id}">다시 뽑기</button> · ` : ''}
           <button class="link danger" data-remove="${p.id}" data-name="${esc(p.name)}">삭제</button>
         </td>
-      </tr>`).join('') || '<tr><td colspan="6" class="empty">명단이 비어 있어요.</td></tr>';
+      </tr>`).join('') || '<tr><td colspan="7" class="empty">명단이 비어 있어요.</td></tr>';
   }
 
   function stopEditing() { editing = null; renderTable(); }
@@ -166,8 +186,11 @@
     const v = (n) => row.querySelector(`[name="${n}"]`).value;
     const controls = row.querySelectorAll('input, select, button');
     controls.forEach((el) => { el.disabled = true; });
+    const p_row = { dept: v('dept'), name: v('name'), title: v('title'), gender: v('gender') };
+    // 조식은 진행자가 바꿨을 때만 보냄. 수정 줄을 열어 둔 사이 그 사람이 직접 고른 메뉴를 덮어쓰지 않게
+    if (v('menu') !== row.querySelector('[name="menu"]').dataset.was) p_row.menu = v('menu');
     try {
-      await rpc('admin_update', { p_code: code, p_id: editing, p_row: { dept: v('dept'), name: v('name'), title: v('title'), gender: v('gender') } });
+      await rpc('admin_update', { p_code: code, p_id: editing, p_row });
       await reload();
     } finally {
       controls.forEach((el) => { el.disabled = false; });

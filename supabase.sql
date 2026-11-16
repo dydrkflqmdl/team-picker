@@ -5,7 +5,7 @@
 --    다시 Run 할 때 '여기를-바꾸세요' 를 그대로 두면 기존 비밀번호가 유지돼요.
 --
 -- 구조: 참가자 화면은 테이블에 직접 접근하지 못하고, 아래 함수들만 부를 수 있다.
---   departments() / login() / pick()          ← 참가자용 (누구나)
+--   departments() / login() / choose_menu() / pick()  ← 참가자용 (누구나)
 --   board() / admin_add() / admin_update() / admin_remove() / admin_reset()  ← 진행자용 (관리자 비밀번호 필요)
 
 -- 이전 버전(명단·기록) 테이블 정리 — 비어 있음
@@ -26,6 +26,10 @@ alter table public.people
   add column if not exists gender  text check (gender in ('남', '여')),
   add column if not exists is_exec boolean
     generated always as (coalesce(title ~ '(대표|이사|고문|상무|전무|사장|회장)', false)) stored;
+-- 조식 메뉴(12월 18일 금요일 아침). 고르기 전에는 비어 있고, 참가자가 한 번 고르면 못 바꾼다.
+-- 'ugeoji' = 우거지 해장국, 'miyeok' = 소고기 미역국, 'hwangtae' = 버섯 황태 해장국
+alter table public.people
+  add column if not exists menu text check (menu in ('ugeoji', 'miyeok', 'hwangtae'));
 
 create table if not exists public.config (
   key   text primary key,
@@ -71,13 +75,32 @@ language sql stable security definer set search_path = public as $$
   select distinct dept from people order by dept
 $$;
 
--- 명단에 있으면 {dept, name, team}, 없으면 null
+-- 명단에 있으면 {dept, name, team, menu}, 없으면 null
 create or replace function public.login(p_dept text, p_name text) returns json
 language sql stable security definer set search_path = public as $$
-  select json_build_object('dept', dept, 'name', name, 'team', team)
+  select json_build_object('dept', dept, 'name', name, 'team', team, 'menu', menu)
   from people
   where dept = norm_dept(p_dept) and name = norm_name(p_name)
 $$;
+
+-- 조식 메뉴 고르기. 한 사람이 하나만, 한 번만 고를 수 있다.
+-- 이미 골랐으면 새로 보낸 값은 버리고 처음 고른 메뉴를 그대로 돌려준다(동시에 두 번 눌러도 먼저 온 것만 남음).
+create or replace function public.choose_menu(p_dept text, p_name text, p_menu text) returns text
+language plpgsql security definer set search_path = public as $$
+declare v text;
+begin
+  if p_menu is null or p_menu not in ('ugeoji', 'miyeok', 'hwangtae') then
+    raise exception '메뉴를 다시 골라 주세요.';
+  end if;
+  update people set menu = p_menu
+  where dept = norm_dept(p_dept) and name = norm_name(p_name) and menu is null;
+  select menu into v from people
+  where dept = norm_dept(p_dept) and name = norm_name(p_name);
+  if not found then
+    raise exception '명단에 없는 부서·이름이에요.';
+  end if;
+  return v;
+end $$;
 
 -- 팀 뽑기. 이미 뽑았으면 그 팀을 그대로 돌려준다(한 번만).
 -- 누를 때마다 '아직 안 뽑은 사람 전원(나 포함)을 어떻게 나누면 가장 고른지' 계획을 새로 세우고, 그 계획의 내 팀을 준다.
@@ -230,7 +253,7 @@ begin
 end $$;
 
 -- ── 진행자용 (관리자 비밀번호 필요) ───────────────────────
--- 전체 현황: [{id, dept, name, title, gender, is_exec, team, picked_at}, ...]
+-- 전체 현황: [{id, dept, name, title, gender, is_exec, team, picked_at, menu}, ...]
 create or replace function public.board(p_code text) returns json
 language plpgsql security definer set search_path = public as $$
 begin
@@ -238,7 +261,7 @@ begin
   return (
     select coalesce(json_agg(json_build_object(
              'id', id, 'dept', dept, 'name', name, 'title', title, 'gender', gender,
-             'is_exec', is_exec, 'team', team, 'picked_at', picked_at)
+             'is_exec', is_exec, 'team', team, 'picked_at', picked_at, 'menu', menu)
              order by picked_at nulls last, dept, name), '[]'::json)
     from people
   );
@@ -266,6 +289,7 @@ end $$;
 
 -- 사람 정보 고치기: p_row = {"dept": "영상사업부", "name": "홍길동", "title": "대리", "gender": "남"}
 -- 부서·이름은 비울 수 없고, 같은 부서에 같은 이름이 이미 있으면 막는다. 이미 뽑은 팀은 그대로 둔다.
+-- "menu" 가 들어 있으면 조식 메뉴도 고친다("" 이면 안 고른 상태로 되돌려 그 사람이 다시 고르게 함). 없으면 그대로 둔다.
 create or replace function public.admin_update(p_code text, p_id bigint, p_row jsonb) returns void
 language plpgsql security definer set search_path = public as $$
 declare
@@ -284,7 +308,8 @@ begin
       name   = v_name,
       title  = nullif(btrim(p_row->>'title'), ''),
       gender = case when btrim(p_row->>'gender') ~* '^(남|남자|남성|m|male)$' then '남'
-                    when btrim(p_row->>'gender') ~* '^(여|여자|여성|f|female)$' then '여' end
+                    when btrim(p_row->>'gender') ~* '^(여|여자|여성|f|female)$' then '여' end,
+      menu   = case when p_row ? 'menu' then nullif(p_row->>'menu', '') else menu end
   where id = p_id;
   if not found then
     raise exception '명단에서 그 사람을 찾을 수 없어요. 새로고침해 주세요.';
@@ -312,12 +337,12 @@ revoke all on function public.norm_dept(text), public.norm_name(text), public.ch
   from public, anon, authenticated;
 
 revoke all on function
-  public.departments(), public.login(text, text), public.pick(text, text),
+  public.departments(), public.login(text, text), public.choose_menu(text, text, text), public.pick(text, text),
   public.board(text), public.admin_add(text, jsonb), public.admin_update(text, bigint, jsonb),
   public.admin_remove(text, bigint), public.admin_reset(text, bigint)
   from public;
 grant execute on function
-  public.departments(), public.login(text, text), public.pick(text, text),
+  public.departments(), public.login(text, text), public.choose_menu(text, text, text), public.pick(text, text),
   public.board(text), public.admin_add(text, jsonb), public.admin_update(text, bigint, jsonb),
   public.admin_remove(text, bigint), public.admin_reset(text, bigint)
   to anon, authenticated;
