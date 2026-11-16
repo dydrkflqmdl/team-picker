@@ -28,6 +28,11 @@
     .chips { display: flex; flex-wrap: wrap; gap: 6px; }
     .chip { background: var(--chip); border-radius: 999px; padding: 3px 12px; font-size: 14px; }
     .empty { color: var(--muted); font-size: 14px; }
+    /* 조식: 메뉴마다 "메뉴 이름 N명" + 고른 사람들 */
+    .menu-group + .menu-group { margin-top: 16px; }
+    .menu-group p { margin: 0 0 6px; font-size: 14px; font-weight: 600; }
+    .menu-group p b { font-size: 17px; }
+    .menu-group.none p { color: var(--muted); font-weight: 400; }
     details.card > summary { cursor: pointer; font-weight: 600; }
     details.card[open] > summary { margin-bottom: 14px; }
     .people { width: 100%; border-collapse: collapse; font-size: 14px; margin: 8px 0 16px; }
@@ -69,11 +74,7 @@
 
     <section class="card">
       <h2>12월 18일 금요일 조식 <small id="menuCount"></small></h2>
-      <div class="chips" id="menus"></div>
-      <div id="noMenuBox" hidden>
-        <p class="hint" style="margin: 14px 0 6px">아직 메뉴를 안 고른 사람</p>
-        <div class="chips" id="noMenu"></div>
-      </div>
+      <div id="menus"></div>
     </section>
 
     <details class="card" id="admin">
@@ -135,12 +136,17 @@
       ? waiting.map(chip).join('')
       : `<span class="empty">${people.length ? '모두 뽑았어요!' : '아직 명단이 없어요. 아래 명단 관리에서 추가하세요.'}</span>`;
 
-    // 조식: 메뉴별 인원 + 아직 안 고른 사람
+    // 조식: 메뉴마다 고른 사람들(부서·이름순) + 아직 안 고른 사람
+    const byName = (a, b) => a.dept.localeCompare(b.dept, 'ko') || a.name.localeCompare(b.name, 'ko');
+    const group = (title, list, cls = '') => `
+      <div class="menu-group ${cls}">
+        <p>${title} <b>${list.length}</b>명</p>
+        <div class="chips">${[...list].sort(byName).map(chip).join('') || '<span class="empty">아직 없어요</span>'}</div>
+      </div>`;
     const noMenu = people.filter((p) => !p.menu);
     $('#menuCount').textContent = `고름 ${people.length - noMenu.length}명 · 안 고름 ${noMenu.length}명`;
-    $('#menus').innerHTML = MENU_KEYS.map((m) => `<span class="chip">${MENUS[m]} <b>${people.filter((p) => p.menu === m).length}</b>명</span>`).join('');
-    $('#noMenuBox').hidden = !noMenu.length;
-    $('#noMenu').innerHTML = noMenu.map(chip).join('');
+    $('#menus').innerHTML = MENU_KEYS.map((m) => group(MENUS[m], people.filter((p) => p.menu === m))).join('')
+      + (noMenu.length ? group('아직 안 고른 사람', noMenu, 'none') : '');
 
     if (editing == null) renderTable();
   }
