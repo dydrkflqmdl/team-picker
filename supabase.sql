@@ -5,7 +5,7 @@
 --    다시 Run 할 때 '여기를-바꾸세요' 를 그대로 두면 기존 비밀번호가 유지돼요.
 --
 -- 구조: 참가자 화면은 테이블에 직접 접근하지 못하고, 아래 함수들만 부를 수 있다.
---   departments() / login() / choose_menu() / pick() / schedule()  ← 참가자용 (누구나)
+--   departments() / login() / choose_menu() / pick() / schedule() / team_members()  ← 참가자용 (누구나)
 --   board() / admin_add() / admin_update() / admin_remove() / admin_reset() / admin_reset_all()  ← 진행자용 (관리자 비밀번호 필요)
 -- 일정표: 진행자가 진행자 화면에서 적고(admin_set), 참가자 화면이 schedule() 로 받아 보여준다.
 -- 준비해 둔 기능(시험용: 객실표·자유시간)은 진행자 화면에만 있다. 참가자가 부를 수 있는 함수는 없다.
@@ -274,6 +274,15 @@ language sql stable security definer set search_path = public as $$
   where dept = norm_dept(p_dept) and name = norm_name(p_name)
 $$;
 
+-- 우리 팀 사람들: 팀을 뽑은 사람에게만 같은 팀 사람들 [{dept, name, title}] (나 포함, 뽑은 차례). 팀이 없거나 명단에 없으면 null.
+create or replace function public.team_members(p_dept text, p_name text) returns json
+language sql stable security definer set search_path = public as $$
+  select json_agg(json_build_object('dept', p.dept, 'name', p.name, 'title', p.title) order by p.picked_at, p.id)
+  from people me
+  join people p on p.team = me.team
+  where me.dept = norm_dept(p_dept) and me.name = norm_name(p_name) and me.team is not null
+$$;
+
 -- ── 진행자용 (관리자 비밀번호 필요) ───────────────────────
 -- 전체 현황: [{id, dept, name, title, gender, is_exec, team, picked_at, menu, room, activity}, ...]
 create or replace function public.board(p_code text) returns json
@@ -442,13 +451,13 @@ revoke all on function public.norm_dept(text), public.norm_name(text), public.ch
   from public, anon, authenticated;
 
 revoke all on function
-  public.departments(), public.login(text, text), public.choose_menu(text, text, text), public.pick(text, text), public.schedule(text, text),
+  public.departments(), public.login(text, text), public.choose_menu(text, text, text), public.pick(text, text), public.schedule(text, text), public.team_members(text, text),
   public.board(text), public.admin_add(text, jsonb), public.admin_update(text, bigint, jsonb),
   public.admin_remove(text, bigint), public.admin_reset(text, bigint), public.admin_reset_all(text),
   public.board_state(text), public.admin_assign(text, text, jsonb), public.admin_clear(text, text), public.admin_set(text, text, text)
   from public;
 grant execute on function
-  public.departments(), public.login(text, text), public.choose_menu(text, text, text), public.pick(text, text), public.schedule(text, text),
+  public.departments(), public.login(text, text), public.choose_menu(text, text, text), public.pick(text, text), public.schedule(text, text), public.team_members(text, text),
   public.board(text), public.admin_add(text, jsonb), public.admin_update(text, bigint, jsonb),
   public.admin_remove(text, bigint), public.admin_reset(text, bigint), public.admin_reset_all(text),
   public.board_state(text), public.admin_assign(text, text, jsonb), public.admin_clear(text, text), public.admin_set(text, text, text)

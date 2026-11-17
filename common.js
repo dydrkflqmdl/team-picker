@@ -74,11 +74,13 @@ function planHtml(text) {
       + `<span class="plan-dot" aria-hidden="true">${icon}</span>`
       + `<span class="plan-what"><span class="plan-text">${esc(name)}</span>${more ? `<small>${esc(more)}</small>` : ''}</span></li>`;
   };
-  return days.map((d) => `
-    <div class="plan-day">
-      ${d.title ? head(d.title) : ''}
-      ${d.items.length ? `<ol class="plan">${d.items.map(item).join('')}</ol>` : ''}
-    </div>`).join('');
+  // 날짜마다 접고 펼 수 있음(머리띠를 누름). 제목만 있고 일정이 없거나, 제목 없이 일정만 있는 묶음은 접을 것이 없어 그냥 보여줌
+  return days.map((d) => {
+    const list = d.items.length ? `<ol class="plan">${d.items.map(item).join('')}</ol>` : '';
+    return d.title && list ? `
+    <details class="plan-day" open><summary>${head(d.title)}</summary>${list}</details>` : `
+    <div class="plan-day">${d.title ? head(d.title) : ''}${list}</div>`;
+  }).join('');
 }
 
 // DB 함수 호출. 오류면 한국어 메시지로 throw.
