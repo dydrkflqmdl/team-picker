@@ -11,7 +11,7 @@
           integrity="sha384-BWcjm9OdFth9TbhCxZPdm+gAOUMAzQy9nmTs12ioXdCcbVnJaPMn+fMUoQCLt60R"
           crossorigin="anonymous"></script>
   <!-- common.js 를 고치면 v 숫자를 올린다(휴대폰에 남아 있는 예전 common.js 를 새 화면이 쓰지 않게) -->
-  <script src="common.js?v=4"></script>
+  <script src="common.js?v=3"></script>
   <style>
     /* 가로로 돌려도 글자가 멋대로 커지지 않게. 키보드로 옮겨 간 메뉴 카드가 화면 아래에 붙은 단추 줄에 가리지 않게 */
     html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; scroll-padding-bottom: 120px; }
@@ -97,20 +97,6 @@
            pointer-events: none; box-shadow: 0 12px 40px rgb(0 0 0 / .35); animation: nag-in .25s cubic-bezier(.2, 1.4, .4, 1); }
     .nag b { display: block; margin-bottom: 4px; font-size: 20px; }
     @keyframes nag-in { from { opacity: 0; transform: translate(-50%, -50%) scale(.8); } }
-
-    /* 진행자가 켠 안내(내 워크숍 정보 · 자유시간 고르기 · 일정표). 팀까지 뽑은 사람의 화면 아래쪽에만 나타남 */
-    .my { margin: 0; }
-    .my div { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 9px 0; border-top: 1px solid var(--line); }
-    .my div:first-child { border-top: 0; padding-top: 0; }
-    .my div:last-child { padding-bottom: 0; }
-    .my dt { color: var(--muted); font-size: 13px; }
-    .my dd { margin: 0; font-weight: 700; text-align: right; }
-    .my .dot { display: inline-block; padding: 2px 14px; border-radius: 999px; }
-    .acts { display: flex; gap: 8px; }
-    .acts button { flex: 1; padding: 14px; font-size: 16px; }
-    .acts button[aria-pressed="true"] { background: var(--accent); color: var(--accent-text); border-color: transparent; font-weight: 700; }
-    .acts.busy { opacity: .6; }
-    #actMsg { margin: 10px 0 0; text-align: center; }
   </style>
 </head>
 <body>
@@ -186,24 +172,6 @@
     <button class="primary block" id="randomBtn">뽑아봐!</button>
     <p class="breakfast">12월 18일 금요일 조식 · <b id="myMenu"></b></p>
   </section>
-
-  <!-- 진행자가 켠 안내: 팀까지 뽑은 사람에게만, 진행자 화면의 "참가자 화면에 보이기"에서 켠 것만 나타남. 모두 꺼져 있으면 아무것도 안 보임 -->
-  <div id="more" hidden>
-    <section class="card" id="myCard" hidden>
-      <h2>내 워크숍 정보</h2>
-      <dl class="my" id="myList"></dl>
-    </section>
-    <section class="card" id="actCard" hidden>
-      <h2>저녁 식사 뒤 자유시간</h2>
-      <p class="sub">스키와 사우나 중 하나를 골라 주세요. 다른 쪽을 누르면 바뀌어요.</p>
-      <div class="acts" id="acts" role="group" aria-label="자유시간에 할 것"></div>
-      <p class="hint" id="actMsg" role="status"></p>
-    </section>
-    <section class="card" id="planCard" hidden>
-      <h2>일정표</h2>
-      <div id="plan"></div>
-    </section>
-  </div>
 </main>
 
 <script>
@@ -223,7 +191,6 @@
     $('#headLogin').hidden = name !== 'login';
     $('#headMenu').hidden = name !== 'menu';
     $('#headPick').hidden = name !== 'team';
-    if (name !== 'team') $('#more').hidden = true; // 진행자가 켠 안내는 팀 뽑기 화면에서만(보일지는 paintMore 가 정함)
     $('#loading').hidden = true;
     $('#retry').hidden = true;
     if (name === shown) return;
@@ -292,86 +259,7 @@
       $('#resultText').textContent = '버튼을 눌러 팀을 뽑으세요. 한 번만 뽑을 수 있어요.';
       $('#randomBtn').hidden = false;
     }
-    paintMore();
-    loadMore();
   }
-
-  // ── 진행자가 켠 안내: 내 팀·조식 요약, 내 객실, 자유시간 고르기, 일정표 ──
-  // 팀까지 뽑은 사람에게만, 진행자 화면의 "참가자 화면에 보이기"에서 켠 것만 보여줌. 모두 꺼져 있으면 아무것도 안 보임(원래 화면 그대로)
-  // 이 부분은 화면을 열 때 common.js 의 새 이름(ACTS, ROOMS, planHtml)을 바로 쓰지 않는다 —
-  // 드물게 예전 common.js 가 남아 있어도 메뉴 고르기·팀 뽑기는 그대로 되어야 하므로(그때는 안내만 건너뜀)
-  let more = null;      // 서버가 준 것 { show: [켠 것들], schedule, room, activity }. 로그인 전이거나 아직 못 받았으면 null
-  let choosing = null;  // 자유시간을 저장하는 중인 사람(me). 그 사람의 화면에서만 단추를 막고, 그사이 온 다른 답을 버림
-  let actNote = '';     // 자유시간 저장이 실패한 이유(그 칸 바로 아래에 보여줌 — 화면 맨 위의 오류 자리는 여기서 안 보이므로)
-  let actTried = '';    // 저장에 실패했을 때 고르려던 것
-  // 같은 내용이면 건드리지 않음(화면 낭독기가 같은 말을 되풀이해 읽지 않게). 넣은 글을 기억해 두고 견줌 — 화면에서 되읽으면 따옴표 표기가 달라 늘 다르다고 나옴
-  const filled = new Map();
-  const fill = (el, html) => { if (filled.get(el) !== html) { filled.set(el, html); el.innerHTML = html; } };
-
-  function paintMore() {
-    const done = !!(more && me && me.team && me.menu);
-    const on = (k) => done && more.show.includes(k);
-    const rows = [];
-    if (on('summary')) rows.push(['팀', `<span class="dot team-${me.team}">${TEAMS[me.team]}</span>`], ['12월 18일(금) 조식', MENUS[me.menu]]);
-    if (on('room')) rows.push(['객실', ROOMS[more.room] || '<span class="hint">아직 정해지지 않았어요</span>']);
-    fill($('#myList'), rows.map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`).join(''));
-    $('#myCard').hidden = !rows.length;
-
-    const act = on('activity');
-    if (act && !$('#acts').children.length) { // 단추는 처음 필요할 때 만듦
-      $('#acts').innerHTML = ACT_KEYS.map((k) => `<button type="button" data-act="${k}" aria-pressed="false">${ACTS[k]}</button>`).join('');
-    }
-    // 진행자가 꺼서 이 칸이 사라질 때, 그 안에 있던 초점은 화면 제목으로 옮김(초점이 갈 곳을 잃지 않게)
-    if (!act && shown === 'team' && $('#actCard').contains(document.activeElement)) $('#headPick h1').focus({ preventScroll: true });
-    $('#actCard').hidden = !act;
-    $('#acts').classList.toggle('busy', !!choosing && choosing === me);
-    all('#acts button').forEach((b) => b.setAttribute('aria-pressed', String(act && more.activity === b.dataset.act)));
-    fill($('#actMsg'), !act ? '' : esc(actNote) || (ACTS[more.activity] ? `<b>${ACTS[more.activity]}</b>로 정했어요.` : '아직 고르지 않았어요.'));
-
-    const plan = on('schedule') ? planHtml(more.schedule) : '';
-    fill($('#plan'), plan);
-    $('#planCard').hidden = !plan; // 켜져 있어도 적어 둔 일정이 없으면 칸을 안 보임
-
-    $('#more').hidden = shown !== 'team' || !(rows.length || act || plan);
-  }
-
-  // 진행자가 켠 것을 받아 옴. 못 받으면 말없이 지금 보이는 대로 둠(이 안내가 없어도 메뉴 고르기·팀 뽑기는 그대로 되어야 하므로 오류를 띄우지 않음)
-  async function loadMore() {
-    const mine = me;
-    if (!me || !me.team || typeof planHtml !== 'function') return;
-    let got;
-    try { got = await rpc('extras', { p_dept: me.dept, p_name: me.name }); } catch { return; }
-    if (me !== mine || choosing === me) return; // 그사이 다른 사람으로 바뀌었거나 자유시간을 저장하는 중이면, 받은 답은 버림
-    more = got && Array.isArray(got.show) ? got : null;
-    if (more && actNote && more.activity === actTried) actNote = ''; // 답이 늦었을 뿐 저장은 돼 있었음 → 실패 문구를 지움
-    paintMore();
-  }
-
-  // 자유시간 고르기: 누르면 바로 저장. 진행자가 켜 둔 동안에는 다른 쪽을 눌러 바꿀 수 있음
-  $('#acts').addEventListener('click', async (e) => {
-    const key = e.target.dataset.act;
-    if (!key || !me || !more || choosing === me) return;
-    if (more.activity === key) { // 이미 고른 것을 또 누름: 다시 저장하지 않고, 남아 있던 실패 문구만 지움
-      if (actNote) { actNote = ''; paintMore(); }
-      return;
-    }
-    const mine = me;
-    let failed = false;
-    choosing = mine;
-    actNote = '';
-    paintMore();
-    try {
-      const saved = await rpc('choose_activity', { p_dept: mine.dept, p_name: mine.name, p_activity: key });
-      if (me === mine && more) more.activity = saved;
-    } catch (err) {
-      failed = true;
-      if (me === mine) { actNote = err.message; actTried = key; } // 그사이 다른 사람으로 바뀌었으면 그 사람 화면에는 보이지 않게
-    } finally {
-      if (choosing === mine) choosing = null;
-      paintMore();
-      if (failed && me === mine) loadMore(); // 진행자가 그사이 껐으면 이 칸이 사라지고, 답이 늦었을 뿐 저장됐으면 고른 것으로 표시됨
-    }
-  });
 
   // ── 조식 메뉴 고르기 ──
   // 지금 고른 메뉴들. 눌러서 고르고 다시 눌러서 빼는 체크 상자. 2개째는 바로 빠지므로 늘 0개 아니면 1개고, 딱 하나일 때만 확정할 수 있음
@@ -485,8 +373,6 @@
 
   async function showLogin() {
     me = null;
-    more = null; // 앞사람의 객실·자유시간이 다음 사람에게 보이지 않게
-    actNote = actTried = '';
     store.set(ME_KEY, null);
     still();
     $('#name').value = ''; // 앞사람의 이름·부서가 남아 있지 않게
@@ -520,7 +406,7 @@
   }
   // 다른 앱에 갔다가 돌아왔을 때 조용히 확인(로그인 전이거나 저장·뽑기 중이면 건너뜀)
   document.addEventListener('visibilitychange', () => {
-    if (!document.hidden && me && !busy) resync().catch(() => {}).then(loadMore); // 진행자가 켜고 끈 안내도 다시 확인
+    if (!document.hidden && me && !busy) resync().catch(() => {});
   });
 
   $('#loginForm').addEventListener('submit', guard(async (e) => {
