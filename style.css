@@ -40,8 +40,14 @@ button:disabled { opacity: .5; cursor: default; }
 .plan-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin: 0; padding: 10px 14px; border-radius: 12px; font-size: 15px;
              background: var(--chip); background: color-mix(in srgb, var(--accent) 12%, var(--card)); }
 .plan-tag { padding: 2px 10px; border-radius: 999px; background: var(--accent); color: var(--accent-text); font-size: 12px; font-weight: 800; }
-.plan-date { font-weight: 800; }
-.plan-theme { margin-left: auto; color: var(--muted); font-size: 13px; font-weight: 500; }
+.plan-date { flex: 1 1 auto; font-weight: 800; }
+.plan-theme { color: var(--muted); font-size: 13px; font-weight: 500; }
+/* 날짜 머리띠를 누르면 그날 일정이 접히고 펴짐. 오른쪽 끝의 꺾쇠가 방향을 알려 줌 */
+details.plan-day > summary { list-style: none; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+details.plan-day > summary::-webkit-details-marker { display: none; }
+.plan-head::after { content: ''; flex: none; width: 7px; height: 7px; margin: 0 2px 3px 4px; border-right: 2px solid var(--muted); border-bottom: 2px solid var(--muted); transform: rotate(45deg); transition: transform .15s; }
+details.plan-day:not([open]) .plan-head::after { margin-bottom: -2px; transform: rotate(-45deg); }
+div.plan-day .plan-head::after { display: none; }
 .plan { list-style: none; margin: 0; padding: 6px 2px 0; }
 .plan li { position: relative; display: grid; grid-template-columns: 3.1em 30px minmax(0, 1fr); column-gap: 10px; padding: 9px 0; }
 /* 시간 흐름을 잇는 세로 줄: 그림 표시의 가운데를 지나고, 첫 줄은 표시부터 시작하고 마지막 줄은 표시에서 끝남 */
