@@ -81,7 +81,18 @@
     /* "직접 옮기기"·"직접 고치기"를 켰을 때 이름 옆에 나오는 고르는 칸 */
     select.seat { display: inline-block; width: auto; margin: 0 0 0 auto; padding: 3px 6px; font-size: 13px; border-radius: 6px; }
     .chip select.seat { margin-left: 6px; }
-    @media (max-width: 700px) { select.seat { font-size: 16px; } } /* 휴대폰에서 칸을 누를 때 화면이 확대되지 않게 */
+    /* "직접 고치기"를 켠 목록: 한 사람이 한 줄 — 이름은 왼쪽, 고르는 칸은 오른쪽 끝(휴대폰에서는 한 줄에 한 명, 넓은 화면에서는 여러 칸) */
+    .menu-group.picking .chips { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); }
+    .menu-group.picking .chip { display: flex; align-items: center; gap: 6px; border-radius: 12px; padding: 6px 8px 6px 12px; }
+    .menu-group.picking .chip select.seat { margin-left: auto; }
+    /* 휴대폰: 손가락으로 누르기 좋게 키우고, 칸을 누를 때 화면이 확대되지 않게 글자를 16px 로 */
+    @media (max-width: 700px) {
+      select.seat, .tools2 select { font-size: 16px; padding: 8px 10px; min-height: 40px; }
+      .room li { align-items: center; }
+      label.check { min-height: 40px; align-items: center; font-size: 15px; }
+      label.check input { width: 20px; height: 20px; }
+      .tools2 button.link, #planEdit button.link { padding: 10px 4px; font-size: 14px; }
+    }
     .tools2 { margin-top: 14px; gap: 8px 14px; }
     .tools2 label { margin: 0; }
     .tools2 select { display: inline-block; width: auto; margin: 0 0 0 4px; padding: 6px 8px; font-size: 14px; }
@@ -478,7 +489,7 @@
   const seat = (what, p) => `<select class="seat" data-seat="${what}" data-id="${p.id}" aria-label="${esc(p.name)} 님 ${SEATS[what].title}">${
     ['', ...SEATS[what].keys(p)].map((k) => `<option value="${k}"${(p[what] || '') === k ? ' selected' : ''}>${k ? SEATS[what].names[k] : SEATS[what].none}</option>`).join('')}</select>`;
   const crowd = (title, list, what, on, cls = '') => `
-    <div class="menu-group ${cls}">
+    <div class="menu-group ${cls}${on ? ' picking' : ''}">
       <p>${title} <b>${list.length}</b>명</p>
       <div class="chips">${list.map((p) => `<span class="chip">${who(p)}${on ? seat(what, p) : ''}</span>`).join('') || '<span class="empty">아직 없어요</span>'}</div>
     </div>`;
