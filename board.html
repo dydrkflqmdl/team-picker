@@ -34,15 +34,35 @@
     .menu-group p b { font-size: 17px; }
     .menu-group.none p { color: var(--muted); font-weight: 400; }
     details.card > summary { cursor: pointer; font-weight: 600; }
+    details.card > summary small { color: var(--muted); font-weight: 400; font-size: 13px; }
     details.card[open] > summary { margin-bottom: 14px; }
-    .people { width: 100%; border-collapse: collapse; font-size: 14px; margin: 8px 0 16px; }
+    /* 명단 관리의 분류: 단추마다 "이름 인원수". 누르면 표에 그 사람들만 보이고, 한 번 더 누르면 풀림 */
+    .facet { display: flex; gap: 10px; align-items: baseline; margin-bottom: 8px; }
+    .facet-name { flex: none; width: 2.4em; color: var(--muted); font-size: 13px; }
+    .chip.pick { border: 0; padding: 5px 12px; color: inherit; }
+    .chip.pick b { margin-left: 2px; }
+    .chip.pick.zero { opacity: .55; }
+    .chip.pick[aria-pressed="true"] { background: var(--accent); color: var(--accent-text); opacity: 1; }
+    .tools { margin-top: 14px; }
+    .tools input { flex: 1 1 200px; max-width: 320px; margin: 0; padding: 8px 12px; }
+    .people { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 14px; margin: 8px 0 16px; } /* separate: 붙어 있는 머리글 위로 아래 줄이 비쳐 보이지 않게 */
     .people th, .people td { text-align: left; padding: 6px 8px; border-top: 1px solid var(--line); }
-    .people th { color: var(--muted); font-weight: 500; }
+    .people th { color: var(--muted); font-weight: 500; position: sticky; top: 0; z-index: 1; background: var(--card); box-shadow: 0 1px 0 var(--line); }
+    /* 표 머리글을 누르면 그 칸으로 정렬(한 번 더 누르면 거꾸로) */
+    .people th button { padding: 2px 0; font-size: inherit; font-weight: inherit; color: inherit; text-decoration: none; }
+    .people th[aria-sort] button { color: var(--text); font-weight: 600; }
+    .people th[aria-sort="ascending"] button::after { content: ' ▲'; font-size: 10px; }
+    .people th[aria-sort="descending"] button::after { content: ' ▼'; font-size: 10px; }
     .people td:last-child { text-align: right; white-space: nowrap; }
+    .people td.empty { text-align: left; white-space: normal; }
+    #peopleBody.busy tr:not(.editing) { opacity: .5; } /* 저장하는 동안 */
     .people .dot { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; }
     .people tr.editing td { background: color-mix(in srgb, var(--accent) 8%, transparent); }
     .people input, .people select { margin: 0; padding: 4px 6px; font-size: 14px; border-radius: 6px; min-width: 64px; }
-    .table-wrap { max-height: 360px; overflow: auto; }
+    .table-wrap { max-height: 480px; max-height: min(70vh, 640px); overflow: auto; scroll-padding-top: 44px; } /* scroll-padding: 초점이 간 줄이 붙어 있는 머리글에 가리지 않게 */
+    /* 좁은 화면: 칸을 줄바꿈하지 않고(글자가 세로로 한 자씩 쪼개짐) 표 안에서 옆으로 밀어 봄 */
+    @media (max-width: 700px) { .people th, .people td { white-space: nowrap; } }
+    .row.end { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--line); }
     .msg { font-size: 14px; color: var(--muted); }
     /* 오류 문구: 아래쪽 명단 표에서 일하는 중에도 보이게, 화면을 내려도 위에 붙어 있음 */
     #error:not(:empty) { position: sticky; top: 8px; z-index: 5; padding: 10px 12px; border-radius: 10px;
@@ -82,7 +102,31 @@
     </section>
 
     <details class="card" id="admin">
-      <summary>명단 관리</summary>
+      <summary>명단 관리 <small id="totalCount"></small></summary>
+
+      <div id="facets"></div>
+      <div class="row tools">
+        <input id="q" type="search" placeholder="이름·부서·직급으로 찾기" aria-label="명단에서 찾기" autocomplete="off" />
+        <span class="msg" id="shown" role="status"></span>
+        <button class="link" id="clearView" hidden>조건 지우기</button>
+        <button class="link" id="exportBtn" style="margin-left:auto">보이는 명단을 엑셀 파일로 받기</button>
+      </div>
+
+      <div class="table-wrap">
+        <table class="people">
+          <thead><tr>
+            <th aria-sort="ascending"><button class="link" data-sort="dept">부서</button></th>
+            <th><button class="link" data-sort="name">이름</button></th>
+            <th><button class="link" data-sort="title">직급</button></th>
+            <th><button class="link" data-sort="gender">성별</button></th>
+            <th><button class="link" data-sort="team">팀</button></th>
+            <th><button class="link" data-sort="menu">조식</button></th>
+            <th></th>
+          </tr></thead>
+          <tbody id="peopleBody"></tbody>
+        </table>
+        <datalist id="deptList"></datalist>
+      </div>
 
       <label>명단 추가 — 엑셀에서 <b>이름·직급·성별·부서</b> 4칸을 그대로 복사해 붙여넣거나, 한 줄에 <b>이름, 부서</b>
         <textarea id="rosterInput" placeholder="홍길동	대리	남	영상사업부&#10;김철수, 영상사업부"></textarea>
@@ -92,15 +136,7 @@
         <span class="msg" id="addMsg"></span>
       </div>
 
-      <div class="table-wrap">
-        <table class="people">
-          <thead><tr><th>부서</th><th>이름</th><th>직급</th><th>성별</th><th>팀</th><th>조식</th><th></th></tr></thead>
-          <tbody id="peopleBody"></tbody>
-        </table>
-        <datalist id="deptList"></datalist>
-      </div>
-
-      <div class="row">
+      <div class="row end">
         <button class="danger" id="resetAll">전체 다시 뽑기(팀·조식 초기화)</button>
         <button class="danger" id="removeAll">명단 전체 삭제</button>
         <button class="link" id="forget" style="margin-left:auto">이 기기에서 비밀번호 지우기</button>
@@ -155,15 +191,81 @@
     $('#menus').innerHTML = MENU_KEYS.map((m) => group(MENUS[m], people.filter((p) => p.menu === m))).join('')
       + (noMenu.length ? group('아직 안 고른 사람', noMenu, 'none') : '');
 
-    if (editing == null) renderTable();
+    $('#totalCount').textContent = people.length ? `· 총 ${people.length}명` : '';
+    if (editing != null && !people.some((p) => p.id === editing)) editing = null; // 고치던 사람이 그사이 명단에서 빠짐
+    if (editing == null) renderTable(); else renderFacets(); // 수정 중에는 표의 줄만 그대로 두고, 분류 단추의 인원수는 계속 맞춤
   }
 
-  // 명단 표. 수정 중인 줄은 입력칸으로 보여줌
+  // ── 명단 관리: 분류 · 찾기 · 정렬 ──
+  // 보기 조건은 이 화면에만 있다(DB 는 건드리지 않고, 화면을 새로고침하면 처음으로 돌아감)
+  const view = { q: '', dept: null, gender: null, exec: null, team: null, menu: null }; // 찾는 말 + 분류마다 고른 값(null = 전체)
+  let sort = { key: 'dept', dir: 1 }; // dir: 1 = 차례대로, -1 = 거꾸로
+  const byKo = (a, b) => a.localeCompare(b, 'ko');
+  // 분류: of = 그 사람의 값, label = 단추에 보이는 글, values = 단추로 보여줄 값들
+  const FACETS = [
+    { key: 'dept', title: '부서', of: (p) => p.dept, label: (v) => v, values: () => [...new Set(people.map((p) => p.dept))].sort(byKo) },
+    { key: 'gender', title: '성별', of: (p) => p.gender || '', label: (v) => v || '미입력', values: () => ['남', '여', ...(people.some((p) => !p.gender) ? [''] : [])] },
+    { key: 'exec', title: '구분', of: (p) => (p.is_exec ? '임원' : '직원'), label: (v) => v, values: () => ['임원', '직원'] },
+    { key: 'team', title: '팀', of: (p) => p.team || '', label: (v) => TEAMS[v] || '안 뽑음', values: () => [...TEAM_KEYS, ''] },
+    { key: 'menu', title: '조식', of: (p) => p.menu || '', label: (v) => MENUS[v] || '안 고름', values: () => [...MENU_KEYS, ''] },
+  ];
+  const squash = (s) => String(s || '').normalize('NFC').toLowerCase().replace(/\s+/g, ''); // 찾을 때 띄어쓰기·대소문자는 무시(자모가 풀린 글자도 합쳐서 봄)
+  // 이 사람이 지금 조건에 맞는지. skip = 빼고 볼 분류(단추의 인원수는 자기 분류의 조건만 빼고 셈)
+  function matches(p, skip) {
+    const k = squash(view.q);
+    if (k && ![p.name, p.dept, p.title].some((s) => squash(s).includes(k))) return false;
+    return FACETS.every((f) => f.key === skip || view[f.key] == null || f.of(p) === view[f.key]);
+  }
+  // 직급은 가나다순이 아니라 높은 순. 목록에 없는 직급은 임원이면 임원 끝, 아니면 맨 뒤, 직급이 없으면 그 뒤
+  const RANKS = ['회장', '부회장', '대표이사', '대표', '사장', '부사장', '전무', '상무', '이사', '고문', '부장', '차장', '과장', '대리', '주임', '사원', '인턴'];
+  const rankOf = (p) => { const i = RANKS.indexOf(p.title); return i >= 0 ? i : p.is_exec ? 9.5 : p.title ? RANKS.length : RANKS.length + 1; };
+  const place = (list, v) => list.indexOf(v) + 1 || list.length + 1; // 목록에 없는 값(비어 있음)은 맨 뒤
+  const SORTS = {
+    dept: (a, b) => byKo(a.dept, b.dept),
+    name: (a, b) => byKo(a.name, b.name),
+    title: (a, b) => rankOf(a) - rankOf(b) || byKo(a.title || '', b.title || ''),
+    gender: (a, b) => place(['남', '여'], a.gender) - place(['남', '여'], b.gender),
+    team: (a, b) => place(TEAM_KEYS, a.team) - place(TEAM_KEYS, b.team),
+    menu: (a, b) => place(MENU_KEYS, a.menu) - place(MENU_KEYS, b.menu),
+  };
+  const ordered = (list) => [...list].sort((a, b) => sort.dir * SORTS[sort.key](a, b) || byKo(a.dept, b.dept) || byKo(a.name, b.name));
+
+  // 분류 단추 + "N명 중 M명" + 정렬 표시
+  function renderFacets() {
+    // 고른 값의 단추가 없어지면(부서 이름이 바뀜, 명단이 비워짐 등) 그 조건은 풂 — 안 보이는 조건이 걸린 채 남지 않게
+    for (const f of FACETS) if (view[f.key] != null && !(people.length && f.values().includes(view[f.key]))) view[f.key] = null;
+
+    const on = document.activeElement && document.activeElement.closest('#facets button');
+    const at = on && { ...on.dataset }; // 초점이 있던 단추 — 다시 그린 뒤 같은 단추로 돌려줌(자동 새로고침 때 키보드 자리를 잃지 않게)
+    $('#facets').innerHTML = !people.length ? '' : FACETS.map((f) => `
+      <div class="facet" role="group" aria-label="${f.title}">
+        <span class="facet-name">${f.title}</span>
+        <div class="chips">${f.values().map((v) => {
+          const n = people.filter((p) => matches(p, f.key) && f.of(p) === v).length;
+          return `<button type="button" class="chip pick${n ? '' : ' zero'}" data-facet="${f.key}" data-value="${esc(v)}" aria-pressed="${view[f.key] === v}">${esc(f.label(v))} <b>${n}</b></button>`;
+        }).join('')}</div>
+      </div>`).join('');
+    if (at) [...document.querySelectorAll('#facets button')].find((x) => x.dataset.facet === at.facet && x.dataset.value === at.value)?.focus();
+    const hits = people.filter((p) => matches(p)).length;
+    const narrowed = !!squash(view.q) || FACETS.some((f) => view[f.key] != null);
+    $('#shown').textContent = narrowed && people.length ? `${people.length}명 중 ${hits}명` : '';
+    $('#clearView').hidden = !narrowed;
+    for (const b of document.querySelectorAll('.people th button')) {
+      if (b.dataset.sort === sort.key) b.parentNode.setAttribute('aria-sort', sort.dir > 0 ? 'ascending' : 'descending');
+      else b.parentNode.removeAttribute('aria-sort');
+    }
+  }
+
+  // 분류 단추 + 명단 표. 수정 중인 줄은 입력칸으로 보여줌
   function renderTable() {
-    const sorted = [...people].sort((a, b) => a.dept.localeCompare(b.dept, 'ko') || a.name.localeCompare(b.name, 'ko'));
+    renderFacets();
+    // 고치던 줄은 조건에 안 맞아도 계속 보여 주고, 입력하던 값이 지워지지 않게 그 줄을 그대로 다시 끼워 넣음
+    const shown = ordered(people.filter((p) => p.id === editing || matches(p)));
+    const old = $('#peopleBody tr.editing');
+    const kept = old && Number(old.dataset.id) === editing ? old : null;
     const team = (p) => (p.team ? `<span class="dot team-${p.team}">${TEAMS[p.team]}</span>` : '<span class="hint">-</span>');
     $('#deptList').innerHTML = [...new Set(people.map((p) => p.dept))].map((d) => `<option value="${esc(d)}">`).join('');
-    $('#peopleBody').innerHTML = sorted.map((p) => p.id === editing ? `
+    $('#peopleBody').innerHTML = shown.map((p) => p.id === editing && kept ? '<tr data-slot></tr>' : p.id === editing ? `
       <tr class="editing" data-id="${p.id}">
         <td><input name="dept" value="${esc(p.dept)}" maxlength="50" list="deptList" aria-label="부서" /></td>
         <td><input name="name" value="${esc(p.name)}" maxlength="50" aria-label="이름" /></td>
@@ -185,28 +287,78 @@
           ${p.team ? `<button class="link" data-reset="${p.id}" data-name="${esc(p.name)}">다시 뽑기</button> · ` : ''}
           <button class="link danger" data-remove="${p.id}" data-name="${esc(p.name)}">삭제</button>
         </td>
-      </tr>`).join('') || '<tr><td colspan="7" class="empty">명단이 비어 있어요.</td></tr>';
+      </tr>`).join('') || `<tr><td colspan="7" class="empty">${people.length ? '조건에 맞는 사람이 없어요.' : '명단이 비어 있어요. 아래 명단 추가에 붙여넣어 주세요.'}</td></tr>`;
+    if (kept) $('#peopleBody [data-slot]').replaceWith(kept);
   }
 
-  function stopEditing() { editing = null; renderTable(); }
+  $('#facets').addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-facet]');
+    if (!b) return;
+    const { facet, value } = b.dataset;
+    view[facet] = view[facet] === value ? null : value; // 고른 것을 한 번 더 누르면 풀림
+    renderTable();
+  });
+  $('#q').addEventListener('input', () => { view.q = $('#q').value; renderTable(); });
+  $('#clearView').addEventListener('click', () => {
+    Object.assign(view, { q: '', dept: null, gender: null, exec: null, team: null, menu: null });
+    $('#q').value = '';
+    renderTable();
+    $('#q').focus();
+  });
+  $('.people thead').addEventListener('click', (e) => {
+    const key = e.target.dataset.sort;
+    if (!key) return;
+    sort = { key, dir: sort.key === key ? -sort.dir : 1 };
+    renderTable();
+  });
+  // 지금 표에 보이는 사람들을 엑셀에서 열리는 파일(CSV)로 받음
+  $('#exportBtn').addEventListener('click', guard(async () => {
+    const list = ordered(people.filter((p) => matches(p)));
+    if (!list.length) throw new Error('파일로 받을 사람이 없어요.');
+    // 칸마다 따옴표로 감싸고, 엑셀이 수식으로 읽는 글자(= + - @)로 시작하면 앞에 ' 를 붙여 글자로만 읽히게 함
+    const cell = (v) => `"${String(v ?? '').replace(/^[=+\-@\t\r]/, "'$&").replace(/"/g, '""')}"`;
+    const lines = [['부서', '이름', '직급', '성별', '구분', '팀', '조식'],
+      ...list.map((p) => [p.dept, p.name, p.title, p.gender, p.is_exec ? '임원' : '직원', TEAMS[p.team], MENUS[p.menu]])];
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([String.fromCharCode(0xFEFF) + lines.map((r) => r.map(cell).join(',')).join('\r\n')], { type: 'text/csv;charset=utf-8' })); // 맨 앞의 U+FEFF(BOM): 엑셀이 한글을 깨뜨리지 않게
+    a.download = `워크숍_명단_${list.length}명.csv`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+  }));
+
+  // 수정 줄을 닫고, 그 줄의 "수정" 단추로 초점을 돌려줌(키보드로 쓰는 사람이 자리를 잃지 않게)
+  function stopEditing() {
+    const id = editing;
+    editing = null;
+    renderTable();
+    $(`#peopleBody [data-edit="${id}"]`)?.focus();
+  }
   // 버튼으로 명단을 바꾼 뒤에는 수정 중이던 줄을 닫고 표 전체를 새로 그림
   // (drawn 을 비워 두면, 이 새로고침이 통신 문제로 실패해도 다음 자동 새로고침이 표를 꼭 다시 그려 수정 줄이 닫힘)
   function reload() { editing = null; drawn = ''; return refresh(true); }
 
   // 수정 저장. 실패하면(같은 이름 등) 입력칸을 그대로 두고 위쪽에 이유를 보여줌
+  // 답을 기다리는 동안(saving)은 표의 다른 단추를 받지 않음 — 저장이 끝나며 표를 새로 그릴 때, 그사이 연 다른 줄의 입력이 말없이 사라지지 않게
+  let saving = false;
   async function saveEdit() {
     const row = $('#peopleBody tr.editing');
-    if (!row) return;
+    if (!row || saving) return;
+    const id = Number(row.dataset.id);
     const v = (n) => row.querySelector(`[name="${n}"]`).value;
     const controls = row.querySelectorAll('input, select, button');
     controls.forEach((el) => { el.disabled = true; });
     const p_row = { dept: v('dept'), name: v('name'), title: v('title'), gender: v('gender') };
     // 조식은 진행자가 바꿨을 때만 보냄. 수정 줄을 열어 둔 사이 그 사람이 직접 고른 메뉴를 덮어쓰지 않게
     if (v('menu') !== row.querySelector('[name="menu"]').dataset.was) p_row.menu = v('menu');
+    saving = true;
+    $('#peopleBody').classList.add('busy');
     try {
-      await rpc('admin_update', { p_code: code, p_id: Number(row.dataset.id), p_row });
+      await rpc('admin_update', { p_code: code, p_id: id, p_row });
       await reload();
+      if (document.activeElement === document.body) $(`#peopleBody [data-edit="${id}"]`)?.focus(); // 저장한 줄의 "수정" 단추로
     } finally {
+      saving = false;
+      $('#peopleBody').classList.remove('busy');
       controls.forEach((el) => { el.disabled = false; });
     }
   }
@@ -277,6 +429,7 @@
   $('#peopleBody').addEventListener('click', (e) => {
     const d = e.target.dataset;
     // 단추가 아닌 곳(입력칸 등)을 누른 것은 그냥 둠 — 저장 실패 이유를 보며 입력칸을 고치는 중에 그 문구가 지워지지 않게
+    if (saving) return;
     if (d.edit || d.reset || d.remove || 'cancel' in d || 'save' in d) onRowButton(e);
   });
   const onRowButton = guard(async (e) => {
