@@ -7,6 +7,9 @@
 -- 구조: 참가자 화면은 테이블에 직접 접근하지 못하고, 아래 함수들만 부를 수 있다.
 --   departments() / login() / choose_menu() / pick()  ← 참가자용 (누구나)
 --   board() / admin_add() / admin_update() / admin_remove() / admin_reset() / admin_reset_all()  ← 진행자용 (관리자 비밀번호 필요)
+-- 준비해 둔 기능(일정표·객실표·자유시간): 진행자 화면에서만 보이고, 진행자가 켜야 참가자 화면에 나타난다.
+--   extras() / choose_activity()  ← 참가자용 (진행자가 켠 것만 돌려주고, 켠 동안에만 고를 수 있음)
+--   board_state() / admin_assign() / admin_clear() / admin_set()  ← 진행자용
 
 -- 이전 버전(명단·기록) 테이블 정리 — 비어 있음
 drop table if exists public.members, public.draws;
@@ -30,7 +33,13 @@ alter table public.people
 -- 'ugeoji' = 우거지 해장국, 'miyeok' = 소고기 미역국, 'hwangtae' = 버섯 황태 해장국
 alter table public.people
   add column if not exists menu text check (menu in ('ugeoji', 'miyeok', 'hwangtae'));
+-- 객실(진행자가 정함): 남자 방 'm1'~'m5', 여자 방 'f1'·'f2'. 자유시간(저녁 식사 뒤): 'ski' = 스키, 'sauna' = 사우나.
+alter table public.people
+  add column if not exists room     text check (room in ('m1', 'm2', 'm3', 'm4', 'm5', 'f1', 'f2')),
+  add column if not exists activity text check (activity in ('ski', 'sauna'));
 
+-- 설정: 'admin_code'(관리자 비밀번호), 'schedule'(일정표 글),
+-- 'show_summary'·'show_schedule'·'show_room'·'show_activity'(참가자 화면에 보일지, 'on' 이면 보임 — 없으면 안 보임)
 create table if not exists public.config (
   key   text primary key,
   value text not null
@@ -256,8 +265,51 @@ begin
   return teams[myteam];
 end $$;
 
+-- 진행자가 켠 안내만 돌려준다: {show: ['room', ...], schedule, room, activity}. 꺼 둔 것은 null. 명단에 없으면 null.
+-- 객실은 내 방 이름만 알려 준다(같은 방 사람의 이름은 주지 않는다 — 이름은 진행자 화면에서만 볼 수 있어야 하므로).
+create or replace function public.extras(p_dept text, p_name text) returns json
+language plpgsql stable security definer set search_path = public as $$
+declare
+  me    people;
+  shown text[];
+begin
+  select * into me from people
+  where dept = norm_dept(p_dept) and name = norm_name(p_name);
+  if not found then
+    return null;
+  end if;
+  select coalesce(array_agg(substr(key, 6) order by key), '{}') into shown
+  from config
+  where key in ('show_summary', 'show_schedule', 'show_room', 'show_activity') and value = 'on';
+  return json_build_object(
+    'show', shown,
+    'schedule', case when 'schedule' = any(shown) then coalesce((select value from config where key = 'schedule'), '') end,
+    'room', case when 'room' = any(shown) then me.room end,
+    'activity', case when 'activity' = any(shown) then me.activity end);
+end $$;
+
+-- 자유시간 고르기(스키·사우나). 진행자가 켜 둔 동안에만 고를 수 있고, 그동안은 몇 번이든 바꿀 수 있다. 저장된 값을 돌려준다.
+create or replace function public.choose_activity(p_dept text, p_name text, p_activity text) returns text
+language plpgsql security definer set search_path = public as $$
+declare v text;
+begin
+  if p_activity is null or p_activity not in ('ski', 'sauna') then
+    raise exception '스키와 사우나 중에서 골라 주세요.';
+  end if;
+  if not exists (select 1 from config where key = 'show_activity' and value = 'on') then
+    raise exception '지금은 자유시간을 고를 수 없어요.';
+  end if;
+  update people set activity = p_activity
+  where dept = norm_dept(p_dept) and name = norm_name(p_name)
+  returning activity into v;
+  if not found then
+    raise exception '명단에 없는 부서·이름이에요.';
+  end if;
+  return v;
+end $$;
+
 -- ── 진행자용 (관리자 비밀번호 필요) ───────────────────────
--- 전체 현황: [{id, dept, name, title, gender, is_exec, team, picked_at, menu}, ...]
+-- 전체 현황: [{id, dept, name, title, gender, is_exec, team, picked_at, menu, room, activity}, ...]
 create or replace function public.board(p_code text) returns json
 language plpgsql security definer set search_path = public as $$
 begin
@@ -265,10 +317,23 @@ begin
   return (
     select coalesce(json_agg(json_build_object(
              'id', id, 'dept', dept, 'name', name, 'title', title, 'gender', gender,
-             'is_exec', is_exec, 'team', team, 'picked_at', picked_at, 'menu', menu)
+             'is_exec', is_exec, 'team', team, 'picked_at', picked_at, 'menu', menu,
+             'room', room, 'activity', activity)
              order by picked_at nulls last, dept, name), '[]'::json)
     from people
   );
+end $$;
+
+-- 진행자 화면이 5초마다 받는 것: {people: board() 와 같은 목록, schedule: 일정표 글, show: 참가자 화면에 켜 둔 것들}
+create or replace function public.board_state(p_code text) returns json
+language plpgsql security definer set search_path = public as $$
+begin
+  perform check_admin(p_code);
+  return json_build_object(
+    'people', board(p_code),
+    'schedule', coalesce((select value from config where key = 'schedule'), ''),
+    'show', (select coalesce(json_agg(substr(key, 6) order by key), '[]'::json) from config
+             where key in ('show_summary', 'show_schedule', 'show_room', 'show_activity') and value = 'on'));
 end $$;
 
 -- 명단 추가: p_rows = [{"dept": "개발팀", "name": "홍길동", "title": "대리", "gender": "남"}, ...]
@@ -347,6 +412,74 @@ begin
   where team is not null or menu is not null;
 end $$;
 
+-- 객실·자유시간을 사람마다 넣기: p_what = 'room' 또는 'activity', p_rows = [{"id": 3, "value": "m1"}, ...] ("" 이면 비움).
+-- 목록에 없는 사람은 그대로 둔다. 바뀐 사람 수를 돌려준다.
+create or replace function public.admin_assign(p_code text, p_what text, p_rows jsonb) returns int
+language plpgsql security definer set search_path = public as $$
+declare n int;
+begin
+  perform check_admin(p_code);
+  if p_what is null or p_what not in ('room', 'activity') then
+    raise exception '바꿀 수 없는 항목이에요.';
+  end if;
+  if p_rows is null or jsonb_typeof(p_rows) <> 'array' then
+    raise exception '보낸 내용이 올바르지 않아요. 새로고침한 뒤 다시 해 주세요.';
+  end if;
+  if exists (
+    select 1 from jsonb_array_elements(p_rows) r
+    where coalesce(r->>'id', '') !~ '^\d{1,18}$'
+       or (coalesce(r->>'value', '') <> ''
+           and not (r->>'value' = any (case when p_what = 'room'
+                      then array['m1', 'm2', 'm3', 'm4', 'm5', 'f1', 'f2'] else array['ski', 'sauna'] end)))) then
+    raise exception '보낸 내용이 올바르지 않아요. 새로고침한 뒤 다시 해 주세요.';
+  end if;
+  if p_what = 'room' then
+    update people p set room = nullif(r->>'value', '')
+    from jsonb_array_elements(p_rows) r where p.id = (r->>'id')::bigint;
+  else
+    update people p set activity = nullif(r->>'value', '')
+    from jsonb_array_elements(p_rows) r where p.id = (r->>'id')::bigint;
+  end if;
+  get diagnostics n = row_count;
+  return n;
+end $$;
+
+-- 모든 사람의 객실('room') 또는 자유시간('activity')을 비운다.
+create or replace function public.admin_clear(p_code text, p_what text) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  perform check_admin(p_code);
+  if p_what = 'room' then
+    update people set room = null where room is not null;
+  elsif p_what = 'activity' then
+    update people set activity = null where activity is not null;
+  else
+    raise exception '바꿀 수 없는 항목이에요.';
+  end if;
+end $$;
+
+-- 진행자 설정 저장. 아래 이름만 바꿀 수 있다(관리자 비밀번호 'admin_code' 는 여기서 못 바꾼다).
+--   'schedule' = 일정표 글(4000자까지)
+--   'show_summary'·'show_schedule'·'show_room'·'show_activity' = 참가자 화면에 보일지('on' / 'off')
+create or replace function public.admin_set(p_code text, p_key text, p_value text) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  perform check_admin(p_code);
+  if p_key = 'schedule' then
+    if char_length(coalesce(p_value, '')) > 4000 then
+      raise exception '일정표가 너무 길어요. 4000자까지 적을 수 있어요.';
+    end if;
+  elsif p_key in ('show_summary', 'show_schedule', 'show_room', 'show_activity') then
+    if p_value is null or p_value not in ('on', 'off') then
+      raise exception '보낸 내용이 올바르지 않아요. 새로고침한 뒤 다시 해 주세요.';
+    end if;
+  else
+    raise exception '바꿀 수 없는 설정이에요.';
+  end if;
+  insert into config (key, value) values (p_key, coalesce(p_value, ''))
+  on conflict (key) do update set value = excluded.value;
+end $$;
+
 -- ── 실행 권한 ────────────────────────────────────────────
 revoke all on function public.norm_dept(text), public.norm_name(text), public.check_admin(text)
   from public, anon, authenticated;
@@ -354,10 +487,14 @@ revoke all on function public.norm_dept(text), public.norm_name(text), public.ch
 revoke all on function
   public.departments(), public.login(text, text), public.choose_menu(text, text, text), public.pick(text, text),
   public.board(text), public.admin_add(text, jsonb), public.admin_update(text, bigint, jsonb),
-  public.admin_remove(text, bigint), public.admin_reset(text, bigint), public.admin_reset_all(text)
+  public.admin_remove(text, bigint), public.admin_reset(text, bigint), public.admin_reset_all(text),
+  public.extras(text, text), public.choose_activity(text, text, text), public.board_state(text),
+  public.admin_assign(text, text, jsonb), public.admin_clear(text, text), public.admin_set(text, text, text)
   from public;
 grant execute on function
   public.departments(), public.login(text, text), public.choose_menu(text, text, text), public.pick(text, text),
   public.board(text), public.admin_add(text, jsonb), public.admin_update(text, bigint, jsonb),
-  public.admin_remove(text, bigint), public.admin_reset(text, bigint), public.admin_reset_all(text)
+  public.admin_remove(text, bigint), public.admin_reset(text, bigint), public.admin_reset_all(text),
+  public.extras(text, text), public.choose_activity(text, text, text), public.board_state(text),
+  public.admin_assign(text, text, jsonb), public.admin_clear(text, text), public.admin_set(text, text, text)
   to anon, authenticated;

@@ -10,7 +10,7 @@
           integrity="sha384-BWcjm9OdFth9TbhCxZPdm+gAOUMAzQy9nmTs12ioXdCcbVnJaPMn+fMUoQCLt60R"
           crossorigin="anonymous"></script>
   <!-- common.js 를 고치면 v 숫자를 올린다(브라우저에 남아 있는 예전 common.js 를 새 화면이 쓰지 않게) -->
-  <script src="common.js?v=3"></script>
+  <script src="common.js?v=4"></script>
   <style>
     .head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
     .stats { color: var(--muted); }
@@ -68,6 +68,28 @@
     #error:not(:empty) { position: sticky; top: 8px; z-index: 5; padding: 10px 12px; border-radius: 10px;
                          background: var(--card); border: 1px solid var(--danger); box-shadow: 0 4px 16px rgb(0 0 0 / .12); }
     .people td:last-child button { padding: 6px 3px; } /* 수정·다시 뽑기·삭제를 잘못 누르지 않게 누르는 자리를 조금 넓힘 */
+    /* 준비해 둔 기능(일정표·객실표·자유시간·참가자 화면에 보이기): 접어 둔 칸 */
+    .section { margin: 28px 0 10px; font-size: 15px; }
+    .section small { display: block; margin-top: 2px; color: var(--muted); font-weight: 400; font-size: 13px; }
+    .rooms { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; margin-bottom: 16px; } /* 넓은 화면에서는 남자 방 5개가 한 줄 */
+    .room { border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; }
+    .room h3 { margin: 0 0 6px; font-size: 15px; display: flex; justify-content: space-between; align-items: baseline; }
+    .room h3 span:last-child { color: var(--muted); font-weight: 400; font-size: 13px; }
+    .room ul { list-style: none; margin: 0; padding: 0; }
+    .room li { display: flex; flex-wrap: wrap; gap: 2px 6px; align-items: baseline; padding: 3px 0; }
+    .room .warn { color: var(--danger); font-size: 12px; }
+    /* "직접 옮기기"·"직접 고치기"를 켰을 때 이름 옆에 나오는 고르는 칸 */
+    select.seat { display: inline-block; width: auto; margin: 0 0 0 auto; padding: 3px 6px; font-size: 13px; border-radius: 6px; }
+    .chip select.seat { margin-left: 6px; }
+    @media (max-width: 700px) { select.seat { font-size: 16px; } } /* 휴대폰에서 칸을 누를 때 화면이 확대되지 않게 */
+    .tools2 { margin-top: 14px; gap: 8px 14px; }
+    .tools2 label { margin: 0; }
+    .tools2 select { display: inline-block; width: auto; margin: 0 0 0 4px; padding: 6px 8px; font-size: 14px; }
+    label.check { display: flex; gap: 8px; align-items: baseline; margin: 0; font-size: 14px; color: var(--text); cursor: pointer; }
+    label.check input { flex: none; display: inline-block; width: auto; margin: 0; }
+    #shows label.check { padding: 8px 0; border-top: 1px solid var(--line); font-size: 15px; }
+    #planEdit { margin-top: 14px; }
+    #planInput { min-height: 220px; }
     @media (prefers-reduced-motion: reduce) { .col li.new { animation: none; } }
   </style>
 </head>
@@ -100,6 +122,70 @@
       <h2>12월 18일 금요일 조식 <small id="menuCount"></small></h2>
       <div id="menus"></div>
     </section>
+
+    <!-- 준비해 둔 기능: 필요할지 몰라 진행자 화면에만 둔다. "참가자 화면에 보이기"에서 켠 것만 참가자 화면에 나타난다 -->
+    <h2 class="section">준비해 둔 기능
+      <small>일정표·객실표·자유시간이에요. 이 화면에서만 보이고, 아래 <b>참가자 화면에 보이기</b>에서 켠 것만 참가자에게 나타나요.</small>
+    </h2>
+
+    <details class="card" id="planCard">
+      <summary>일정표 <small id="planCount"></small></summary>
+      <div id="plan"></div>
+      <div class="row tools2">
+        <button class="link" id="planEditBtn">일정 고치기</button>
+      </div>
+      <div id="planEdit" hidden>
+        <label>날짜는 한 줄에 따로 적고, 일정은 <b>시간 내용</b>으로 한 줄에 하나씩 적어요 (예: <b>10:00 도착</b>, <b>14:00~16:00 팀 게임</b>)
+          <textarea id="planInput" maxlength="4000" placeholder="12월 17일 (목)&#10;13:00 도착&#10;18:00 저녁 식사"></textarea>
+        </label>
+        <div class="row">
+          <button class="primary" id="planSave">저장</button>
+          <button id="planCancel">취소</button>
+          <button class="link" id="planSample" style="margin-left:auto">예시 넣기</button>
+        </div>
+      </div>
+    </details>
+
+    <details class="card" id="roomCard">
+      <summary>객실표 <small id="roomCount"></small></summary>
+      <div class="rooms" id="rooms"></div>
+      <div id="roomless"></div>
+      <div class="row tools2">
+        <label>나누는 기준
+          <select id="roomRule">
+            <option value="rank">직급이 비슷한 사람끼리</option>
+            <option value="dept">같은 부서끼리</option>
+            <option value="team">같은 팀끼리</option>
+            <option value="mix">무작위로 섞기</option>
+          </select>
+        </label>
+        <button class="primary" id="roomAuto">자동으로 나누기</button>
+        <button id="roomFill" hidden>방 없는 사람만 넣기</button>
+        <label class="check"><input type="checkbox" id="roomMove" /> 직접 옮기기</label>
+        <button class="link danger" id="roomClear" style="margin-left:auto">객실 모두 비우기</button>
+      </div>
+      <p class="msg" id="roomMsg" role="status"></p>
+    </details>
+
+    <details class="card" id="actCard">
+      <summary>저녁 식사 뒤 자유시간 <small id="actCount"></small></summary>
+      <div id="acts"></div>
+      <div class="row tools2">
+        <label class="check"><input type="checkbox" id="actMove" /> 직접 고치기</label>
+        <button class="link danger" id="actClear" style="margin-left:auto">고른 것 모두 지우기</button>
+      </div>
+    </details>
+
+    <details class="card" id="showCard">
+      <summary>참가자 화면에 보이기 <small id="showCount"></small></summary>
+      <p class="hint" style="margin: 0 0 10px">모두 꺼 두면 참가자 화면은 지금과 똑같아요. 켜면 <b>팀까지 뽑은 사람</b>의 화면 아래쪽에 나타나고, 끄면 바로 사라져요.</p>
+      <div id="shows">
+        <label class="check"><input type="checkbox" data-show="summary" /> <span><b>내 팀·조식 요약</b> — 다시 들어온 사람에게 뽑은 팀과 고른 조식을 한 칸에 모아 보여줘요</span></label>
+        <label class="check"><input type="checkbox" data-show="schedule" /> <span><b>일정표</b> — 위에 적어 둔 일정을 그대로 보여줘요</span></label>
+        <label class="check"><input type="checkbox" data-show="room" /> <span><b>내 객실</b> — 자기 방 이름만 보여줘요(같은 방 사람의 이름은 안 보여요)</span></label>
+        <label class="check"><input type="checkbox" data-show="activity" /> <span><b>자유시간 고르기</b> — 스키와 사우나 중 하나를 고르게 해요. 켜 둔 동안에는 바꿀 수 있고, 끄면 마감돼요</span></label>
+      </div>
+    </details>
 
     <details class="card" id="admin">
       <summary>명단 관리 <small id="totalCount"></small></summary>
@@ -149,6 +235,7 @@
   const CODE_KEY = 'team-picker-admin';
   let code = store.get(CODE_KEY);
   let people = [];
+  let conf = { schedule: '', show: [] }; // 일정표 글 + 참가자 화면에 켜 둔 것들('summary'·'schedule'·'room'·'activity')
   let seen = null; // 이미 화면에 나온 배정("id:팀") — 새로 뽑힌 사람만 깜빡이게
   let drawn = '';  // 마지막으로 그린 명단. 바뀐 게 없으면 다시 그리지 않음(누르려던 단추가 그 순간 새로 그려져 눌림이 사라지는 일을 막음)
   let seq = 0;     // 새로고침 요청 번호. 늦게 도착한 예전 답이 더 새 화면을 덮어쓰지 않게 함
@@ -194,6 +281,7 @@
     $('#totalCount').textContent = people.length ? `· 총 ${people.length}명` : '';
     if (editing != null && !people.some((p) => p.id === editing)) editing = null; // 고치던 사람이 그사이 명단에서 빠짐
     if (editing == null) renderTable(); else renderFacets(); // 수정 중에는 표의 줄만 그대로 두고, 분류 단추의 인원수는 계속 맞춤
+    renderExtras();
   }
 
   // ── 명단 관리: 분류 · 찾기 · 정렬 ──
@@ -363,19 +451,248 @@
     }
   }
 
+  // ── 준비해 둔 기능: 일정표 · 객실표 · 자유시간 · 참가자 화면에 보이기 ──
+  // 값을 저장한 뒤 다시 받아 그림. reload() 와 달리 명단 표에서 고치던 줄은 닫지 않음.
+  // 저장은 됐는데 다시 받기만 실패했으면 "다시 눌러 주세요"가 아니라 그 사실을 알림(다음 5초 새로고침이 화면을 맞추고 이 문구도 지움)
+  let acting = 0; // 진행자가 방금 바꾼 것을 그리는 중(이때는 초점이 있는 칸도 다시 그림)
+  async function resync() {
+    drawn = '';
+    acting++;
+    try {
+      await refresh(true);
+    } catch (e) {
+      if (e.message.includes('비밀번호')) throw e; // 비밀번호가 바뀌었으면 입력 화면으로 돌아가며 그 이유를 보여줌
+      autoMsg = '저장은 됐어요. 화면은 잠시 뒤 저절로 맞춰져요.';
+      showError(autoMsg);
+    } finally {
+      acting--;
+    }
+  }
+  // 내용이 그대로면 다시 그리지 않음(누가 팀을 뽑아 5초 새로고침이 돌아도, 펼쳐 둔 고르는 칸이 닫히지 않게).
+  // 내용이 바뀌었어도 진행자가 그 안의 고르는 칸을 잡고 있으면 5초 새로고침은 건드리지 않고, 칸에서 나올 때 맞춤
+  const painted = new Map();
+  const put = (sel, html) => {
+    if (painted.get(sel) === html) return;
+    const at = document.activeElement;
+    if (!acting && at && at.matches('select.seat') && $(sel).contains(at)) return;
+    painted.set(sel, html);
+    $(sel).innerHTML = html;
+  };
+  // 저장이 실패했을 때: 고르는 칸을 저장된 값으로 되돌림
+  const repaint = () => { painted.clear(); acting++; try { renderExtras(); } finally { acting--; } };
+  const who = (p) => `${esc(p.name)} <span class="hint">${p.title ? esc(p.title) + ' · ' : ''}${esc(p.dept)}</span>`;
+  const byRank = (a, b) => rankOf(a) - rankOf(b) || byKo(a.dept, b.dept) || byKo(a.name, b.name);
+  // 이름 옆 고르는 칸("직접 옮기기"·"직접 고치기"를 켰을 때만). 객실은 그 사람 성별의 방만 고를 수 있고, 성별이 없으면 모든 방
+  const SEATS = {
+    room: { title: '객실', none: '방 없음', names: ROOMS, keys: (p) => ROOM_KEYS.filter((k) => !p.gender || roomGender(k) === p.gender || k === p.room) },
+    activity: { title: '자유시간', none: '안 고름', names: ACTS, keys: () => ACT_KEYS },
+  };
+  const seat = (what, p) => `<select class="seat" data-seat="${what}" data-id="${p.id}" aria-label="${esc(p.name)} 님 ${SEATS[what].title}">${
+    ['', ...SEATS[what].keys(p)].map((k) => `<option value="${k}"${(p[what] || '') === k ? ' selected' : ''}>${k ? SEATS[what].names[k] : SEATS[what].none}</option>`).join('')}</select>`;
+  const crowd = (title, list, what, on, cls = '') => `
+    <div class="menu-group ${cls}">
+      <p>${title} <b>${list.length}</b>명</p>
+      <div class="chips">${list.map((p) => `<span class="chip">${who(p)}${on ? seat(what, p) : ''}</span>`).join('') || '<span class="empty">아직 없어요</span>'}</div>
+    </div>`;
+  const SHOWS = { summary: '내 팀·조식 요약', schedule: '일정표', room: '내 객실', activity: '자유시간 고르기' };
+  let toggling = 0; // 저장 중인 "참가자 화면에 보이기" 스위치 수 — 그동안은 방금 누른 체크를 되돌리지 않음
+
+  function renderExtras() {
+    const on = document.activeElement && document.activeElement.matches('select.seat') ? { ...document.activeElement.dataset } : null;
+
+    // 일정표
+    put('#plan', planHtml(conf.schedule) || '<p class="empty">아직 일정이 없어요. 아래 <b>일정 고치기</b>를 눌러 적어 주세요.</p>');
+    $('#planCount').textContent = conf.schedule.trim() ? '' : '· 아직 없음';
+
+    // 객실표: 방마다 직급 높은 순
+    const move = $('#roomMove').checked;
+    const housed = people.filter((p) => p.room).length;
+    const roomless = people.filter((p) => !p.room).sort(byRank);
+    $('#roomCount').textContent = `· 남자 ${ROOM_KEYS.filter((k) => roomGender(k) === '남').length}실 · 여자 ${ROOM_KEYS.filter((k) => roomGender(k) === '여').length}실 · `
+      + (housed ? `${people.length}명 중 ${housed}명 배정` : '아직 안 나눔');
+    put('#rooms', ROOM_KEYS.map((k) => {
+      const list = people.filter((p) => p.room === k).sort(byRank);
+      return `
+        <div class="room">
+          <h3><span>${ROOMS[k]}</span><span>${list.length}명</span></h3>
+          <ul>${list.map((p) => `<li><span>${who(p)}</span>${p.gender && p.gender !== roomGender(k) ? '<span class="warn">성별이 방과 달라요</span>' : ''}${move ? seat('room', p) : ''}</li>`).join('')
+            || '<li class="empty">비어 있어요</li>'}</ul>
+        </div>`;
+    }).join(''));
+    // 방 없는 사람: 한 명이라도 나눈 뒤이거나 직접 옮기는 중일 때만 따로 보여줌(처음에는 전원이라 굳이 안 늘어놓음)
+    put('#roomless', roomless.length && (housed || move) ? crowd('아직 방이 없는 사람', roomless, 'room', move, 'none') : '');
+    $('#roomFill').hidden = !(housed && roomless.some((p) => p.gender));
+    $('#roomClear').hidden = !housed;
+
+    // 자유시간: 고른 것마다 사람들 + 아직 안 고른 사람
+    const fix = $('#actMove').checked;
+    const idle = people.filter((p) => !p.activity).sort(byRank);
+    const doing = (k) => people.filter((p) => p.activity === k).sort(byRank);
+    $('#actCount').textContent = `· ${ACT_KEYS.map((k) => `${ACTS[k]} ${doing(k).length}명`).join(' · ')} · 안 고름 ${idle.length}명`;
+    put('#acts', ACT_KEYS.map((k) => crowd(ACTS[k], doing(k), 'activity', fix)).join('')
+      + (idle.length ? crowd('아직 안 고른 사람', idle, 'activity', fix, 'none') : ''));
+    $('#actClear').hidden = idle.length === people.length;
+
+    // 참가자 화면에 보이기
+    if (!toggling) for (const box of document.querySelectorAll('#shows input')) box.checked = conf.show.includes(box.dataset.show);
+    $('#showCount').textContent = conf.show.length ? `· 켜짐: ${Object.keys(SHOWS).filter((k) => conf.show.includes(k)).map((k) => SHOWS[k]).join(', ')}` : '· 모두 꺼짐';
+
+    // 고르는 칸에 있던 초점은 다시 그린 뒤에도 같은 사람의 칸으로
+    if (on) document.querySelector(`select.seat[data-seat="${on.seat}"][data-id="${on.id}"]`)?.focus();
+  }
+
+  // 누르는 동안 그 단추를 잠가 두 번 눌리지 않게
+  const hold = (btn, fn) => guard(async () => {
+    btn.disabled = true;
+    try { await fn(); } finally { btn.disabled = false; }
+  });
+
+  // 일정표 고치기: 글로 적어 저장. 고치는 동안 5초 새로고침은 입력칸을 건드리지 않음
+  const PLAN_SAMPLE = `12월 17일 (목)
+13:00 오크밸리 도착 · 객실 배정
+14:00~17:00 팀 게임
+18:00 저녁 식사
+19:30 자유시간 (스키 · 사우나)
+
+12월 18일 (금)
+08:00 조식
+10:00~12:00 워크숍
+12:00 점심 식사
+
+12월 19일 (토)
+08:00 조식
+10:00 퇴실 · 출발`;
+  const planEditing = (open) => { $('#planEdit').hidden = !open; $('#planEditBtn').hidden = open; };
+  $('#planEditBtn').addEventListener('click', () => {
+    $('#planInput').value = conf.schedule;
+    planEditing(true);
+    $('#planInput').focus();
+  });
+  $('#planCancel').addEventListener('click', () => { planEditing(false); $('#planEditBtn').focus(); });
+  $('#planSample').addEventListener('click', () => {
+    if ($('#planInput').value.trim() && !confirm('적어 둔 내용을 지우고 예시로 바꿀까요?\n저장을 누르기 전에는 일정표가 바뀌지 않아요.')) return;
+    $('#planInput').value = PLAN_SAMPLE;
+    $('#planInput').focus();
+  });
+  $('#planSave').addEventListener('click', hold($('#planSave'), async () => {
+    await rpc('admin_set', { p_code: code, p_key: 'schedule', p_value: $('#planInput').value.trim() });
+    await resync();
+    planEditing(false);
+    $('#planEditBtn').focus();
+  }));
+
+  // 객실 나누기 계획 [{ id, value: 방 }]. 성별마다 그 성별의 방들에 인원이 최대한 같게(차이 1명 이내) 나눈다.
+  // 고른 기준의 순서로 줄을 세운 뒤 앞에서부터 한 방씩 채우므로, 순서가 이웃한 사람끼리 한 방이 된다(순서가 같은 사람끼리는 누를 때마다 무작위).
+  // onlyNew 면 이미 방이 있는 사람은 그대로 두고, 방 없는 사람을 지금 인원이 가장 적은 방부터 한 명씩 넣는다.
+  const shuffle = (list) => {
+    const a = [...list];
+    for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; }
+    return a;
+  };
+  const ROOM_RULES = {
+    rank: (a, b) => rankOf(a) - rankOf(b),
+    dept: (a, b) => byKo(a.dept, b.dept) || rankOf(a) - rankOf(b),
+    team: (a, b) => place(TEAM_KEYS, a.team) - place(TEAM_KEYS, b.team),
+    mix: () => 0,
+  };
+  function roomPlan(rule, onlyNew) {
+    const rows = [];
+    for (const g of ['남', '여']) {
+      const keys = ROOM_KEYS.filter((k) => roomGender(k) === g);
+      const list = shuffle(people.filter((p) => p.gender === g && !(onlyNew && p.room))).sort(ROOM_RULES[rule]);
+      if (onlyNew) {
+        const size = keys.map((k) => people.filter((p) => p.room === k).length);
+        for (const p of list) {
+          const i = size.indexOf(Math.min(...size));
+          size[i]++;
+          rows.push({ id: p.id, value: keys[i] });
+        }
+      } else {
+        let from = 0;
+        keys.forEach((k, n) => { // 예: 20명 ÷ 5실 = 4명씩, 9명 ÷ 2실 = 5명·4명(남는 사람은 앞쪽 방부터 한 명씩)
+          const take = Math.floor(list.length / keys.length) + (n < list.length % keys.length ? 1 : 0);
+          for (const p of list.slice(from, from + take)) rows.push({ id: p.id, value: k });
+          from += take;
+        });
+      }
+    }
+    // 성별을 몰라 못 나눈 사람: 전부 새로 나눌 때는 예전 방도 비워 둠(방 인원이 어긋나지 않게)
+    if (!onlyNew) for (const p of people) if (!p.gender && p.room) rows.push({ id: p.id, value: '' });
+    return rows;
+  }
+  async function assignRooms(onlyNew) {
+    const housed = people.filter((p) => p.room).length;
+    if (!people.length) throw new Error('명단이 비어 있어요. 아래 명단 관리에서 먼저 추가해 주세요.');
+    const unsexed = people.filter((p) => !p.gender && p.room).length; // 성별이 없어 못 나누는데 지금 방이 있는 사람
+    if (!onlyNew && housed && !confirm(`이미 방이 정해진 ${housed}명을 포함해 전부 새로 나눌까요?` + (unsexed ? `\n성별이 없는 ${unsexed}명은 방이 비워져요.` : ''))) return;
+    const rows = roomPlan($('#roomRule').value, onlyNew);
+    const placed = rows.filter((r) => r.value).length;
+    if (!placed) throw new Error('나눌 사람이 없어요. 성별이 들어 있는 사람만 나눌 수 있어요(아래 명단 관리에서 수정).');
+    $('#roomMsg').textContent = '';
+    await rpc('admin_assign', { p_code: code, p_what: 'room', p_rows: rows });
+    await resync();
+    const unknown = people.filter((p) => !p.gender && !p.room).length;
+    $('#roomMsg').textContent = `${placed}명을 나눴어요.` + (unknown ? ` 성별이 없는 ${unknown}명은 넣지 못했어요. 직접 옮기기를 켜서 넣어 주세요.` : '');
+  }
+  $('#roomAuto').addEventListener('click', hold($('#roomAuto'), () => assignRooms(false)));
+  $('#roomFill').addEventListener('click', hold($('#roomFill'), () => assignRooms(true)));
+  $('#roomClear').addEventListener('click', hold($('#roomClear'), async () => {
+    if (!confirm(`${people.filter((p) => p.room).length}명의 객실을 모두 비울까요? 되돌릴 수 없어요.`)) return;
+    await rpc('admin_clear', { p_code: code, p_what: 'room' });
+    $('#roomMsg').textContent = '';
+    await resync();
+  }));
+  $('#actClear').addEventListener('click', hold($('#actClear'), async () => {
+    if (!confirm(`${people.filter((p) => p.activity).length}명이 고른 자유시간을 모두 지울까요? 되돌릴 수 없어요.`)) return;
+    await rpc('admin_clear', { p_code: code, p_what: 'activity' });
+    await resync();
+  }));
+  $('#roomMove').addEventListener('change', renderExtras);
+  $('#actMove').addEventListener('change', renderExtras);
+
+  // 이름 옆 고르는 칸을 바꾸면 바로 저장. 실패하면 칸을 저장된 값으로 되돌림
+  const onSeat = guard(async (el) => {
+    if (el.dataset.seat === 'room') $('#roomMsg').textContent = ''; // "N명을 나눴어요"는 직접 옮긴 뒤에는 맞지 않으므로 지움
+    try {
+      await rpc('admin_assign', { p_code: code, p_what: el.dataset.seat, p_rows: [{ id: Number(el.dataset.id), value: el.value }] });
+    } catch (e) {
+      repaint();
+      throw e;
+    }
+    await resync();
+  });
+  $('#boardView').addEventListener('change', (e) => { if (e.target.matches('select.seat')) onSeat(e.target); });
+  // 고르는 칸에서 나오면, 잡고 있는 동안 미뤄 둔 그리기를 맞춤
+  $('#boardView').addEventListener('focusout', (e) => { if (e.target.matches('select.seat')) setTimeout(renderExtras); });
+
+  // 참가자 화면에 보이기: 체크를 바꾸면 바로 저장. 실패하면 저장된 값으로 되돌림
+  $('#shows').addEventListener('change', guard(async (e) => {
+    toggling++;
+    try {
+      await rpc('admin_set', { p_code: code, p_key: `show_${e.target.dataset.show}`, p_value: e.target.checked ? 'on' : 'off' });
+    } catch (err) {
+      toggling--;
+      renderExtras();
+      throw err;
+    }
+    toggling--;
+    await resync();
+  }));
+
   // 명단을 다시 받아 그림. force 가 아니면 바뀐 게 있을 때만 다시 그림
   async function refresh(force = false) {
     const mine = ++seq;
     loading++;
     try {
-      const data = await rpc('board', { p_code: code });
+      const data = await rpc('board_state', { p_code: code }); // { people, schedule, show }
       if (mine !== seq) return; // 기다리는 사이 더 새 요청이 나갔으면 이 답은 버림
       $('#codeCard').hidden = true;
       $('#boardView').hidden = false;
       const snap = JSON.stringify(data);
       if (!force && snap === drawn) return;
       drawn = snap;
-      people = data;
+      people = data.people;
+      conf = { schedule: data.schedule || '', show: data.show || [] };
       render();
     } catch (e) {
       if (mine === seq && e.message.includes('비밀번호')) { // 틀렸거나 미설정 → 다시 입력
@@ -462,7 +779,8 @@
 
   $('#resetAll').addEventListener('click', guard(async () => {
     const teams = people.filter((p) => p.team).length, menus = people.filter((p) => p.menu).length;
-    if (!confirm(`모든 사람의 팀과 조식 메뉴를 지우고 처음부터 다시 하게 할까요?\n지금 팀을 뽑은 ${teams}명, 조식을 고른 ${menus}명의 기록이 지워지고 되돌릴 수 없어요.`)) return;
+    const kept = people.some((p) => p.room || p.activity) ? '\n객실과 자유시간은 지워지지 않고 그대로 남아요.' : ''; // 준비해 둔 기능을 쓰고 있을 때만 덧붙임
+    if (!confirm(`모든 사람의 팀과 조식 메뉴를 지우고 처음부터 다시 하게 할까요?\n지금 팀을 뽑은 ${teams}명, 조식을 고른 ${menus}명의 기록이 지워지고 되돌릴 수 없어요.${kept}`)) return;
     await rpc('admin_reset_all', { p_code: code }); // 팀 + 조식. (admin_reset 은 팀만 지움)
     seen = null;
     await reload();

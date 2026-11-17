@@ -20,11 +20,39 @@ const TEAM_KEYS = Object.keys(TEAMS);
 // 조식 메뉴. 앞의 영어 이름은 DB에 저장되는 값이자 그림 파일 이름(menu_이름_art.jpg = 일러스트, menu_이름_photo.jpg = 사진)
 const MENUS = { ugeoji: '우거지 해장국', miyeok: '소고기 미역국', hwangtae: '버섯 황태 해장국' };
 const MENU_KEYS = Object.keys(MENUS);
+// 객실 7개(남자 5 + 여자 2). 앞의 영어 이름은 DB에 저장되는 값이고, 첫 글자가 방의 성별(m = 남자 방, f = 여자 방)
+const ROOMS = { m1: '남자 1호', m2: '남자 2호', m3: '남자 3호', m4: '남자 4호', m5: '남자 5호', f1: '여자 1호', f2: '여자 2호' };
+const ROOM_KEYS = Object.keys(ROOMS);
+const roomGender = (key) => (key[0] === 'm' ? '남' : '여');
+// 저녁 식사 뒤 자유시간에 할 것
+const ACTS = { ski: '스키', sauna: '사우나' };
+const ACT_KEYS = Object.keys(ACTS);
 
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const showError = (msg) => { $('#error').textContent = msg || ''; };
+
+// 일정표 글 → 화면에 넣을 HTML. 한 줄에 하나씩 적은 글을 읽는다.
+//   시간으로 시작하는 줄("10:00 도착", "14:00~16:00 팀 게임")은 일정, 그 밖의 줄("12월 17일 (목)")은 그 아래 일정들의 제목.
+//   시간 뒤를 띄우지 않았거나("10:00도착") 시간만 적은 줄도 일정으로 읽는다
+const PLAN_LINE = /^(\d{1,2}:\d{2})(?:\s*[~\-–]\s*(\d{1,2}:\d{2})?)?\s*(.*)$/;
+function planHtml(text) {
+  const days = [];
+  for (const raw of String(text || '').split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line) continue;
+    const m = line.match(PLAN_LINE);
+    if (!m) { days.push({ title: line, items: [] }); continue; }
+    if (!days.length) days.push({ title: '', items: [] }); // 제목 없이 일정부터 적은 경우
+    days[days.length - 1].items.push({ time: m[1].padStart(5, '0') + (m[2] ? `~${m[2].padStart(5, '0')}` : ''), what: m[3] });
+  }
+  return days.map((d) => `
+    <div class="plan-day">
+      ${d.title ? `<h3>${esc(d.title)}</h3>` : ''}
+      ${d.items.length ? `<ol class="plan">${d.items.map((it) => `<li><time>${esc(it.time)}</time><span>${esc(it.what)}</span></li>`).join('')}</ol>` : ''}
+    </div>`).join('');
+}
 
 // DB 함수 호출. 오류면 한국어 메시지로 throw.
 // 20초 안에 답이 없으면 더 기다리지 않고 알린다(모든 함수가 같은 요청을 다시 받아도 결과가 같으므로 다시 눌러도 안전).
