@@ -5,13 +5,13 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>팀 뽑기</title>
   <meta name="robots" content="noindex" />
-  <link rel="stylesheet" href="style.css?v=3" /><!-- style.css 를 고치면 v 숫자를 올린다 -->
-  <link rel="preload" href="shake.jpg" as="image" />
+  <meta name="color-scheme" content="light dark" /><!-- 삼성 인터넷 등의 강제 다크 모드가 이 화면의 어두운 색을 한 번 더 바꾸지 않게 -->
+  <link rel="stylesheet" href="style.css?v=4" /><!-- style.css 를 고치면 v 숫자를 올린다 -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.js"
           integrity="sha384-BWcjm9OdFth9TbhCxZPdm+gAOUMAzQy9nmTs12ioXdCcbVnJaPMn+fMUoQCLt60R"
           crossorigin="anonymous"></script>
   <!-- common.js 를 고치면 v 숫자를 올린다(휴대폰에 남아 있는 예전 common.js 를 새 화면이 쓰지 않게) -->
-  <script src="common.js?v=6"></script>
+  <script src="common.js?v=7"></script>
   <style>
     /* 가로로 돌려도 글자가 멋대로 커지지 않게. 키보드로 옮겨 간 메뉴 카드가 화면 아래에 붙은 단추 줄에 가리지 않게 */
     html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; scroll-padding-bottom: 120px; }
@@ -21,7 +21,6 @@
     h1:focus { outline: none; } /* 화면이 바뀔 때 제목으로 초점을 옮기는데, 그때 테두리는 그리지 않음 */
     #loading { text-align: center; }
     .me { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 16px; }
-    .me b { font-size: 17px; }
     /* 로그인한 뒤 화면 머리(screen() 이 #topbar 를 지금 화면의 머리로 옮겨 붙임):
          윗줄  = 왼쪽 제목 | 오른쪽 이름 — 둘의 글자 밑선을 맞춤(이름이 길어 두 줄이 되면 마지막 줄을 제목에 맞춤)
          아랫줄 = 날짜 등 설명(전체 폭) | 오른쪽 끝 로그아웃
@@ -59,6 +58,7 @@
     .result-text b { font-size: 20px; }
     .breakfast { margin: 16px 0 0; padding-top: 12px; border-top: 1px solid var(--line); text-align: center; font-size: 13px; color: var(--muted); }
     .breakfast b { color: var(--text); }
+    @media (max-height: 520px) { .scene { height: 180px; } } /* 가로로 돌렸을 때 "뽑아봐!"가 첫 화면 안에 들어오게 */
     @media (prefers-reduced-motion: reduce) { .scene *, #randomBtn, .nag, .letgo *, .letgo .dish-name::before { animation: none !important; } }
 
     /* 첫 화면(로그인)의 워크숍 안내 그림. 그 아래에 부서·이름 입력 */
@@ -153,11 +153,12 @@
     <span class="who-box"><b class="who-name"></b>님</span>
     <button class="link logout">로그아웃</button>
   </div>
-  <!-- 화면마다 맨 위에 하나씩: 로그인 = 워크숍 안내 그림, 메뉴 고르기 = 날짜, 팀 뽑기 = 제목. 처음에는 안내 그림부터 보임 -->
-  <header id="headLogin">
+  <!-- 화면마다 맨 위에 하나씩: 로그인 = 워크숍 안내 그림, 메인 = 워크숍 이름, 일정표·메뉴 고르기·팀 뽑기 = 그 화면 제목 -->
+  <header id="headLogin" hidden><!-- 처음에는 숨김: 저장된 로그인으로 바로 메인에 가는 사람에게 안내 그림이 비쳤다 사라지지 않고, 그 그림을 받지도 않게(로그인 화면에서 screen() 이 보여줌) -->
     <h1 class="sr-only" tabindex="-1">2026 시스테크 워크숍 · 조식 고르기와 팀 뽑기</h1>
     <!-- 그림을 바꾸면 v 숫자를 올린다(휴대폰에 남아 있는 예전 그림이 계속 보이지 않게) -->
-    <img src="poster.jpg?v=2" width="1136" height="1248"
+    <!-- 주소(data-src)는 로그인 화면을 보여 줄 때 넣음 — 이미 로그인한 사람은 이 그림을 받지 않게 -->
+    <img data-src="poster.jpg?v=2" width="1136" height="1248"
          alt="2026 시스테크 워크숍 in 오크밸리. 12월 17일(목)부터 19일(토)까지 2박 3일. 1. 12월 18일(금) 조식 고르기, 2. 팀 랜덤 뽑기" />
   </header>
   <header id="headHome" class="with-who" hidden>
@@ -291,6 +292,8 @@
     }
     const bar = $('#topbar');
     bar.hidden = name === 'login';
+    const poster = $('#headLogin img');
+    if (name === 'login' && !poster.src) poster.src = poster.dataset.src;
     if (name !== 'login' && bar.parentNode.id !== HEADS[name]) $(`#${HEADS[name]}`).appendChild(bar); // 제목 옆으로
     $('#loading').hidden = true;
     $('#retry').hidden = true;
@@ -344,9 +347,8 @@
     $('#resultText').animate([{ opacity: 0 }, { opacity: 0, offset: 0.7 }, { opacity: 1 }], { duration: 1100 }); // 공이 다 올라왔을 때 문구
   }
 
-  // 화면마다 있는 "○○부 ○○○님"
+  // 화면 머리 오른쪽의 "○○○님"
   function who() {
-    all('.who-dept').forEach((el) => { el.textContent = me.dept; });
     all('.who-name').forEach((el) => { el.textContent = me.name; });
   }
 
@@ -425,8 +427,6 @@
     paintCrew();
   }
 
-  // 메인의 일정표는 접힌 채로 시작(제목 줄을 누르면 펴짐)
-
   // 메인 화면: 아직 팀을 안 뽑았으면 단추 두 개(조식 고르기·팀 뽑기, 일정표 보기), 다 뽑았으면 뽑기 단추 없이 내 팀·조식과 일정표
   function showHome() {
     who();
@@ -446,11 +446,28 @@
     loadPlan();
     loadCrew();
   }
-  $('#goPick').addEventListener('click', guard(() => showMe()));
-  $('#goPlan').addEventListener('click', guard(() => { paintPlan(); screen('plan'); loadPlan(); }));
+  // 휴대폰의 뒤로 가기(안드로이드 단추·아이폰 쓸어 넘기기·카톡 뒤로)가 사이트 밖이 아니라 메인으로 오게:
+  // 메인에서 다른 화면으로 들어갈 때 방문 기록을 하나 남기고, 그 기록에서 뒤로 가면(popstate) 메인을 보여줌
+  const enter = () => { popWait = 0; try { if (!(history.state && history.state.inner)) history.pushState({ inner: 1 }, ''); } catch {} };
+  let popWait = 0; // history.back() 뒤 popstate 를 기다리는 중(번호)
+  function goHome() {
+    if (busy) return; // 메뉴를 저장하거나 팀을 뽑는 중에는 받지 않음
+    if (history.state && history.state.inner) {
+      const mine = ++popWait;
+      history.back(); // → popstate 에서 메인으로
+      setTimeout(() => { if (popWait === mine) { popWait = 0; if (me && !busy) showHome(); } }, 400); // popstate 가 끝내 오지 않는 브라우저 대비
+    } else showHome();
+  }
+  addEventListener('popstate', () => {
+    popWait = 0;
+    if (!me) return;
+    if (busy) { enter(); return; } // 저장·뽑기 중이면 화면을 그대로 두고 기록을 되살림
+    if (shown !== 'home') showHome();
+  });
+  $('#goPick').addEventListener('click', guard(() => { enter(); new Image().src = 'shake.jpg'; showMe(); })); // 흔드는 그림은 이때 받기 시작(첫 화면을 가볍게)
+  $('#goPlan').addEventListener('click', guard(() => { enter(); paintPlan(); screen('plan'); loadPlan(); }));
   all('.plan-retry').forEach((el) => el.addEventListener('click', () => { planError = ''; paintPlan(); loadPlan(); }));
-  // "메인으로 돌아가기": 메뉴를 저장하거나 팀을 뽑는 중에는 받지 않음
-  all('.back').forEach((el) => el.addEventListener('click', guard(() => { if (!busy) showHome(); })));
+  all('.back').forEach((el) => el.addEventListener('click', guard(goHome)));
 
   // 조식 고르기 · 팀 뽑기 흐름(메인에서 들어옴). 조식 메뉴를 아직 안 골랐으면 그것부터, 골랐으면 팀 뽑기
   function showMe(landed = false) {
@@ -570,6 +587,12 @@
       const saved = await rpc('choose_menu', { p_dept: me.dept, p_name: me.name, p_menu: key });
       if (!saved) throw new Error('메뉴가 저장되지 않았어요. 다시 눌러 주세요.'); // 바로 그 순간 진행자가 메뉴를 지운 경우
       me.menu = saved;
+    } catch (e) {
+      if (!/명단에 없는/.test(e.message)) throw e;
+      busy = false;
+      await resync(true).catch(() => {}); // 진행자가 그사이 명단에서 지웠거나 이름을 바꿈 → 로그인 화면에서 이유를 알려 줌
+      if (me) throw e;
+      return;
     } finally {
       busy = false;
       controls.forEach((el) => { el.disabled = false; });
@@ -595,6 +618,7 @@
     try {
       depts = await rpc('departments');
     } catch (e) { // 부서 목록을 못 받으면 로그인할 수 없으므로 다시 시도할 단추를 보여줌
+      if (shown !== 'login') return; // 그사이 예전 목록으로 로그인함 → 지금 화면을 덮지 않음
       $('#dept').innerHTML = '<option value="">부서를 불러오지 못했어요</option>';
       $('#retry').hidden = false;
       throw e;
@@ -612,9 +636,13 @@
     const mine = me, before = `${me.team}/${me.menu}`;
     const fresh = await rpc('login', { p_dept: me.dept, p_name: me.name });
     if (me !== mine || (busy && !force) || `${me.team}/${me.menu}` !== before) return;
-    if (!fresh) return showLogin(); // 명단에서 지워짐
+    if (!fresh) { // 진행자가 명단에서 지웠거나 부서·이름을 바꿈
+      await showLogin().catch(() => {});
+      return showError('명단 정보가 바뀌었어요. 부서와 이름을 확인해 다시 로그인해 주세요.');
+    }
     if (fresh.team === me.team && fresh.menu === me.menu) return;
     me = fresh;
+    showError(''); // 예전 실패 문구("다시 눌러 주세요" 등)가 바뀐 화면 위에 남지 않게
     // 보고 있던 화면에 맞게: 메인이면 메인을 새 상태로, 조식·팀 화면이면 그 흐름을 새 상태로. 일정표를 보는 중이면 그대로 둠(메인으로 돌아가면 새 상태)
     if (shown === 'home') showHome(); else if (shown !== 'plan') showMe();
   }
@@ -645,11 +673,11 @@
   all('.logout').forEach((el) => el.addEventListener('click', guard(() => (busy ? undefined : showLogin()))));
 
   // 그림을 다 받을 때까지 기다림. 못 받아도 4초 뒤에는 그냥 넘어감(그림은 받는 대로 나타남)
-  const fetched = (src) => new Promise((done) => {
+  const fetched = (src) => new Promise((ok) => {
     const img = new Image();
-    img.onload = img.onerror = done;
+    img.onload = img.onerror = ok;
     img.src = src;
-    setTimeout(done, 4000);
+    setTimeout(ok, 4000);
   });
 
   // 상자를 힘차게 흔들다가 결과로 넘어감. 결과가 오고 그 팀 공 그림까지 받아야 넘어가고, 아무리 빨라도 1.8초는 흔듦.
@@ -683,7 +711,8 @@
       showMe(); // 실패하면 원래 상태로
       showError(e.message); // 아래 확인이 오래 걸려도 이유는 바로 보이게
       await resync(true).catch(() => {}); // 진행자가 그사이 메뉴를 지워서 실패한 것이면 메뉴 고르기 화면으로
-      if (me && me.team) return showError(''); // 답이 늦었을 뿐 팀은 이미 뽑혔음 → 결과가 보이므로 "다시 눌러 주세요"는 지움
+      if (!me) return; // 명단에서 빠짐 → resync 가 로그인 화면에서 이유를 알려 줌
+      if (me.team) return showError(''); // 답이 늦었을 뿐 팀은 이미 뽑혔음 → 결과가 보이므로 "다시 눌러 주세요"는 지움
       throw e;
     } finally {
       busy = false;

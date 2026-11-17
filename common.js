@@ -84,15 +84,23 @@ function planHtml(text) {
 }
 
 // DB 함수 호출. 오류면 한국어 메시지로 throw.
-// 20초 안에 답이 없으면 더 기다리지 않고 알린다(모든 함수가 같은 요청을 다시 받아도 결과가 같으므로 다시 눌러도 안전).
+// 20초 안에 답이 없으면 더 기다리지 않고 알린다. 참가자 함수(메뉴 고르기·팀 뽑기)는 같은 요청을 다시 받아도 결과가 같아 다시 눌러도 안전하고,
+// 진행자 화면은 저장 뒤 다시 받기만 실패한 경우를 따로 알려 두 번 하지 않게 한다(board.html 의 reload·resync).
 const RPC_WAIT = 20000;
+function koreanError(msg) {
+  msg = String(msg || '');
+  if (/[가-힣]/.test(msg)) return msg;
+  if (/fetch|network|load failed/i.test(msg)) return '인터넷 연결을 확인한 뒤 다시 눌러 주세요.'; // 통신이 끊김("Failed to fetch" 등)
+  if (/timeout|canceling statement|lock/i.test(msg)) return '사람이 몰려 조금 늦어지고 있어요. 잠시 뒤 다시 눌러 주세요.'; // DB 시간 제한
+  return '잠시 문제가 생겼어요. 다시 눌러 주세요. 계속되면 진행자에게 알려 주세요.'; // 일시정지된 프로젝트·함수 없음 등
+}
 async function rpc(fn, args) {
   let timer;
   const late = new Promise((_, fail) => { timer = setTimeout(() => fail(new Error('연결이 느려요. 잠시 뒤 다시 눌러 주세요.')), RPC_WAIT); });
   try {
     const { data, error } = await Promise.race([db.rpc(fn, args), late]);
-    // 통신이 끊기면 브라우저가 주는 영어 문구("Failed to fetch" 등) 대신 한국어로
-    if (error) throw new Error(/fetch|network|load failed/i.test(error.message) ? '인터넷 연결을 확인한 뒤 다시 눌러 주세요.' : error.message);
+    // DB 가 일부러 보내는 안내는 한국어라 그대로 보여 주고, 영어로 온 오류는 사용자가 알아볼 수 있게 바꿈
+    if (error) throw new Error(koreanError(error.message));
     return data;
   } finally {
     clearTimeout(timer);

@@ -1,7 +1,7 @@
 :root {
   --bg: #f6f7f9; --card: #fff; --text: #1b1f24; --muted: #6b7280; --line: #e5e7eb;
   --accent: #4f46e5; --accent-text: #fff; --chip: #eef0f4; --danger: #dc2626;
-  --red: #dc2626; --blue: #2563eb; --yellow: #facc15; --green: #16a34a;
+  --red: #dc2626; --blue: #2563eb; --yellow: #facc15; --green: #15803d; /* 초록은 흰 글자가 잘 읽히게 조금 진하게 */
 }
 @media (prefers-color-scheme: dark) {
   :root { --bg: #111317; --card: #1a1d23; --text: #e8eaed; --muted: #9aa1ab; --line: #2b2f37;

@@ -41,6 +41,14 @@ alter table public.people
   add column if not exists activity text check (activity in ('ski', 'sauna'));
 
 -- 설정: 'admin_code'(관리자 비밀번호), 'schedule'(일정표 글 — 진행자가 적고 참가자 화면에도 보임)
+-- 변경 기록(되돌리기용): people 의 줄이 바뀌거나 지워질 때마다 예전 값을 남긴다. 진행자가 실수로 전체 삭제·전체 다시 뽑기를 해도
+-- SQL Editor 에서 되살릴 수 있다(README "실수로 지웠을 때"). 참가자·진행자 화면은 이 표를 읽지 못한다.
+create table if not exists public.people_log (
+  at  timestamptz not null default now(),
+  op  text not null,      -- 'UPDATE' 또는 'DELETE'
+  old jsonb not null      -- 바뀌기 전(지워지기 전) 그 줄 전체
+);
+
 create table if not exists public.config (
   key   text primary key,
   value text not null
@@ -49,7 +57,19 @@ create table if not exists public.config (
 -- 참가자(anon)는 테이블을 직접 읽거나 쓸 수 없다. RLS 는 켜두되 정책은 만들지 않는다.
 alter table public.people enable row level security;
 alter table public.config enable row level security;
-revoke all on public.people, public.config from anon, authenticated;
+alter table public.people_log enable row level security;
+revoke all on public.people, public.config, public.people_log from anon, authenticated;
+
+create or replace function public.log_people() returns trigger
+language plpgsql set search_path = public as $$
+begin
+  insert into people_log (op, old) values (tg_op, to_jsonb(old));
+  return null;
+end $$;
+revoke all on function public.log_people() from public, anon, authenticated;
+drop trigger if exists people_log on public.people;
+create trigger people_log after update or delete on public.people
+  for each row execute function public.log_people();
 
 -- [관리자 비밀번호] 추측하기 어려운 12자 이상 권장(틀리면 1초 늦게 답하지만, 짧거나 쉬운 비밀번호는 그래도 뚫릴 수 있다)
 insert into public.config (key, value) values ('admin_code', '여기를-바꾸세요')
@@ -58,11 +78,17 @@ on conflict (key) do update set value = excluded.value
 
 -- ── 내부 함수 ────────────────────────────────────────────
 -- 부서: 앞뒤 공백 제거 + 공백 하나로. 이름: 공백 전부 제거("홍 길동" = "홍길동").
+-- 한글을 한 가지 꼴(NFC)로 맞추고, 보이지 않는 글자(폭 없는 공백·BOM 등)는 지우고, 전각 공백·NBSP 도 공백으로 봄
+-- (엑셀·다른 기기에서 붙여 넣은 이름이 휴대폰에서 친 이름과 달라 로그인이 안 되는 일을 막음)
 create or replace function public.norm_dept(t text) returns text
-language sql immutable as $$ select regexp_replace(btrim(coalesce(t, '')), '\s+', ' ', 'g') $$;
+language sql immutable as $$
+  select btrim(regexp_replace(regexp_replace(normalize(coalesce(t, ''), NFC), '[\u200b-\u200d\u2060\ufeff]', '', 'g'), '[\s\u00a0\u3000]+', ' ', 'g'))
+$$;
 
 create or replace function public.norm_name(t text) returns text
-language sql immutable as $$ select regexp_replace(coalesce(t, ''), '\s+', '', 'g') $$;
+language sql immutable as $$
+  select regexp_replace(regexp_replace(normalize(coalesce(t, ''), NFC), '[\u200b-\u200d\u2060\ufeff]', '', 'g'), '[\s\u00a0\u3000]+', '', 'g')
+$$;
 
 create or replace function public.check_admin(p_code text) returns void
 language plpgsql security definer set search_path = public as $$
@@ -99,6 +125,10 @@ create or replace function public.choose_menu(p_dept text, p_name text, p_menu t
 language plpgsql security definer set search_path = public as $$
 declare v text;
 begin
+  -- 지나치게 긴 입력은 정리하거나 줄을 잠그기 전에 바로 거절(누구나 부를 수 있는 함수라, 큰 입력으로 다른 사람을 막지 못하게)
+  if char_length(p_dept) > 100 or char_length(p_name) > 100 then
+    raise exception '명단에 없는 부서·이름이에요.';
+  end if;
   if p_menu is null or p_menu not in ('ugeoji', 'miyeok', 'hwangtae') then
     raise exception '메뉴를 다시 골라 주세요.';
   end if;
@@ -126,6 +156,7 @@ language plpgsql security definer set search_path = public as $$
 declare
   teams constant text[] := array['red', 'blue', 'yellow', 'green'];
   me     people;
+  mid    bigint;                       -- 내 id(표를 잠근 뒤 다시 읽을 때)
   pid    bigint[];                     -- 명단 전체 id (id 순)
   cur    int[];                        -- 사람별 팀 번호 1~4. 뽑은 사람은 고정, 나머지는 계획
   pg     int[];                        -- 사람마다 그룹 번호 4칸(전체·임원 여부·부서·성별), 0 = 없음
@@ -141,9 +172,11 @@ declare
   n int; nf int; mi int; i int; k int; g int; a int; b int; p int; q int; d int; ca int; cb int;
   cost int := 0; best int; myteam int;
 begin
-  -- 동시에 여러 명이 눌러도 한 명씩 처리(읽기는 막지 않음)
-  lock table people in share row exclusive mode;
-
+  -- 지나치게 긴 입력은 바로 거절(누구나 부를 수 있는 함수라, 큰 입력으로 표 잠금을 오래 쥐어 다른 사람을 막지 못하게)
+  if char_length(p_dept) > 100 or char_length(p_name) > 100 then
+    raise exception '명단에 없는 부서·이름이에요.';
+  end if;
+  -- 먼저 잠그지 않고 확인: 명단에 없거나, 이미 뽑았거나, 메뉴를 안 고른 사람은 표를 잠그지 않고 끝냄
   select * into me from people
   where dept = norm_dept(p_dept) and name = norm_name(p_name);
   if not found then
@@ -153,6 +186,20 @@ begin
     return me.team;
   end if;
   -- 조식 메뉴를 먼저 골라야 한다(진행자가 메뉴를 지운 뒤 예전에 열어 둔 화면에서 누른 경우도 여기서 막힘)
+  if me.menu is null then
+    raise exception '조식 메뉴를 먼저 골라 주세요.';
+  end if;
+
+  -- 동시에 여러 명이 눌러도 한 명씩 처리(읽기는 막지 않음). 잠근 뒤 다시 읽어, 기다리는 사이 바뀐 것(다른 기기에서 뽑음 등)을 반영
+  lock table people in share row exclusive mode;
+  mid := me.id;
+  select * into me from people where id = mid;
+  if not found then
+    raise exception '명단에 없는 부서·이름이에요.';
+  end if;
+  if me.team is not null then
+    return me.team;
+  end if;
   if me.menu is null then
     raise exception '조식 메뉴를 먼저 골라 주세요.';
   end if;
