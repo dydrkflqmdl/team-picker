@@ -68,7 +68,7 @@
     #error:not(:empty) { position: sticky; top: 8px; z-index: 5; padding: 10px 12px; border-radius: 10px;
                          background: var(--card); border: 1px solid var(--danger); box-shadow: 0 4px 16px rgb(0 0 0 / .12); }
     .people td:last-child button { padding: 6px 3px; } /* 수정·다시 뽑기·삭제를 잘못 누르지 않게 누르는 자리를 조금 넓힘 */
-    /* 준비해 둔 기능(일정표·객실표·자유시간·참가자 화면에 보이기): 접어 둔 칸 */
+    /* 준비해 둔 기능(일정표·객실표·자유시간): 접어 둔 칸. 진행자 화면에만 있다 */
     .section { margin: 28px 0 10px; font-size: 15px; }
     .section small { display: block; margin-top: 2px; color: var(--muted); font-weight: 400; font-size: 13px; }
     .rooms { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; margin-bottom: 16px; } /* 넓은 화면에서는 남자 방 5개가 한 줄 */
@@ -87,7 +87,6 @@
     .tools2 select { display: inline-block; width: auto; margin: 0 0 0 4px; padding: 6px 8px; font-size: 14px; }
     label.check { display: flex; gap: 8px; align-items: baseline; margin: 0; font-size: 14px; color: var(--text); cursor: pointer; }
     label.check input { flex: none; display: inline-block; width: auto; margin: 0; }
-    #shows label.check { padding: 8px 0; border-top: 1px solid var(--line); font-size: 15px; }
     #planEdit { margin-top: 14px; }
     #planInput { min-height: 220px; }
     @media (prefers-reduced-motion: reduce) { .col li.new { animation: none; } }
@@ -123,9 +122,9 @@
       <div id="menus"></div>
     </section>
 
-    <!-- 준비해 둔 기능: 필요할지 몰라 진행자 화면에만 둔다. "참가자 화면에 보이기"에서 켠 것만 참가자 화면에 나타난다 -->
-    <h2 class="section">준비해 둔 기능
-      <small>일정표·객실표·자유시간이에요. 이 화면에서만 보이고, 아래 <b>참가자 화면에 보이기</b>에서 켠 것만 참가자에게 나타나요.</small>
+    <!-- 준비해 둔 기능(시험용): 진행자 화면에만 있다. 참가자 화면(index.html)에는 이 기능이 없고, 참가자가 부를 수 있는 DB 함수도 없다 -->
+    <h2 class="section">준비해 둔 기능 (시험용)
+      <small>일정표·객실표·자유시간이에요. <b>진행자 화면에서만</b> 보이고, 참가자 화면에는 나오지 않아요.</small>
     </h2>
 
     <details class="card" id="planCard">
@@ -173,17 +172,6 @@
       <div class="row tools2">
         <label class="check"><input type="checkbox" id="actMove" /> 직접 고치기</label>
         <button class="link danger" id="actClear" style="margin-left:auto">고른 것 모두 지우기</button>
-      </div>
-    </details>
-
-    <details class="card" id="showCard">
-      <summary>참가자 화면에 보이기 <small id="showCount"></small></summary>
-      <p class="hint" style="margin: 0 0 10px">모두 꺼 두면 참가자 화면은 지금과 똑같아요. 켜면 <b>팀까지 뽑은 사람</b>의 화면 아래쪽에 나타나고, 끄면 바로 사라져요.</p>
-      <div id="shows">
-        <label class="check"><input type="checkbox" data-show="summary" /> <span><b>내 팀·조식 요약</b> — 다시 들어온 사람에게 뽑은 팀과 고른 조식을 한 칸에 모아 보여줘요</span></label>
-        <label class="check"><input type="checkbox" data-show="schedule" /> <span><b>일정표</b> — 위에 적어 둔 일정을 그대로 보여줘요</span></label>
-        <label class="check"><input type="checkbox" data-show="room" /> <span><b>내 객실</b> — 자기 방 이름만 보여줘요(같은 방 사람의 이름은 안 보여요)</span></label>
-        <label class="check"><input type="checkbox" data-show="activity" /> <span><b>자유시간 고르기</b> — 스키와 사우나 중 하나를 고르게 해요. 켜 둔 동안에는 바꿀 수 있고, 끄면 마감돼요</span></label>
       </div>
     </details>
 
@@ -235,7 +223,7 @@
   const CODE_KEY = 'team-picker-admin';
   let code = store.get(CODE_KEY);
   let people = [];
-  let conf = { schedule: '', show: [] }; // 일정표 글 + 참가자 화면에 켜 둔 것들('summary'·'schedule'·'room'·'activity')
+  let conf = { schedule: '' }; // 일정표 글
   let seen = null; // 이미 화면에 나온 배정("id:팀") — 새로 뽑힌 사람만 깜빡이게
   let drawn = '';  // 마지막으로 그린 명단. 바뀐 게 없으면 다시 그리지 않음(누르려던 단추가 그 순간 새로 그려져 눌림이 사라지는 일을 막음)
   let seq = 0;     // 새로고침 요청 번호. 늦게 도착한 예전 답이 더 새 화면을 덮어쓰지 않게 함
@@ -451,7 +439,7 @@
     }
   }
 
-  // ── 준비해 둔 기능: 일정표 · 객실표 · 자유시간 · 참가자 화면에 보이기 ──
+  // ── 준비해 둔 기능(시험용): 일정표 · 객실표 · 자유시간. 진행자 화면에만 있다 ──
   // 값을 저장한 뒤 다시 받아 그림. reload() 와 달리 명단 표에서 고치던 줄은 닫지 않음.
   // 저장은 됐는데 다시 받기만 실패했으면 "다시 눌러 주세요"가 아니라 그 사실을 알림(다음 5초 새로고침이 화면을 맞추고 이 문구도 지움)
   let acting = 0; // 진행자가 방금 바꾼 것을 그리는 중(이때는 초점이 있는 칸도 다시 그림)
@@ -494,8 +482,6 @@
       <p>${title} <b>${list.length}</b>명</p>
       <div class="chips">${list.map((p) => `<span class="chip">${who(p)}${on ? seat(what, p) : ''}</span>`).join('') || '<span class="empty">아직 없어요</span>'}</div>
     </div>`;
-  const SHOWS = { summary: '내 팀·조식 요약', schedule: '일정표', room: '내 객실', activity: '자유시간 고르기' };
-  let toggling = 0; // 저장 중인 "참가자 화면에 보이기" 스위치 수 — 그동안은 방금 누른 체크를 되돌리지 않음
 
   function renderExtras() {
     const on = document.activeElement && document.activeElement.matches('select.seat') ? { ...document.activeElement.dataset } : null;
@@ -532,10 +518,6 @@
     put('#acts', ACT_KEYS.map((k) => crowd(ACTS[k], doing(k), 'activity', fix)).join('')
       + (idle.length ? crowd('아직 안 고른 사람', idle, 'activity', fix, 'none') : ''));
     $('#actClear').hidden = idle.length === people.length;
-
-    // 참가자 화면에 보이기
-    if (!toggling) for (const box of document.querySelectorAll('#shows input')) box.checked = conf.show.includes(box.dataset.show);
-    $('#showCount').textContent = conf.show.length ? `· 켜짐: ${Object.keys(SHOWS).filter((k) => conf.show.includes(k)).map((k) => SHOWS[k]).join(', ')}` : '· 모두 꺼짐';
 
     // 고르는 칸에 있던 초점은 다시 그린 뒤에도 같은 사람의 칸으로
     if (on) document.querySelector(`select.seat[data-seat="${on.seat}"][data-id="${on.id}"]`)?.focus();
@@ -665,26 +647,12 @@
   // 고르는 칸에서 나오면, 잡고 있는 동안 미뤄 둔 그리기를 맞춤
   $('#boardView').addEventListener('focusout', (e) => { if (e.target.matches('select.seat')) setTimeout(renderExtras); });
 
-  // 참가자 화면에 보이기: 체크를 바꾸면 바로 저장. 실패하면 저장된 값으로 되돌림
-  $('#shows').addEventListener('change', guard(async (e) => {
-    toggling++;
-    try {
-      await rpc('admin_set', { p_code: code, p_key: `show_${e.target.dataset.show}`, p_value: e.target.checked ? 'on' : 'off' });
-    } catch (err) {
-      toggling--;
-      renderExtras();
-      throw err;
-    }
-    toggling--;
-    await resync();
-  }));
-
   // 명단을 다시 받아 그림. force 가 아니면 바뀐 게 있을 때만 다시 그림
   async function refresh(force = false) {
     const mine = ++seq;
     loading++;
     try {
-      const data = await rpc('board_state', { p_code: code }); // { people, schedule, show }
+      const data = await rpc('board_state', { p_code: code }); // { people, schedule }
       if (mine !== seq) return; // 기다리는 사이 더 새 요청이 나갔으면 이 답은 버림
       $('#codeCard').hidden = true;
       $('#boardView').hidden = false;
@@ -692,7 +660,7 @@
       if (!force && snap === drawn) return;
       drawn = snap;
       people = data.people;
-      conf = { schedule: data.schedule || '', show: data.show || [] };
+      conf = { schedule: data.schedule || '' };
       render();
     } catch (e) {
       if (mine === seq && e.message.includes('비밀번호')) { // 틀렸거나 미설정 → 다시 입력
