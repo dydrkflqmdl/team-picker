@@ -34,9 +34,18 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const showError = (msg) => { $('#error').textContent = msg || ''; };
 
 // 일정표 글 → 화면에 넣을 HTML. 한 줄에 하나씩 적은 글을 읽는다.
-//   시간으로 시작하는 줄("10:00 도착", "14:00~16:00 팀 게임")은 일정, 그 밖의 줄("12월 17일 (목)")은 그 아래 일정들의 제목.
+//   시간으로 시작하는 줄("10:00 도착", "14:00~16:00 팀 게임")은 일정, 그 밖의 줄("Day 1 · 12/17(목) — 화합과 소통")은 그 아래 일정들의 제목.
 //   시간 뒤를 띄우지 않았거나("10:00도착") 시간만 적은 줄도 일정으로 읽는다
-const PLAN_LINE = /^(\d{1,2}:\d{2})(?:\s*[~\-–]\s*(\d{1,2}:\d{2})?)?\s*(.*)$/;
+const PLAN_LINE = /^((?:[01]?\d|2[0-4]):[0-5]\d)(?:\s*[~\-–]\s*((?:[01]?\d|2[0-4]):[0-5]\d)?)?\s*(.*)$/;
+// 일정의 종류: 내용에 든 낱말로 그림 표시와 색을 고른다(위에서부터 먼저 맞는 것). 맞는 낱말이 없으면 작은 점만 찍는다
+const PLAN_KINDS = [
+  ['meal', '🍴', /조식|중식|석식|아침|점심|저녁|식사|만찬|간식|바비큐/],
+  ['photo', '📷', /사진|촬영/],
+  ['play', '🎉', /레크|게임|장기자랑|이벤트/],
+  ['talk', '🎤', /강의|특강|강연|교육|세션|오프닝|클로징|발표|프로그램/],
+  ['move', '🚌', /출발|도착|이동|집결|체크인|체크아웃|입실|퇴실/],
+  ['rest', '🌿', /자유|휴식|산책|취침/],
+];
 function planHtml(text) {
   const days = [];
   for (const raw of String(text || '').split(/\r?\n/)) {
@@ -45,12 +54,30 @@ function planHtml(text) {
     const m = line.match(PLAN_LINE);
     if (!m) { days.push({ title: line, items: [] }); continue; }
     if (!days.length) days.push({ title: '', items: [] }); // 제목 없이 일정부터 적은 경우
-    days[days.length - 1].items.push({ time: m[1].padStart(5, '0') + (m[2] ? `~${m[2].padStart(5, '0')}` : ''), what: m[3] });
+    days[days.length - 1].items.push({ start: m[1].padStart(5, '0'), end: m[2] ? m[2].padStart(5, '0') : '', what: m[3] });
   }
+  // 제목 줄 "Day 1 · 12/17(목) — 화합과 소통" → 꼬리표 "Day 1" + 날짜 "12/17(목)" + 주제 "화합과 소통". 가운뎃점·줄표가 없으면 통째로 날짜 자리에
+  const head = (title) => {
+    const [main, ...rest] = title.split(/\s+[—–-]\s+/);
+    const parts = main.split(/\s*·\s*/).filter(Boolean);
+    const tag = parts.length > 1 ? parts.shift() : '';
+    return `<h3 class="plan-head">${tag ? `<span class="plan-tag">${esc(tag)}</span>` : ''}<span class="plan-date">${esc(parts.join(' · '))}</span>${
+      rest.length ? `<span class="plan-theme">${esc(rest.join(' — '))}</span>` : ''}</h3>`;
+  };
+  // 일정 한 줄: 시간(시작 굵게, 끝은 작게) | 그림 표시 | 내용. "오프닝 : 대표 인사" 처럼 쌍점으로 나눈 뒷부분은 작은 글로 아래에
+  const item = (it) => {
+    const [kind, icon] = PLAN_KINDS.find((k) => k[2].test(it.what)) || ['etc', ''];
+    const cut = it.what.search(/\s+:\s+/);
+    const name = cut < 0 ? it.what : it.what.slice(0, cut);
+    const more = cut < 0 ? '' : it.what.slice(cut).replace(/^\s+:\s+/, '');
+    return `<li class="k-${kind}"><time><b>${esc(it.start)}</b>${it.end ? `<span>~${esc(it.end)}</span>` : ''}</time>`
+      + `<span class="plan-dot" aria-hidden="true">${icon}</span>`
+      + `<span class="plan-what"><span class="plan-text">${esc(name)}</span>${more ? `<small>${esc(more)}</small>` : ''}</span></li>`;
+  };
   return days.map((d) => `
     <div class="plan-day">
-      ${d.title ? `<h3>${esc(d.title)}</h3>` : ''}
-      ${d.items.length ? `<ol class="plan">${d.items.map((it) => `<li><time>${esc(it.time)}</time><span>${esc(it.what)}</span></li>`).join('')}</ol>` : ''}
+      ${d.title ? head(d.title) : ''}
+      ${d.items.length ? `<ol class="plan">${d.items.map(item).join('')}</ol>` : ''}
     </div>`).join('');
 }
 

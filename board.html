@@ -5,12 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>팀 현황</title>
   <meta name="robots" content="noindex" />
-  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="style.css?v=2" /><!-- style.css 를 고치면 v 숫자를 올린다 -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.js"
           integrity="sha384-BWcjm9OdFth9TbhCxZPdm+gAOUMAzQy9nmTs12ioXdCcbVnJaPMn+fMUoQCLt60R"
           crossorigin="anonymous"></script>
   <!-- common.js 를 고치면 v 숫자를 올린다(브라우저에 남아 있는 예전 common.js 를 새 화면이 쓰지 않게) -->
-  <script src="common.js?v=4"></script>
+  <script src="common.js?v=5"></script>
   <style>
     .head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
     .stats { color: var(--muted); }
@@ -68,7 +68,7 @@
     #error:not(:empty) { position: sticky; top: 8px; z-index: 5; padding: 10px 12px; border-radius: 10px;
                          background: var(--card); border: 1px solid var(--danger); box-shadow: 0 4px 16px rgb(0 0 0 / .12); }
     .people td:last-child button { padding: 6px 3px; } /* 수정·다시 뽑기·삭제를 잘못 누르지 않게 누르는 자리를 조금 넓힘 */
-    /* 준비해 둔 기능(일정표·객실표·자유시간): 접어 둔 칸. 진행자 화면에만 있다 */
+    /* 일정표(참가자 화면에도 보임)와 준비해 둔 기능(객실표·자유시간 — 진행자 화면에만 있음): 접어 둔 칸 */
     .section { margin: 28px 0 10px; font-size: 15px; }
     .section small { display: block; margin-top: 2px; color: var(--muted); font-weight: 400; font-size: 13px; }
     .rooms { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; margin-bottom: 16px; } /* 넓은 화면에서는 남자 방 5개가 한 줄 */
@@ -133,13 +133,9 @@
       <div id="menus"></div>
     </section>
 
-    <!-- 준비해 둔 기능(시험용): 진행자 화면에만 있다. 참가자 화면(index.html)에는 이 기능이 없고, 참가자가 부를 수 있는 DB 함수도 없다 -->
-    <h2 class="section">준비해 둔 기능 (시험용)
-      <small>일정표·객실표·자유시간이에요. <b>진행자 화면에서만</b> 보이고, 참가자 화면에는 나오지 않아요.</small>
-    </h2>
-
+    <!-- 일정표: 여기서 적은 글이 참가자 화면(메인 화면·일정표 보기)에 그대로 나온다 -->
     <details class="card" id="planCard">
-      <summary>일정표 <small id="planCount"></small></summary>
+      <summary>일정표 <small>· 참가자 화면에도 보여요</small> <small id="planCount"></small></summary>
       <div id="plan"></div>
       <div class="row tools2">
         <button class="link" id="planEditBtn">일정 고치기</button>
@@ -155,6 +151,11 @@
         </div>
       </div>
     </details>
+
+    <!-- 준비해 둔 기능(시험용): 진행자 화면에만 있다. 참가자 화면(index.html)에는 이 기능이 없고, 참가자가 부를 수 있는 DB 함수도 없다 -->
+    <h2 class="section">준비해 둔 기능 (시험용)
+      <small>객실표·자유시간이에요. <b>진행자 화면에서만</b> 보이고, 참가자 화면에는 나오지 않아요.</small>
+    </h2>
 
     <details class="card" id="roomCard">
       <summary>객실표 <small id="roomCount"></small></summary>
@@ -450,7 +451,7 @@
     }
   }
 
-  // ── 준비해 둔 기능(시험용): 일정표 · 객실표 · 자유시간. 진행자 화면에만 있다 ──
+  // ── 일정표(참가자 화면에도 보임) · 준비해 둔 기능(시험용: 객실표·자유시간 — 진행자 화면에만 있음) ──
   // 값을 저장한 뒤 다시 받아 그림. reload() 와 달리 명단 표에서 고치던 줄은 닫지 않음.
   // 저장은 됐는데 다시 받기만 실패했으면 "다시 눌러 주세요"가 아니라 그 사실을 알림(다음 5초 새로고침이 화면을 맞추고 이 문구도 지움)
   let acting = 0; // 진행자가 방금 바꾼 것을 그리는 중(이때는 초점이 있는 칸도 다시 그림)
@@ -540,7 +541,7 @@
     try { await fn(); } finally { btn.disabled = false; }
   });
 
-  // 일정표 고치기: 글로 적어 저장. 고치는 동안 5초 새로고침은 입력칸을 건드리지 않음
+  // 일정표 고치기: 글로 적어 저장하면 참가자 화면에도 그대로 나옴. 고치는 동안 5초 새로고침은 입력칸을 건드리지 않음
   const PLAN_SAMPLE = `12월 17일 (목)
 13:00 오크밸리 도착 · 객실 배정
 14:00~17:00 팀 게임
