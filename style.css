@@ -32,14 +32,38 @@ button:disabled { opacity: .5; cursor: default; }
 .error:empty { display: none; }
 .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 
-/* 일정표: 제목(날짜) 아래에 "시간  내용" 줄 */
-.plan-day + .plan-day { margin-top: 18px; }
-.plan-day h3 { margin: 0 0 6px; font-size: 14px; }
-.plan { list-style: none; margin: 0; padding: 0; }
-.plan li { display: flex; align-items: baseline; gap: 12px; padding: 7px 0; border-top: 1px solid var(--line); }
-.plan time { flex: none; min-width: 6.4em; color: var(--muted); font-variant-numeric: tabular-nums; }
-/* 휴대폰: 시간 칸을 작게 해서 내용이 덜 접히게 */
-@media (max-width: 480px) { .plan li { gap: 10px; } .plan time { font-size: 13px; } }
+/* 일정표: 날짜마다 머리띠(꼬리표·날짜·주제) 아래에 시간 순서대로 줄. 한 줄 = 시간 | 그림 표시 | 내용. 휴대폰 너비에 맞춰 짬.
+   색을 섞는 color-mix()를 모르는 예전 브라우저를 위해 같은 속성을 비슷한 색(아래 --plan-*)으로 한 번 먼저 적어 둠 */
+:root { --plan-talk: #e0e7ff; --plan-meal: #fef3c7; --plan-play: #fce7f3; --plan-rest: #dcfce7; }
+@media (prefers-color-scheme: dark) { :root { --plan-talk: #2e3252; --plan-meal: #4a3b18; --plan-play: #4a253a; --plan-rest: #1f3d2c; } }
+.plan-day + .plan-day { margin-top: 20px; }
+.plan-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin: 0; padding: 10px 14px; border-radius: 12px; font-size: 15px;
+             background: var(--chip); background: color-mix(in srgb, var(--accent) 12%, var(--card)); }
+.plan-tag { padding: 2px 10px; border-radius: 999px; background: var(--accent); color: var(--accent-text); font-size: 12px; font-weight: 800; }
+.plan-date { font-weight: 800; }
+.plan-theme { margin-left: auto; color: var(--muted); font-size: 13px; font-weight: 500; }
+.plan { list-style: none; margin: 0; padding: 6px 2px 0; }
+.plan li { position: relative; display: grid; grid-template-columns: 3.1em 30px minmax(0, 1fr); column-gap: 10px; padding: 9px 0; }
+/* 시간 흐름을 잇는 세로 줄: 그림 표시의 가운데를 지나고, 첫 줄은 표시부터 시작하고 마지막 줄은 표시에서 끝남 */
+.plan li::before { content: ''; position: absolute; top: 0; bottom: 0; left: calc(3.1em + 10px + 14px); width: 2px; background: var(--line); }
+.plan li:first-child::before { top: 24px; }
+.plan li:last-child::before { bottom: auto; height: 24px; }
+.plan li:only-child::before { display: none; }
+.plan time { display: flex; flex-direction: column; align-items: flex-end; padding-top: 6px; line-height: 1.2; font-variant-numeric: tabular-nums; }
+.plan time b { font-size: 14px; }
+.plan time span { margin-top: 2px; font-size: 12px; color: var(--muted); }
+.plan-dot { position: relative; display: flex; align-items: center; justify-content: center; width: 30px; height: 30px; border-radius: 50%;
+            font-size: 15px; line-height: 1; background: var(--chip); }
+.plan-what { padding-top: 4px; overflow-wrap: break-word; overflow-wrap: anywhere; } /* 띄어쓰기 없는 긴 글도 칸 안에서 줄바꿈(anywhere 를 모르는 예전 브라우저는 break-word) */
+.plan-text { display: block; }
+.plan-what small { display: block; margin-top: 2px; color: var(--muted); font-size: 12px; line-height: 1.45; }
+.plan li.k-talk .plan-text { font-weight: 700; }
+.plan li.k-talk .plan-dot { background: var(--plan-talk); background: color-mix(in srgb, var(--accent) 24%, var(--card)); }
+.plan li.k-meal .plan-dot { background: var(--plan-meal); background: color-mix(in srgb, #f59e0b 28%, var(--card)); }
+.plan li.k-play .plan-dot { background: var(--plan-play); background: color-mix(in srgb, #ec4899 24%, var(--card)); }
+.plan li.k-rest .plan-dot { background: var(--plan-rest); background: color-mix(in srgb, #22c55e 24%, var(--card)); }
+.plan li.k-etc .plan-dot { background: none; }
+.plan li.k-etc .plan-dot::after { content: ''; width: 10px; height: 10px; border-radius: 50%; background: var(--muted); box-shadow: 0 0 0 5px var(--card); }
 
 /* 팀 색 */
 .team-red    { background: var(--red);    color: #fff; }

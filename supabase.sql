@@ -5,9 +5,10 @@
 --    다시 Run 할 때 '여기를-바꾸세요' 를 그대로 두면 기존 비밀번호가 유지돼요.
 --
 -- 구조: 참가자 화면은 테이블에 직접 접근하지 못하고, 아래 함수들만 부를 수 있다.
---   departments() / login() / choose_menu() / pick()  ← 참가자용 (누구나)
+--   departments() / login() / choose_menu() / pick() / schedule()  ← 참가자용 (누구나)
 --   board() / admin_add() / admin_update() / admin_remove() / admin_reset() / admin_reset_all()  ← 진행자용 (관리자 비밀번호 필요)
--- 준비해 둔 기능(시험용: 일정표·객실표·자유시간)은 진행자 화면에만 있다. 참가자가 부를 수 있는 함수는 없다.
+-- 일정표: 진행자가 진행자 화면에서 적고(admin_set), 참가자 화면이 schedule() 로 받아 보여준다.
+-- 준비해 둔 기능(시험용: 객실표·자유시간)은 진행자 화면에만 있다. 참가자가 부를 수 있는 함수는 없다.
 --   board_state() / admin_assign() / admin_clear() / admin_set()  ← 진행자용 (관리자 비밀번호 필요)
 
 -- 이전 버전(명단·기록) 테이블 정리 — 비어 있음
@@ -39,7 +40,7 @@ alter table public.people
   add column if not exists room     text check (room in ('m1', 'm2', 'm3', 'm4', 'm5', 'f1', 'f2')),
   add column if not exists activity text check (activity in ('ski', 'sauna'));
 
--- 설정: 'admin_code'(관리자 비밀번호), 'schedule'(일정표 글 — 진행자 화면에만 보임)
+-- 설정: 'admin_code'(관리자 비밀번호), 'schedule'(일정표 글 — 진행자가 적고 참가자 화면에도 보임)
 create table if not exists public.config (
   key   text primary key,
   value text not null
@@ -265,6 +266,14 @@ begin
   return teams[myteam];
 end $$;
 
+-- 일정표 글(진행자가 진행자 화면에서 적음). 명단에 있는 사람만 받을 수 있다: 명단에 없으면 null, 적어 둔 일정이 없으면 ''.
+create or replace function public.schedule(p_dept text, p_name text) returns text
+language sql stable security definer set search_path = public as $$
+  select coalesce((select value from config where key = 'schedule'), '')
+  from people
+  where dept = norm_dept(p_dept) and name = norm_name(p_name)
+$$;
+
 -- ── 진행자용 (관리자 비밀번호 필요) ───────────────────────
 -- 전체 현황: [{id, dept, name, title, gender, is_exec, team, picked_at, menu, room, activity}, ...]
 create or replace function public.board(p_code text) returns json
@@ -413,7 +422,7 @@ begin
   end if;
 end $$;
 
--- 진행자 설정 저장. 'schedule'(일정표 글, 4000자까지)만 바꿀 수 있다(관리자 비밀번호 'admin_code' 는 여기서 못 바꾼다).
+-- 진행자 설정 저장. 'schedule'(일정표 글, 4000자까지 — 참가자 화면에도 보임)만 바꿀 수 있다(관리자 비밀번호 'admin_code' 는 여기서 못 바꾼다).
 create or replace function public.admin_set(p_code text, p_key text, p_value text) returns void
 language plpgsql security definer set search_path = public as $$
 begin
@@ -433,13 +442,13 @@ revoke all on function public.norm_dept(text), public.norm_name(text), public.ch
   from public, anon, authenticated;
 
 revoke all on function
-  public.departments(), public.login(text, text), public.choose_menu(text, text, text), public.pick(text, text),
+  public.departments(), public.login(text, text), public.choose_menu(text, text, text), public.pick(text, text), public.schedule(text, text),
   public.board(text), public.admin_add(text, jsonb), public.admin_update(text, bigint, jsonb),
   public.admin_remove(text, bigint), public.admin_reset(text, bigint), public.admin_reset_all(text),
   public.board_state(text), public.admin_assign(text, text, jsonb), public.admin_clear(text, text), public.admin_set(text, text, text)
   from public;
 grant execute on function
-  public.departments(), public.login(text, text), public.choose_menu(text, text, text), public.pick(text, text),
+  public.departments(), public.login(text, text), public.choose_menu(text, text, text), public.pick(text, text), public.schedule(text, text),
   public.board(text), public.admin_add(text, jsonb), public.admin_update(text, bigint, jsonb),
   public.admin_remove(text, bigint), public.admin_reset(text, bigint), public.admin_reset_all(text),
   public.board_state(text), public.admin_assign(text, text, jsonb), public.admin_clear(text, text), public.admin_set(text, text, text)
