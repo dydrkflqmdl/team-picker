@@ -5,12 +5,13 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>팀 현황</title>
   <meta name="robots" content="noindex" />
-  <link rel="stylesheet" href="style.css?v=3" /><!-- style.css 를 고치면 v 숫자를 올린다 -->
+  <meta name="color-scheme" content="light dark" />
+  <link rel="stylesheet" href="style.css?v=4" /><!-- style.css 를 고치면 v 숫자를 올린다 -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.js"
           integrity="sha384-BWcjm9OdFth9TbhCxZPdm+gAOUMAzQy9nmTs12ioXdCcbVnJaPMn+fMUoQCLt60R"
           crossorigin="anonymous"></script>
   <!-- common.js 를 고치면 v 숫자를 올린다(브라우저에 남아 있는 예전 common.js 를 새 화면이 쓰지 않게) -->
-  <script src="common.js?v=6"></script>
+  <script src="common.js?v=7"></script>
   <style>
     .head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
     .stats { color: var(--muted); }
@@ -61,7 +62,15 @@
     .people input, .people select { margin: 0; padding: 4px 6px; font-size: 14px; border-radius: 6px; min-width: 64px; }
     .table-wrap { max-height: 480px; max-height: min(70vh, 640px); overflow: auto; scroll-padding-top: 44px; } /* scroll-padding: 초점이 간 줄이 붙어 있는 머리글에 가리지 않게 */
     /* 좁은 화면: 칸을 줄바꿈하지 않고(글자가 세로로 한 자씩 쪼개짐) 표 안에서 옆으로 밀어 봄 */
-    @media (max-width: 700px) { .people th, .people td { white-space: nowrap; } }
+    @media (max-width: 700px) {
+      .people th, .people td { white-space: nowrap; }
+      /* 표를 옆으로 밀어도 맨 오른쪽 칸(수정·다시 뽑기·삭제)은 화면 오른쪽에 붙어 있게 */
+      .people th:last-child, .people td:last-child:not(.empty) { position: sticky; right: 0; background: var(--card); box-shadow: -10px 0 10px -10px rgb(0 0 0 / .35); }
+      .people th:last-child { z-index: 2; }
+      .people tbody td:last-child button { padding: 10px 4px; } /* tbody: 아래쪽 기본 규칙(6px)보다 앞서게 */
+      .people th button { padding: 8px 0; }
+      #exportBtn, #clearView, #forget { padding: 10px 0; }
+    }
     .row.end { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--line); }
     .msg { font-size: 14px; color: var(--muted); }
     /* 오류 문구: 아래쪽 명단 표에서 일하는 중에도 보이게, 화면을 내려도 위에 붙어 있음 */
@@ -222,10 +231,13 @@
         <span class="msg" id="addMsg"></span>
       </div>
 
+      <!-- 되돌릴 수 없는 단추: 서로 떨어뜨려 두고, 누르면 글자를 직접 적어야 하며, 실행 전에 지금 명단을 파일로 받아 둠 -->
       <div class="row end">
         <button class="danger" id="resetAll">전체 다시 뽑기(팀·조식 초기화)</button>
-        <button class="danger" id="removeAll">명단 전체 삭제</button>
         <button class="link" id="forget" style="margin-left:auto">이 기기에서 비밀번호 지우기</button>
+      </div>
+      <div class="row" style="margin-top: 28px">
+        <button class="danger" id="removeAll">명단 전체 삭제</button>
       </div>
     </details>
   </div>
@@ -399,20 +411,37 @@
     sort = { key, dir: sort.key === key ? -sort.dir : 1 };
     renderTable();
   });
-  // 지금 표에 보이는 사람들을 엑셀에서 열리는 파일(CSV)로 받음
+  // 사람들을 엑셀에서 열리는 파일(CSV)로 받음. all 이면 객실·자유시간 칸까지(되돌릴 수 없는 단추를 누르기 전의 백업)
+  function downloadCsv(list, filename, all = false) {
+    // 칸마다 따옴표로 감싸고, 엑셀이 수식으로 읽는 글자(= + - @)로 시작하면 앞에 ' 를 붙여 글자로만 읽히게 함
+    const cell = (v) => `"${String(v ?? '').replace(/^[=+\-@\t\r]/, "'$&").replace(/"/g, '""')}"`;
+    const lines = [['부서', '이름', '직급', '성별', '구분', '팀', '조식', ...(all ? ['객실', '자유시간'] : [])],
+      ...list.map((p) => [p.dept, p.name, p.title, p.gender, p.is_exec ? '임원' : '직원', TEAMS[p.team], MENUS[p.menu], ...(all ? [ROOMS[p.room], ACTS[p.activity]] : [])])];
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([String.fromCharCode(0xFEFF) + lines.map((r) => r.map(cell).join(',')).join('\r\n')], { type: 'text/csv;charset=utf-8' })); // 맨 앞의 U+FEFF(BOM): 엑셀이 한글을 깨뜨리지 않게
+    a.download = filename;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+  }
+  // 지금 표에 보이는 사람들
   $('#exportBtn').addEventListener('click', guard(async () => {
     const list = ordered(people.filter((p) => matches(p)));
     if (!list.length) throw new Error('파일로 받을 사람이 없어요.');
-    // 칸마다 따옴표로 감싸고, 엑셀이 수식으로 읽는 글자(= + - @)로 시작하면 앞에 ' 를 붙여 글자로만 읽히게 함
-    const cell = (v) => `"${String(v ?? '').replace(/^[=+\-@\t\r]/, "'$&").replace(/"/g, '""')}"`;
-    const lines = [['부서', '이름', '직급', '성별', '구분', '팀', '조식'],
-      ...list.map((p) => [p.dept, p.name, p.title, p.gender, p.is_exec ? '임원' : '직원', TEAMS[p.team], MENUS[p.menu]])];
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob([String.fromCharCode(0xFEFF) + lines.map((r) => r.map(cell).join(',')).join('\r\n')], { type: 'text/csv;charset=utf-8' })); // 맨 앞의 U+FEFF(BOM): 엑셀이 한글을 깨뜨리지 않게
-    a.download = `워크숍_명단_${list.length}명.csv`;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+    downloadCsv(list, `워크숍_명단_${list.length}명.csv`);
   }));
+  // 되돌릴 수 없는 단추를 누르기 전: 지금 명단 전체를 파일로 받아 둠(실수했을 때 이 파일을 보고 다시 넣을 수 있게)
+  const backupNow = (what) => {
+    if (!people.length) return;
+    const t = new Date(), two = (n) => String(n).padStart(2, '0');
+    downloadCsv(ordered(people), `워크숍_백업_${what}전_${t.getMonth() + 1}월${t.getDate()}일_${two(t.getHours())}${two(t.getMinutes())}.csv`, true);
+  };
+  // 글자를 직접 적게 하는 확인. 맞게 적었을 때만 true
+  function typedOk(message, word) {
+    const typed = prompt(`${message}\n\n실행 전에 지금 명단을 파일로 받아 둘게요.\n계속하려면 "${word}"라고 적어 주세요.`);
+    if (typed == null) return false; // 취소
+    if (typed.trim() !== word) throw new Error(`"${word}"라고 적지 않아서 실행하지 않았어요.`);
+    return true;
+  }
 
   // 수정 줄을 닫고, 그 줄의 "수정" 단추로 초점을 돌려줌(키보드로 쓰는 사람이 자리를 잃지 않게)
   function stopEditing() {
@@ -423,7 +452,19 @@
   }
   // 버튼으로 명단을 바꾼 뒤에는 수정 중이던 줄을 닫고 표 전체를 새로 그림
   // (drawn 을 비워 두면, 이 새로고침이 통신 문제로 실패해도 다음 자동 새로고침이 표를 꼭 다시 그려 수정 줄이 닫힘)
-  function reload() { editing = null; drawn = ''; return refresh(true); }
+  // 저장은 됐는데 다시 받기만 실패하면 "다시 눌러 주세요" 대신 그 사실을 알리고(다시 눌러 두 번 하지 않게), 열려 있던 수정 줄은 닫음
+  async function reload() {
+    editing = null;
+    drawn = '';
+    try {
+      await refresh(true);
+    } catch (e) {
+      if (e.message.includes('비밀번호')) throw e;
+      renderTable();
+      autoMsg = '저장은 됐어요. 화면은 잠시 뒤 저절로 맞춰져요.';
+      showError(autoMsg);
+    }
+  }
 
   // 수정 저장. 실패하면(같은 이름 등) 입력칸을 그대로 두고 위쪽에 이유를 보여줌
   // 답을 기다리는 동안(saving)은 표의 다른 단추를 받지 않음 — 저장이 끝나며 표를 새로 그릴 때, 그사이 연 다른 줄의 입력이 말없이 사라지지 않게
@@ -668,6 +709,7 @@
       if (mine !== seq) return; // 기다리는 사이 더 새 요청이 나갔으면 이 답은 버림
       $('#codeCard').hidden = true;
       $('#boardView').hidden = false;
+      $('#code').value = '';
       const snap = JSON.stringify(data);
       if (!force && snap === drawn) return;
       drawn = snap;
@@ -690,35 +732,45 @@
   $('#codeForm').addEventListener('submit', guard(async (e) => {
     e.preventDefault();
     code = $('#code').value;
+    store.set(CODE_KEY, code); // 이 확인이 통신 문제로 실패해도 5초 새로고침이 이어서 씀. 틀린 비밀번호면 refresh 가 지움
     await refresh();
-    store.set(CODE_KEY, code);
     $('#code').value = '';
   }));
 
   // 명단 추가: 엑셀 4칸(이름·직급·성별·부서) 또는 "이름, 부서".
   // 줄에 탭이 있으면 탭으로만 나누고(엑셀에서 복사한 줄 — 칸 안의 쉼표는 그대로 둠), 없으면 쉼표로 나눈다.
-  // 칸이 4개도 2개도 아니면 엉뚱한 칸이 이름·부서로 들어갈 수 있으므로 넣지 않고 알려준다. 너무 긴 값도 마찬가지(DB가 한 줄 때문에 전체를 거절함)
-  $('#addBtn').addEventListener('click', guard(async () => {
+  // 칸이 4개도 2개도 아니면 엉뚱한 칸이 이름·부서로 들어갈 수 있으므로 넣지 않고 알려준다. 너무 긴 값도 마찬가지(DB가 한 줄 때문에 전체를 거절함).
+  // 4칸인데 셋째 칸이 성별(남·여·빈칸)이 아니면 칸 순서가 다른 것이므로(예: 이름·부서·직급·성별) 넣지 않는다 — 부서에 "남"이 들어가는 일을 막음
+  const HEAD_WORD = /^(이름|성명|성함|부서|부서명|소속|팀|팀명|직급|직위|직책|성별)$/;
+  const GENDER = /^(남|여|남자|여자|남성|여성|m|f|male|female|男|女)?$/i;
+  const cleanCell = (c) => c.replace(/[\u200b-\u200d\u2060\ufeff]/g, '') // 폭 없는 글자(DB가 못 지움 — 섞이면 그 사람이 로그인할 수 없음)
+    .replace(/[\u00a0\u3000]/g, ' ').trim()
+    .replace(/^"(.*)"$/, (_, x) => x.replace(/""/g, '"')).trim(); // 엑셀·CSV 의 따옴표로 감싼 칸
+  $('#addBtn').addEventListener('click', hold($('#addBtn'), async () => {
     $('#addMsg').textContent = ''; // 지난번 결과("N명 추가")가 이번 실패 옆에 남아 있지 않게
     const rows = [], bad = [];
+    let order = 0; // 칸 순서가 달라 못 넣은 줄 수
     for (const raw of $('#rosterInput').value.split(/\r?\n/)) {
       if (!raw.trim()) continue;
-      const cells = (raw.includes('\t') ? raw.split('\t') : raw.split(',')).map((s) => s.trim());
+      const cells = (raw.includes('\t') ? raw.split('\t') : raw.split(',')).map(cleanCell);
       if (cells.length > 4 && cells.slice(4).every((c) => !c)) cells.length = 4; // 엑셀에서 빈 열까지 같이 복사한 경우: 뒤쪽 빈 칸은 버림
-      if (cells.includes('이름') && cells.includes('부서')) continue; // 머리글 줄
-      const row = cells.length === 4 ? { name: cells[0], title: cells[1], gender: cells[2], dept: cells[3] }
+      if (cells.filter((c) => HEAD_WORD.test(c)).length >= 2) continue; // 머리글 줄(이름·부서, 성명·소속 등)
+      let row = cells.length === 4 ? { name: cells[0], title: cells[1], gender: cells[2], dept: cells[3] }
         : cells.length === 2 ? { name: cells[0], dept: cells[1] } : null;
+      if (row && cells.length === 4 && !GENDER.test(row.gender)) { order++; row = null; }
+      if (row && row.gender) row.gender = row.gender.replace('男', '남').replace('女', '여');
       if (row && row.name && row.dept && row.name.length <= 50 && row.dept.length <= 50 && (row.title || '').length <= 30) rows.push(row);
       else bad.push(raw.trim());
     }
+    const why = order ? ` 셋째 칸이 성별(남·여)이 아닌 줄이 ${order}개 있어요. 엑셀 칸 순서를 이름·직급·성별·부서로 맞춰 주세요.` : '';
     if (!rows.length) {
       throw new Error(bad.length
-        ? `형식이 안 맞아 한 줄도 추가하지 못했어요(${bad.length}줄). 엑셀의 이름·직급·성별·부서 4칸이나 "이름, 부서"로 적어 주세요.`
+        ? `형식이 안 맞아 한 줄도 추가하지 못했어요(${bad.length}줄). 엑셀의 이름·직급·성별·부서 4칸이나 "이름, 부서"로 적어 주세요.${why}`
         : '추가할 줄이 없어요. "이름, 부서" 형식으로 적어 주세요.');
     }
     const added = await rpc('admin_add', { p_code: code, p_rows: rows });
     const skipped = rows.length - added;
-    $('#addMsg').textContent = `${added}명 추가` + (skipped ? ` · 이미 있어서 건너뜀 ${skipped}명` : '') + (bad.length ? ` · 형식이 안 맞는 ${bad.length}줄은 입력칸에 남겨 뒀어요` : '');
+    $('#addMsg').textContent = `${added}명 추가` + (skipped ? ` · 이미 있어서 건너뜀 ${skipped}명` : '') + (bad.length ? ` · 형식이 안 맞는 ${bad.length}줄은 입력칸에 남겨 뒀어요.${why}` : '');
     $('#rosterInput').value = bad.join('\n'); // 넣은 줄은 지우고, 못 넣은 줄만 남겨 고쳐서 다시 추가할 수 있게
     await reload();
   }));
@@ -739,13 +791,18 @@
     }
     if ('cancel' in e.target.dataset) return stopEditing();
     if ('save' in e.target.dataset) return saveEdit();
+    // DB 는 p_id 가 비어 있으면 "모든 사람"으로 받으므로, 한 사람을 가리키는 번호가 맞는지 먼저 확인
+    const id = Number(reset || remove);
+    if ((reset || remove) && !(Number.isInteger(id) && id > 0)) throw new Error('누구인지 알 수 없어요. 화면을 새로고침한 뒤 다시 해 주세요.');
     if (reset) {
       if (!confirm(`${name} 님의 팀을 지우고 다시 뽑게 할까요? 조식 메뉴는 그대로 남아요.`)) return;
-      await rpc('admin_reset', { p_code: code, p_id: Number(reset) });
+      await rpc('admin_reset', { p_code: code, p_id: id });
     }
     if (remove) {
-      if (!confirm(`${name} 님을 명단에서 지울까요?`)) return;
-      await rpc('admin_remove', { p_code: code, p_id: Number(remove) });
+      const p = people.find((x) => x.id === id);
+      const team = p && p.team ? `\n이미 ${TEAMS[p.team]}팀으로 뽑혀 있어서, 지우면 그 팀 인원이 1명 줄어요.` : '';
+      if (!confirm(`${name} 님을 명단에서 지울까요?${team}`)) return;
+      await rpc('admin_remove', { p_code: code, p_id: id });
     }
     if (reset || remove) await reload();
   });
@@ -757,16 +814,18 @@
     if (e.key === 'Escape') stopEditing();
   });
 
-  $('#resetAll').addEventListener('click', guard(async () => {
+  $('#resetAll').addEventListener('click', hold($('#resetAll'), async () => {
     const teams = people.filter((p) => p.team).length, menus = people.filter((p) => p.menu).length;
     const kept = people.some((p) => p.room || p.activity) ? '\n객실과 자유시간은 지워지지 않고 그대로 남아요.' : ''; // 준비해 둔 기능을 쓰고 있을 때만 덧붙임
-    if (!confirm(`모든 사람의 팀과 조식 메뉴를 지우고 처음부터 다시 하게 할까요?\n지금 팀을 뽑은 ${teams}명, 조식을 고른 ${menus}명의 기록이 지워지고 되돌릴 수 없어요.${kept}`)) return;
+    if (!typedOk(`모든 사람의 팀과 조식 메뉴를 지우고 처음부터 다시 하게 할까요?\n지금 팀을 뽑은 ${teams}명, 조식을 고른 ${menus}명의 기록이 지워지고 되돌릴 수 없어요.${kept}`, '초기화')) return;
+    backupNow('전체다시뽑기');
     await rpc('admin_reset_all', { p_code: code }); // 팀 + 조식. (admin_reset 은 팀만 지움)
     seen = null;
     await reload();
   }));
-  $('#removeAll').addEventListener('click', guard(async () => {
-    if (!confirm(`명단 ${people.length}명을 전부 지울까요?\n뽑은 팀과 고른 조식도 함께 사라지고 되돌릴 수 없어요.`)) return;
+  $('#removeAll').addEventListener('click', hold($('#removeAll'), async () => {
+    if (!typedOk(`명단 ${people.length}명을 전부 지울까요?\n뽑은 팀과 고른 조식도 함께 사라지고 되돌릴 수 없어요.`, '삭제')) return;
+    backupNow('명단전체삭제');
     await rpc('admin_remove', { p_code: code, p_id: null });
     await reload();
   }));
@@ -780,7 +839,7 @@
     if (!code || document.hidden || loading) return;
     refresh().then(
       () => { if (autoMsg && $('#error').textContent === autoMsg) showError(''); autoMsg = ''; },
-      (e) => { autoMsg = e.message; showError(autoMsg); },
+      (e) => { autoMsg = e.message.includes('비밀번호') ? e.message : '연결이 잠시 끊겼어요. 다시 연결되면 저절로 맞춰져요.'; showError(autoMsg); },
     );
   };
   if (code) autoRefresh(); else $('#codeCard').hidden = false;

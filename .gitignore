@@ -1,9 +1,18 @@
 .DS_Store
 .claude/
-# 명단(실명)은 공개 저장소에 올리지 않는다
+# 명단(실명)은 공개 저장소에 올리지 않는다(진행자 화면에서 받은 명단·백업 파일 포함)
 roster*
 *.xlsx
+*.xls
+*.xlsm
 *.csv
+*.numbers
+*.hwp
+*.hwpx
+명단*
+워크숍_*
+# 비밀번호 등을 적어 둔 파일
+.env*
 # 원본 GIF(사이트는 컷을 가로로 붙인 shake.jpg·ball_*.jpg만 씀)
 *.gif
 # 원본 음식 그림(사이트는 줄여서 촬영 정보를 지운 menu_*.jpg만 씀)
