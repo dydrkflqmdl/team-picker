@@ -1,0 +1,59 @@
+name: 주간 점검
+
+# Supabase 무료 프로젝트는 1주일쯤 쓰지 않으면 일시정지된다. 일주일에 두 번 DB에 가벼운 요청을 보내 활동을 남긴다.
+# 응답이 이상하면(5xx·연결 안 됨 등) 일시정지를 의심해 이 저장소에 이슈를 연다 → GitHub 알림으로 알 수 있다.
+# 주소와 키는 참가자 화면(common.js)에 이미 들어 있는 공개용(publishable) 키라 여기 적어도 된다. secret/service_role 키는 절대 적지 않는다.
+# 백업은 일부러 넣지 않았다: 공개 저장소라 백업 파일에 실명 명단이 담기면 누구나 받을 수 있다(백업은 진행자 화면의 엑셀 받기로).
+# 공개 저장소의 예약 실행은 저장소에 60일 동안 변화가 없으면 GitHub이 끈다. 그러면 Actions 탭 → 주간 점검에서 다시 켠다.
+
+on:
+  schedule:
+    - cron: '17 18 * * 0,3' # 한국 시각 월·목 새벽 3:17 (GitHub은 UTC 기준이라 일·수 18:17). GitHub 사정으로 조금 늦게 돌 수 있다
+  workflow_dispatch: # Actions 탭 → 주간 점검 → Run workflow 로 바로 돌려 보기
+
+permissions:
+  issues: write
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      SUPABASE_URL: https://qvplrrhxlrzqvnqfpfsu.supabase.co
+      SUPABASE_KEY: sb_publishable_qC654tfLhn9u0OrPk2xtqA_7zIMTeCO
+    steps:
+      - name: DB 깨우기 (명단에 없는 이름으로 일정표를 물어 DB가 명단 표를 실제로 찾게 함. 200 + null 이 정상)
+        run: |
+          code=$(curl -sS -o /dev/null -w '%{http_code}' -m 30 --retry 3 --retry-delay 20 --retry-connrefused \
+            -X POST "$SUPABASE_URL/rest/v1/rpc/schedule" \
+            -H "apikey: $SUPABASE_KEY" -H 'Content-Type: application/json' \
+            -d '{"p_dept":"ping","p_name":"ping"}') || true
+          echo "DB 응답: $code"
+          test "$code" = 200
+
+      - name: 인증 서버 확인 (200 이 정상)
+        if: ${{ !cancelled() }}
+        run: |
+          code=$(curl -sS -o /dev/null -w '%{http_code}' -m 30 --retry 3 --retry-delay 20 --retry-connrefused \
+            "$SUPABASE_URL/auth/v1/settings" -H "apikey: $SUPABASE_KEY") || true
+          echo "인증 응답: $code"
+          test "$code" = 200
+
+      - name: 멈춘 것 같으면 이슈 열기 (이미 열려 있으면 또 열지 않음)
+        if: ${{ failure() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          title='Supabase가 응답하지 않아요 (일시정지 의심)'
+          if gh issue list -R "$GITHUB_REPOSITORY" --state open --limit 100 --json title -q '.[].title' | grep -Fxq "$title"; then
+            echo "이미 열린 이슈가 있어 새로 열지 않아요"
+            exit 0
+          fi
+          gh issue create -R "$GITHUB_REPOSITORY" --title "$title" --body-file - <<EOF
+          주간 점검에서 Supabase가 정상 응답하지 않았어요. 실행 기록: $RUN_URL
+
+          1. Supabase 대시보드에서 프로젝트가 **Paused**인지 봐요. 그렇다면 **Restore**를 눌러요(몇 분 걸려요).
+          2. 살아나면 저장소 **Actions** 탭 → **주간 점검** → **Run workflow**로 한 번 돌려 초록색인지 확인하고, 이 이슈를 닫아요.
+          3. Paused가 아니면 잠깐의 장애였을 수 있어요. 다음 점검(월·목 새벽)이 초록색이면 닫아도 돼요.
+          EOF
