@@ -70,6 +70,14 @@ div.plan-day .plan-head::after { display: none; }
 .plan li.k-rest .plan-dot { background: var(--plan-rest); background: color-mix(in srgb, #22c55e 24%, var(--card)); }
 .plan li.k-etc .plan-dot { background: none; }
 .plan li.k-etc .plan-dot::after { content: ''; width: 10px; height: 10px; border-radius: 50%; background: var(--muted); box-shadow: 0 0 0 5px var(--card); }
+/* 지금 할 일(참가자 화면, 오늘 날짜 묶음에서만): 지금 하는 일정은 진한 막대와 "지금" 표시, 해당하는 것이 없으면 다음 일정에 "다음" 표시.
+   바탕을 깔려고 양옆으로 8px 넓힘(margin 으로 늘린 만큼 padding 으로 채워 글자 자리는 그대로) — 세로 줄도 그만큼 옮김 */
+.plan li.is-now, .plan li.is-next { margin: 0 -8px; padding-left: 8px; padding-right: 8px; border-radius: 12px; background: rgb(79 70 229 / .1); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.plan li.is-now::before, .plan li.is-next::before { left: calc(3.1em + 10px + 14px + 8px); }
+.plan li.is-now { box-shadow: inset 4px 0 0 var(--accent); }
+.plan li.is-next { box-shadow: inset 0 0 0 1px var(--line); }
+.plan-flag { display: inline-block; margin-right: 6px; padding: 0 8px; border-radius: 999px; background: var(--accent); color: var(--accent-text); font-size: 11px; font-weight: 800; line-height: 1.6; vertical-align: 1px; }
+.plan li.is-next .plan-flag { background: var(--chip); color: var(--muted); }
 
 /* 팀 색 */
 .team-red    { background: var(--red);    color: #fff; }
