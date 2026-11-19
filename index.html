@@ -6,12 +6,11 @@
   <title>팀 뽑기</title>
   <meta name="robots" content="noindex" />
   <meta name="color-scheme" content="light dark" /><!-- 삼성 인터넷 등의 강제 다크 모드가 이 화면의 어두운 색을 한 번 더 바꾸지 않게 -->
-  <link rel="stylesheet" href="style.css?v=4" /><!-- style.css 를 고치면 v 숫자를 올린다 -->
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.js"
-          integrity="sha384-BWcjm9OdFth9TbhCxZPdm+gAOUMAzQy9nmTs12ioXdCcbVnJaPMn+fMUoQCLt60R"
-          crossorigin="anonymous"></script>
+  <link rel="stylesheet" href="style.css?v=5" /><!-- style.css 를 고치면 v 숫자를 올린다 -->
+  <!-- Supabase 연결 파일은 저장소에 같이 둔 것(2.117.3 버전). 받은 파일이 바뀌지 않았는지 integrity 로 확인. 올릴 때는 v 숫자와 integrity 를 같이 바꾼다 -->
+  <script src="supabase.js?v=2.117.3" integrity="sha384-BWcjm9OdFth9TbhCxZPdm+gAOUMAzQy9nmTs12ioXdCcbVnJaPMn+fMUoQCLt60R"></script>
   <!-- common.js 를 고치면 v 숫자를 올린다(휴대폰에 남아 있는 예전 common.js 를 새 화면이 쓰지 않게) -->
-  <script src="common.js?v=7"></script>
+  <script src="common.js?v=8"></script>
   <style>
     /* 가로로 돌려도 글자가 멋대로 커지지 않게. 키보드로 옮겨 간 메뉴 카드가 화면 아래에 붙은 단추 줄에 가리지 않게 */
     html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; scroll-padding-bottom: 120px; }
@@ -29,10 +28,11 @@
     header.with-who:not([hidden]) { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 12px;
                                     align-items: baseline; align-items: last baseline; } /* last baseline 을 모르는 예전 브라우저는 첫 줄끼리 맞춤 */
     header.with-who h1 { grid-area: 1 / 1; margin: 0; font-size: clamp(19px, 5.3vw, 26px); }
-    header.with-who .sub { grid-area: 2 / 1 / 3 / 3; align-self: start; margin-top: 6px; padding-right: 76px; } /* 오른쪽은 로그아웃 자리 */
+    header.with-who .sub { grid-area: 2 / 1 / 3 / 3; align-self: start; margin-top: 6px; padding-right: 5.2em; } /* 오른쪽은 로그아웃 자리. 글자가 커지면(큰 글씨 설정) 자리도 같이 커지게 em */
     .topbar:not([hidden]) { display: contents; } /* 안의 이름과 로그아웃이 머리의 칸에 바로 들어감 */
     .topbar .who-box { grid-area: 1 / 2; max-width: min(36vw, 260px); text-align: right; font-size: 14px; line-height: 1.4; }
-    .topbar .logout { grid-area: 2 / 2; justify-self: end; align-self: start; margin: 0 0 -8px; padding: 6px 0 8px 16px; font-size: 13px; } /* 글자는 작게, 누르는 자리는 넓게 */
+    /* 글자는 작게, 누르는 자리는 44px 높이로. 위아래 음수 여백은 누르는 자리가 늘어도 머리 줄 높이는 그대로 두려는 것(글자 가운데는 설명 줄과 맞춤) */
+    .topbar .logout { grid-area: 2 / 2; justify-self: end; align-self: start; min-height: 44px; margin: -5px 0 -11px; padding: 0 0 0 16px; font-size: 13px; }
     /* 뽑기 장면: 상자를 흔드는 진행자(shake.jpg = 9컷을 가로로 붙인 그림) + 팀 공. 바탕은 그림 배경색과 같게 */
     .scene { position: relative; height: 270px; margin: 0 0 12px; background: #fefefe; border-radius: 18px; overflow: hidden; }
     .figure { position: relative; height: 100%; aspect-ratio: 379 / 507; margin: 0 auto; transform-origin: 50% 85%; }
@@ -52,18 +52,27 @@
     /* 팀 공: 뽑은 뒤 진행자 그림을 덮는 그림(ball_팀.jpg = 상자에서 공이 튀어나와 떠 있는 18컷을 가로로 붙인 그림). 어느 팀 그림인지는 paint()가 정함 */
     .pop { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: 0 0 / 1800% 100% no-repeat; }
     .scene:not([data-state="done"]) .pop { display: none; }
+    /* 숨 쉬듯 커졌다 작아지는 뽑기 단추. 그림자(box-shadow)를 계속 바꾸면 화면을 다시 그려야 해서 부담이 되므로,
+       단추 자체는 크기(transform)만 바꾸고 바깥 테두리 빛은 따로 깔아 둔 ::after 를 투명도(opacity)로만 깜빡임 */
+    #randomBtn { position: relative; }
+    #randomBtn::after { content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; opacity: 0;
+                        box-shadow: 0 0 0 6px rgb(99 102 241 / .25); box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent) 25%, transparent); }
     #randomBtn:not(:disabled) { animation: breathe 1.8s ease-in-out infinite; }
-    @keyframes breathe { 50% { transform: scale(1.02); box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent) 25%, transparent); } }
+    #randomBtn:not(:disabled)::after { animation: breathe-ring 1.8s ease-in-out infinite; }
+    @keyframes breathe { 50% { transform: scale(1.02); } }
+    @keyframes breathe-ring { 50% { opacity: 1; } }
     .result-text { text-align: center; font-size: 17px; margin: 0 0 16px; min-height: 1.5em; }
     .result-text b { font-size: 20px; }
+    .result-text .dot { display: inline-block; width: 22px; height: 22px; margin-right: 8px; border-radius: 50%; vertical-align: -3px; box-shadow: 0 0 0 1px rgb(0 0 0 / .15); } /* 팀 색 점(team-… 색) */
     .breakfast { margin: 16px 0 0; padding-top: 12px; border-top: 1px solid var(--line); text-align: center; font-size: 13px; color: var(--muted); }
     .breakfast b { color: var(--text); }
     @media (max-height: 520px) { .scene { height: 180px; } } /* 가로로 돌렸을 때 "뽑아봐!"가 첫 화면 안에 들어오게 */
-    @media (prefers-reduced-motion: reduce) { .scene *, #randomBtn, .nag, .letgo *, .letgo .dish-name::before { animation: none !important; } }
+    @media (prefers-reduced-motion: reduce) { .scene *, #randomBtn, #randomBtn::after, .nag, .letgo *, .letgo .dish-name::before { animation: none !important; } }
 
     /* 첫 화면(로그인)의 워크숍 안내 그림. 그 아래에 부서·이름 입력 */
     #headLogin { margin: -16px 0 16px; }
-    #headLogin img { display: block; width: 100%; height: auto; border-radius: 14px; }
+    /* 작은 폰에서 그림이 화면을 다 차지해 입력칸이 화면 밖으로 밀리지 않게 높이를 제한(그림 비율은 그대로, 너무 작아지지 않게 200px 아래로는 줄이지 않음) */
+    #headLogin img { display: block; width: 100%; height: auto; max-height: max(40vh, 200px); object-fit: contain; border-radius: 14px; }
 
     /* 조식 메뉴 고르기 */
     /* 색을 섞는 color-mix()를 모르는 예전 브라우저를 위해 같은 속성을 비슷한 색으로 한 번 먼저 적어 둠(아래 몇 군데도 같음) */
@@ -120,7 +129,10 @@
     .my div:last-child { padding-bottom: 0; }
     .my dt { color: var(--muted); font-size: 13px; }
     .my dd { margin: 0; font-weight: 700; text-align: right; }
-    .my .dot { display: inline-block; padding: 2px 14px; border-radius: 999px; }
+    /* 내 팀: 팀 색을 바탕으로 한 큰 블록(멀리서도 보이게). 색은 team-… 클래스가 줌 */
+    .team-block { display: flex; flex-direction: column; align-items: center; margin: 0 0 14px; padding: 22px 16px; border-radius: 16px; text-align: center; }
+    .team-block small { font-size: 14px; font-weight: 700; opacity: .85; }
+    .team-block b { font-size: 44px; line-height: 1.15; font-weight: 900; }
     /* "메인으로 돌아가기": 글자는 작게, 누르는 자리는 넓게 */
     .me .back { margin: -12px 0; padding: 12px 12px 12px 0; }
     #planCard > .link.back { display: block; margin: 0 0 12px; padding: 10px 12px 10px 0; font-size: 14px; }
@@ -144,6 +156,9 @@
     .crew li small { display: block; color: var(--muted); font-size: 12px; }
     .crew .me-tag { margin-left: 4px; padding: 0 7px; border-radius: 999px; background: var(--accent); color: var(--accent-text); font-size: 11px; font-weight: 800; vertical-align: 2px; }
     #homeCrew h2 .dot { display: inline-block; margin-left: 6px; padding: 1px 12px; border-radius: 999px; font-size: 14px; }
+    .crew-note { margin: 10px 0 0; }
+    /* 사람이 몰려 자동으로 다시 시도하는 중이라는 안내(오류 문구 바로 아래) */
+    #retryNote { margin: 0 0 12px; }
   </style>
 </head>
 <body>
@@ -178,6 +193,7 @@
     <p class="sub">세 가지 메뉴 중 <b>하나만</b> 고를 수 있어요.</p>
   </header>
   <p class="error" id="error" role="alert"></p>
+  <p class="hint" id="retryNote" role="status" hidden>사람이 몰려 다시 시도하고 있어요…</p>
   <noscript><p class="error">이 페이지는 자바스크립트가 켜져 있어야 쓸 수 있어요.</p></noscript>
   <p class="hint" id="loading">불러오는 중…</p>
   <button class="block" id="retry" hidden>다시 시도</button>
@@ -188,7 +204,7 @@
         <select id="dept" required><option value="">불러오는 중…</option></select>
       </label>
       <label>이름
-        <input id="name" required maxlength="50" autocomplete="off" placeholder="이름 입력" />
+        <input id="name" required maxlength="50" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" enterkeyhint="go" placeholder="이름 입력" />
       </label>
       <button class="primary block" type="submit" id="loginBtn">로그인</button>
     </form>
@@ -202,7 +218,7 @@
       <p class="hint" id="goPickNote"></p>
       <button class="block" id="goPlan">일정표 보기</button>
     </div>
-    <!-- 다 뽑은 사람: 일정표(접힌 채로 시작) → 우리 팀 사람들 → 내가 고른 것(팀·조식) -->
+    <!-- 팀을 뽑은 사람: 일정표(접힌 채로 시작) → 우리 팀 사람들 → 내가 고른 것(팀·조식) -->
     <details class="card fold" id="homePlan" hidden>
       <summary><h2>일정표 <span class="fold-hint" aria-hidden="true"></span></h2></summary>
       <p class="hint plan-note" id="homePlanNote" role="status"></p>
@@ -213,10 +229,11 @@
     <section class="card" id="homeCrew" hidden>
       <h2><span>팀<span id="crewTeam"></span></span> <small id="crewCount"></small></h2>
       <ul class="crew" id="crewList"></ul>
+      <p class="hint crew-note" id="crewNote">아직 안 뽑은 사람은 뽑으면 나타나요.</p>
     </section>
     <section class="card" id="homeDone" hidden>
+      <div class="team-block" id="homeTeamBlock"><small>우리 팀</small><b id="homeTeam"></b></div>
       <dl class="my">
-        <div><dt>팀</dt><dd id="homeTeam"></dd></div>
         <div><dt>12월 18일(금) 조식</dt><dd id="homeMenu"></dd></div>
       </dl>
     </section>
@@ -279,6 +296,22 @@
   let busy = false; // 메뉴를 저장하거나 팀을 뽑는 중
 
   const all = (s) => [...document.querySelectorAll(s)];
+
+  // 참가자 함수 호출. 사람이 몰려 실패하면(DB 시간 초과·잠금 충돌·통신 끊김) 잠깐 쉬었다 최대 2번 자동으로 다시 보내고, 그동안 안내를 보여줌.
+  // 이 함수들은 같은 요청을 다시 보내도 결과가 같아 안전함. quiet 이면 안내를 띄우지 않음(몰래 하는 자동 갱신)
+  let retrying = 0;
+  async function call(fn, args, quiet = false) {
+    let counted = false;
+    try {
+      return await rpc(fn, args, { retry: 2, onRetry: () => {
+        if (quiet || counted) return;
+        counted = true;
+        $('#retryNote').hidden = ++retrying <= 0;
+      } });
+    } finally {
+      if (counted) $('#retryNote').hidden = --retrying <= 0;
+    }
+  }
   const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 
   // 화면 바꾸기: 'login'(로그인) → 'home'(메인) → 'menu'(조식 메뉴 고르기) → 'team'(팀 뽑기). 'plan'(일정표 보기)은 메인에서 들어감
@@ -319,11 +352,15 @@
   const ballCut = cutter($('#pop'), 18);
 
   let timer = 0;
-  // cuts를 차례로 보여줌. ms = 한 컷 시간(컷마다 다르면 배열). 끝까지 가면 then()을 부르고, then이 없으면 처음부터 되풀이
+  let resume = null; // 화면이 숨겨지거나 다른 화면으로 가서 멈춘 애니메이션을 이어 돌리는 함수
+  // cuts를 차례로 보여줌. ms = 한 컷 시간(컷마다 다르면 배열). 끝까지 가면 then()을 부르고, then이 없으면 처음부터 되풀이.
+  // 끝없이 되풀이하며 배터리를 쓰지 않게: 앱이 가려졌거나(document.hidden) 팀 뽑기 화면이 아니면 다음 컷을 예약하지 않고 멈췄다가, 돌아오면 wake() 가 이어 돌림
   function play(show, cuts, ms, then) {
     clearTimeout(timer);
+    resume = null;
     let k = 0;
     const tick = () => {
+      if (document.hidden || shown !== 'team') { resume = () => { resume = null; tick(); }; return; }
       if (k === cuts.length) { if (then) return then(); k = 0; }
       show(cuts[k]);
       timer = setTimeout(tick, ms[k] ?? ms);
@@ -331,7 +368,8 @@
     };
     tick();
   }
-  function still(i = 0) { clearTimeout(timer); figureCut(i); }
+  function still(i = 0) { clearTimeout(timer); resume = null; figureCut(i); }
+  function wake() { if (resume && !document.hidden && shown === 'team') resume(); }
 
   // team 없으면 대기 장면(상자 흔들기 + 말풍선), 있으면 그 팀 색 공이 상자 위에 떠 있는 결과 장면. landed면 공이 상자에서 튀어나오는 것부터 보여줌
   function paint(team, landed = false) {
@@ -357,25 +395,38 @@
   let planError = '';  // 일정표를 못 받은 이유
   let planBusy = '';   // 일정표를 받아 오는 중인 사람(같은 요청을 겹쳐 보내지 않게)
   const done = () => !!(me && me.team && me.menu); // 조식도 고르고 팀도 뽑음
+  const hasTeam = () => !!(me && me.team); // 팀을 뽑음(진행자가 조식만 비우면 팀은 있고 조식은 없을 수 있음)
   const person = () => (me ? `${me.dept}\n${me.name}` : '');
   // 같은 내용이면 건드리지 않음(다른 앱에 다녀올 때마다 다시 그려, 읽던 자리가 흔들리거나 화면 낭독기가 되풀이해 읽지 않게).
   // 넣은 글을 기억해 두고 견줌 — 화면에서 되읽으면 따옴표 표기가 달라 늘 다르다고 나옴
   const filled = new Map();
   const fill = (el, html) => { if (filled.get(el) !== html) { filled.set(el, html); el.innerHTML = html; } };
 
-  // 받아 둔 일정표를 메인 화면(다 뽑은 사람)과 일정표 화면에 그림. 보여줄 일정이 없으면 그 까닭을 알려 줌
+  // 사람이 직접 접거나 편 날짜(머리띠 글 → 펼침 여부). 자동 갱신으로 일정표를 다시 그려도 그 선택을 되돌리지 않게 기억해 둠
+  const planOpen = new Map();
+  const dayKey = (details) => { const h = details.querySelector('.plan-head'); return h ? h.textContent : ''; };
+  all('#homePlanBody, #planBody').forEach((box) => box.addEventListener('click', (e) => {
+    const sum = e.target.closest('summary');
+    if (sum && sum.parentNode.matches('details.plan-day')) planOpen.set(dayKey(sum.parentNode), !sum.parentNode.open); // 누른 직후 바뀔 상태
+  }));
+  const keepOpen = (box) => box.querySelectorAll('details.plan-day').forEach((d) => { if (planOpen.has(dayKey(d))) d.open = planOpen.get(dayKey(d)); });
+
+  // 받아 둔 일정표를 메인 화면(팀을 뽑은 사람)과 일정표 화면에 그림. 보여줄 일정이 없으면 그 까닭을 알려 줌.
+  // 오늘이 일정에 있는 날이면 오늘만 펼치고 지금 할 일에 표시를 붙임(planHtml 의 now 옵션)
   function paintPlan() {
     // 일정표를 그리는 planHtml 은 common.js 에 있음. 드물게 예전 common.js 가 남아 있으면(이름이 없거나 예전 모양) 그리지 않고 새로고침을 안내함
     // — 그때도 메뉴 고르기·팀 뽑기는 그대로 되어야 하므로 여기서만 건너뜀
     const ready = typeof planHtml === 'function' && typeof PLAN_KINDS !== 'undefined';
-    const html = plan && ready ? planHtml(plan) : '';
+    const html = plan && ready ? planHtml(plan, { now: new Date() }) : '';
     const note = html ? '' : !ready ? '화면을 새로고침하면 일정표가 보여요.' : planError || (plan == null ? '불러오는 중…' : '아직 일정표가 준비되지 않았어요.');
     fill($('#homePlanBody'), html);
     fill($('#planBody'), html);
+    keepOpen($('#homePlanBody'));
+    keepOpen($('#planBody'));
     fill($('#homePlanNote'), note);
     fill($('#planNote'), note);
     all('.plan-retry').forEach((el) => { el.hidden = !(ready && planError && !html); }); // 못 받았을 때만 "다시 받기"
-    $('#homePlan').hidden = !done();
+    $('#homePlan').hidden = !hasTeam();
   }
   // 일정표를 받아 옴. 못 받으면 받아 둔 것을 그대로 보여 주고, 받아 둔 것도 없을 때만 그 이유를 보여줌
   async function loadPlan() {
@@ -383,7 +434,7 @@
     if (!key || planBusy === key) return;
     planBusy = key;
     try {
-      const got = await rpc('schedule', { p_dept: me.dept, p_name: me.name });
+      const got = await call('schedule', { p_dept: me.dept, p_name: me.name }, true);
       if (person() !== key) return; // 그사이 다른 사람으로 바뀜
       plan = got || '';
       planError = '';
@@ -401,11 +452,12 @@
   let crewBusy = '';
   const crewKey = () => (me ? `${person()}|${me.team}` : '');
   function paintCrew() {
-    const ok = done() && crew && crew.key === crewKey();
+    const ok = hasTeam() && crew && crew.key === crewKey();
     $('#homeCrew').hidden = !ok;
     if (!ok) return;
     $('#crewTeam').innerHTML = `<span class="dot team-${me.team}">${TEAMS[me.team]}</span>`;
-    $('#crewCount').textContent = `${crew.list.length}명`;
+    // 팀 전체 인원이 아니라 지금까지 뽑은 사람 수라는 것을 알려 줌(아직 안 뽑은 사람은 뽑으면 목록에 나타남)
+    $('#crewCount').textContent = `지금까지 뽑은 ${crew.list.length}명`;
     fill($('#crewList'), crew.list.map((p) => {
       const mine = p.dept === me.dept && p.name === me.name;
       return `<li><b>${esc(p.name)}</b>${mine ? '<span class="me-tag">나</span>' : ''}<small>${p.title ? esc(p.title) + ' · ' : ''}${esc(p.dept)}</small></li>`;
@@ -413,10 +465,10 @@
   }
   async function loadCrew() {
     const key = crewKey();
-    if (!done() || crewBusy === key) return;
+    if (!hasTeam() || crewBusy === key) return;
     crewBusy = key;
     try {
-      const got = await rpc('team_members', { p_dept: me.dept, p_name: me.name });
+      const got = await call('team_members', { p_dept: me.dept, p_name: me.name }, true);
       if (crewKey() !== key) return; // 그사이 다른 사람이 되었거나 팀이 바뀜
       crew = { key, list: Array.isArray(got) ? got : [] };
     } catch {
@@ -427,18 +479,22 @@
     paintCrew();
   }
 
-  // 메인 화면: 아직 팀을 안 뽑았으면 단추 두 개(조식 고르기·팀 뽑기, 일정표 보기), 다 뽑았으면 뽑기 단추 없이 내 팀·조식과 일정표
+  // 메인 화면: 아직 팀을 안 뽑았으면 단추 두 개(조식 고르기·팀 뽑기, 일정표 보기), 다 뽑았으면 뽑기 단추 없이 내 팀·조식과 일정표.
+  // 팀은 있는데 조식만 비었으면(진행자가 지움) 일정표·우리 팀은 그대로 보여 주고 "조식 고르기" 단추만 위에 남김
   function showHome() {
     who();
     still();
-    const fin = done();
+    const fin = done(), team = hasTeam();
     $('#homeTodo').hidden = fin;
-    $('#homeDone').hidden = !fin;
-    $('#goPick').textContent = me.menu ? '팀 뽑기' : '조식 고르기 · 팀 뽑기';
-    $('#goPickNote').textContent = me.menu && !fin ? `조식은 ${MENUS[me.menu]}으로 정했어요. 이제 팀을 뽑아 주세요.` : '';
-    if (fin) {
-      $('#homeTeam').innerHTML = `<span class="dot team-${me.team}">${TEAMS[me.team]}</span>`;
-      $('#homeMenu').textContent = MENUS[me.menu];
+    $('#goPlan').hidden = team; // 팀이 있으면 일정표가 아래에 바로 있음
+    $('#homeDone').hidden = !team;
+    $('#goPick').textContent = me.menu ? '팀 뽑기' : team ? '조식 고르기' : '조식 고르기 · 팀 뽑기';
+    $('#goPickNote').textContent = me.menu && !fin ? `조식은 ${MENUS[me.menu]}으로 정했어요. 이제 팀을 뽑아 주세요.`
+      : team && !me.menu ? `${TEAMS[me.team]}팀이에요. 조식을 아직 안 골랐어요.` : '';
+    if (team) {
+      $('#homeTeamBlock').className = `team-block team-${me.team}`;
+      $('#homeTeam').textContent = `${TEAMS[me.team]}팀`;
+      $('#homeMenu').textContent = me.menu ? MENUS[me.menu] : '아직 안 골랐어요';
     }
     paintPlan();
     paintCrew();
@@ -477,7 +533,7 @@
     $('#myMenu').textContent = MENUS[me.menu];
     if (me.team) {
       paint(me.team, landed);
-      $('#resultText').innerHTML = `<b>${TEAMS[me.team]}팀</b>이에요!`;
+      $('#resultText').innerHTML = `<span class="dot team-${me.team}" aria-hidden="true"></span><b>${TEAMS[me.team]}팀</b>이에요!`;
       $('#randomBtn').hidden = true;
     } else {
       paint(null);
@@ -584,7 +640,7 @@
     controls.forEach((el) => { el.disabled = true; });
     busy = true;
     try {
-      const saved = await rpc('choose_menu', { p_dept: me.dept, p_name: me.name, p_menu: key });
+      const saved = await call('choose_menu', { p_dept: me.dept, p_name: me.name, p_menu: key });
       if (!saved) throw new Error('메뉴가 저장되지 않았어요. 다시 눌러 주세요.'); // 바로 그 순간 진행자가 메뉴를 지운 경우
       me.menu = saved;
     } catch (e) {
@@ -598,7 +654,7 @@
       controls.forEach((el) => { el.disabled = false; });
       scrollTo(0, 0); // 다음 화면도, 실패했을 때의 오류 문구도 맨 위에 있음
     }
-    showMe();
+    if (me.team) goHome(); else showMe(); // 팀은 이미 있던 사람(조식만 비워졌던)은 고른 뒤 메인으로. 팀이 없으면 이어서 팀 뽑기
     // 다른 기기에서 이미 골랐으면 DB는 처음 고른 메뉴를 돌려줌
     if (me.menu !== key) throw new Error(`이미 ${MENUS[me.menu]}으로 정해져 있어요. 메뉴는 바꿀 수 없어요.`);
   }));
@@ -609,6 +665,7 @@
     planError = '';
     crew = null;
     $('#homePlan').open = false; // 다음 사람도 접힌 일정표부터
+    planOpen.clear();
     store.set(ME_KEY, null);
     still();
     $('#name').value = ''; // 앞사람의 이름·부서가 남아 있지 않게
@@ -616,7 +673,7 @@
     screen('login');
     let depts;
     try {
-      depts = await rpc('departments');
+      depts = await call('departments');
     } catch (e) { // 부서 목록을 못 받으면 로그인할 수 없으므로 다시 시도할 단추를 보여줌
       if (shown !== 'login') return; // 그사이 예전 목록으로 로그인함 → 지금 화면을 덮지 않음
       $('#dept').innerHTML = '<option value="">부서를 불러오지 못했어요</option>';
@@ -630,15 +687,18 @@
     if (depts.includes(picked)) $('#dept').value = picked;
   }
 
+  const ROSTER_CHANGED = '명단 정보가 바뀌었어요. 부서와 이름을 확인해 다시 로그인해 주세요.';
   // 서버에 저장된 내 상태를 다시 받아, 달라졌으면 화면을 맞춤(진행자가 그사이 내 팀이나 메뉴를 지웠을 수 있음).
   // 기다리는 사이 사용자가 뭔가 했으면(로그인·저장·뽑기) 그쪽이 더 새 것이므로 받은 답은 버림
-  async function resync(force = false) {
+  // from = 확인을 시작할 때 보던 화면. 기다리는 사이 다른 화면으로 옮겨 갔으면 그 화면을 덮어 바꾸지 않음(자동 갱신용)
+  async function resync(force = false, from = null) {
     const mine = me, before = `${me.team}/${me.menu}`;
-    const fresh = await rpc('login', { p_dept: me.dept, p_name: me.name });
+    const fresh = await call('login', { p_dept: me.dept, p_name: me.name }, true);
     if (me !== mine || (busy && !force) || `${me.team}/${me.menu}` !== before) return;
+    if (from && shown !== from) return;
     if (!fresh) { // 진행자가 명단에서 지웠거나 부서·이름을 바꿈
       await showLogin().catch(() => {});
-      return showError('명단 정보가 바뀌었어요. 부서와 이름을 확인해 다시 로그인해 주세요.');
+      return showError(ROSTER_CHANGED);
     }
     if (fresh.team === me.team && fresh.menu === me.menu) return;
     me = fresh;
@@ -646,21 +706,34 @@
     // 보고 있던 화면에 맞게: 메인이면 메인을 새 상태로, 조식·팀 화면이면 그 흐름을 새 상태로. 일정표를 보는 중이면 그대로 둠(메인으로 돌아가면 새 상태)
     if (shown === 'home') showHome(); else if (shown !== 'plan') showMe();
   }
-  // 다른 앱에 갔다가 돌아왔을 때 조용히 확인(로그인 전이거나 저장·뽑기 중이면 건너뜀). 메인·일정표 화면이면 일정표도 다시 받음
-  document.addEventListener('visibilitychange', () => {
-    if (document.hidden || !me || busy) return;
-    resync().catch(() => {}).then(() => {
-      if (me && (shown === 'home' || shown === 'plan')) loadPlan();
-      if (me && shown === 'home') loadCrew(); // 그사이 팀에 들어온 사람도 보이게
-    });
-  });
+  // 조용히 다시 받기: 내 상태(resync)와, 메인·일정표 화면이면 일정표(loadPlan)와 우리 팀(loadCrew).
+  // 로그인 전이거나 메뉴 저장·뽑기 중이면(busy) 건너뜀. 앱이 가려져 있어도 건너뜀. 겹쳐 보내지 않음
+  let refreshing = false;
+  async function refresh() {
+    if (document.hidden || !me || busy || refreshing) return;
+    refreshing = true;
+    try {
+      await resync(false, shown).catch(() => {});
+      if (!me || busy) return;
+      if (shown === 'home' || shown === 'plan') loadPlan();
+      if (shown === 'home') loadCrew(); // 그사이 팀에 들어온 사람도 보이게
+    } finally {
+      refreshing = false;
+    }
+  }
+  // 다른 앱에 갔다가 돌아왔을 때·앞으로 가기/뒤로 가기로 되살아났을 때·인터넷이 다시 연결됐을 때 확인. 멈춘 애니메이션도 이어 돌림
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) { wake(); refresh(); } });
+  addEventListener('pageshow', (e) => { if (e.persisted) { wake(); refresh(); } });
+  addEventListener('online', refresh);
+  // 메인·일정표 화면을 보고 있는 동안 30초마다. 진행자가 "다시 뽑기"로 내 팀이나 조식을 지웠거나, 같은 팀에 새로 뽑은 사람이 생긴 것이 저절로 보임
+  setInterval(() => { if (shown === 'home' || shown === 'plan') refresh(); }, 30000);
 
   $('#loginForm').addEventListener('submit', guard(async (e) => {
     e.preventDefault();
     $('#loginBtn').disabled = true;
     try {
-      const found = await rpc('login', { p_dept: $('#dept').value, p_name: $('#name').value });
-      if (!found) throw new Error('명단에 없는 부서·이름이에요. 철자를 확인하거나 진행자에게 말해 주세요.');
+      const found = await call('login', { p_dept: $('#dept').value, p_name: $('#name').value });
+      if (!found) throw new Error('부서와 이름이 명단과 같은지 확인해 주세요. 그래도 안 되면 진행자에게 말해 주세요.');
       me = found;
       store.set(ME_KEY, { dept: me.dept, name: me.name });
       showHome();
@@ -701,7 +774,7 @@
     $('#resultText').textContent = '두구두구…';
     busy = true;
     try {
-      me.team = await drawBall(rpc('pick', { p_dept: me.dept, p_name: me.name }));
+      me.team = await drawBall(call('pick', { p_dept: me.dept, p_name: me.name }));
       showMe(true);
       // "뽑아봐!"가 사라지며 갈 곳을 잃은 초점을, 결과 문구가 읽힐 틈을 둔 뒤 "메인으로 돌아가기"로 옮김(키보드·화면 낭독기)
       setTimeout(() => {
@@ -727,8 +800,10 @@
     try {
       const saved = store.get(ME_KEY);
       const usable = saved && typeof saved.dept === 'string' && typeof saved.name === 'string'; // 저장된 값이 이상하면 로그인부터
-      me = usable ? await rpc('login', { p_dept: saved.dept, p_name: saved.name }) : null;
-      me ? showHome() : await showLogin();
+      me = usable ? await call('login', { p_dept: saved.dept, p_name: saved.name }) : null;
+      if (me) return showHome();
+      await showLogin().catch((e) => { if (!usable) throw e; }); // 저장된 로그인이 명단에서 빠졌으면 이유를 알려 줌(부서 목록을 못 받은 오류보다 이 안내가 먼저)
+      if (usable) showError(ROSTER_CHANGED);
     } catch (e) {
       $('#loading').hidden = true;
       $('#retry').hidden = false;

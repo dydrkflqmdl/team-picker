@@ -10,6 +10,9 @@
 -- 일정표: 진행자가 진행자 화면에서 적고(admin_set), 참가자 화면이 schedule() 로 받아 보여준다.
 -- 준비해 둔 기능(시험용: 객실표·자유시간)은 진행자 화면에만 있다. 참가자가 부를 수 있는 함수는 없다.
 --   board_state() / admin_assign() / admin_clear() / admin_set()  ← 진행자용 (관리자 비밀번호 필요)
+-- 여럿이 동시에 뽑을 때: pick() 끼리만 한 명씩 차례로 처리한다. 메뉴 고르기·진행자 저장·읽기는 뽑기를 기다리지 않는다.
+-- 참가자 요청의 제한 시간: 맨 아래에서 anon 을 8초로 늘린다(Supabase 기본 3초).
+-- 되돌리기용 기록(people_log): 명단 줄이 바뀌거나 지워질 때, 일정표를 고칠 때 예전 값을 남긴다.
 
 -- 이전 버전(명단·기록) 테이블 정리 — 비어 있음
 drop table if exists public.members, public.draws;
@@ -43,10 +46,13 @@ alter table public.people
 -- 설정: 'admin_code'(관리자 비밀번호), 'schedule'(일정표 글 — 진행자가 적고 참가자 화면에도 보임)
 -- 변경 기록(되돌리기용): people 의 줄이 바뀌거나 지워질 때마다 예전 값을 남긴다. 진행자가 실수로 전체 삭제·전체 다시 뽑기를 해도
 -- SQL Editor 에서 되살릴 수 있다(README "실수로 지웠을 때"). 참가자·진행자 화면은 이 표를 읽지 못한다.
+-- 일정표도 진행자가 고칠 때마다(admin_set) 고치기 전 글을 op = 'SCHEDULE' 로 남긴다. 관리자 비밀번호는 남기지 않는다.
+--   예전 일정표 보기(SQL Editor): select at, old->>'value' as 일정표 from people_log where op = 'SCHEDULE' order by at desc;
+--   찾은 글을 복사해 진행자 화면의 일정 고치기에 붙여 넣고 저장하면 된다.
 create table if not exists public.people_log (
   at  timestamptz not null default now(),
-  op  text not null,      -- 'UPDATE' 또는 'DELETE'
-  old jsonb not null      -- 바뀌기 전(지워지기 전) 그 줄 전체
+  op  text not null,      -- 'UPDATE'·'DELETE'(명단 줄) 또는 'SCHEDULE'(일정표 글)
+  old jsonb not null      -- 바뀌기 전(지워지기 전) 그 줄 전체. 'SCHEDULE' 은 {"key": "schedule", "value": 고치기 전 일정표 글}
 );
 
 create table if not exists public.config (
@@ -71,7 +77,9 @@ drop trigger if exists people_log on public.people;
 create trigger people_log after update or delete on public.people
   for each row execute function public.log_people();
 
--- [관리자 비밀번호] 추측하기 어려운 12자 이상 권장(틀리면 1초 늦게 답하지만, 짧거나 쉬운 비밀번호는 그래도 뚫릴 수 있다)
+-- [관리자 비밀번호] 무작위 16자 이상(영문 대소문자·숫자 섞어서)으로 정한다. 진행자 화면 주소는 공개라 누구나 대입해 볼 수 있다.
+-- 틀려도 일부러 늦게 답하지 않는다: 늦추면 틀린 비밀번호를 한꺼번에 많이 보낼 때 요청마다 DB 연결을 붙잡아 참가자까지 막힌다.
+-- 그래서 막는 힘은 비밀번호 길이에서 나온다. 짧거나 쉬운 비밀번호는 금방 뚫린다.
 insert into public.config (key, value) values ('admin_code', '여기를-바꾸세요')
 on conflict (key) do update set value = excluded.value
   where excluded.value <> '여기를-바꾸세요';
@@ -99,8 +107,7 @@ begin
     raise exception '관리자 비밀번호가 아직 설정되지 않았어요. SQL Editor 에서 설정해 주세요.';
   end if;
   if p_code is distinct from v then
-    perform pg_sleep(1); -- 무작위 대입을 느리게
-    raise exception '관리자 비밀번호가 틀렸어요.';
+    raise exception '관리자 비밀번호가 틀렸어요.'; -- 바로 답한다(위 [관리자 비밀번호] 설명)
   end if;
 end $$;
 
@@ -150,33 +157,40 @@ end $$;
 -- 3) 계획은 무작위로 시작해 2000번 바꿔 보며 다듬으므로 매번 랜덤이다.
 -- 4) 뽑는 도중에도 팀 인원 차이는 최대 3명(이미 3명 더 많은 팀으로는 안 감).
 -- (명단 29명으로 400번 시뮬레이션: 팀 인원·임원·남녀는 400번 모두 고르게, 부서까지 모두 고른 건 98%. 예전 규칙은 7%)
+-- (같은 계획을 3배 빠르게 계산하도록 고친 뒤, 가짜 29명 명단으로 예전 함수와 400번씩 비교해 결과가 같은 것을 확인함)
 -- ⚠️ 명단에 있는데 안 누르는 사람이 있으면 그 자리만큼 팀 인원이 어긋날 수 있다 → 안 온 사람은 뽑기 전에 명단에서 지운다.
+-- 여럿이 동시에 누르면 pick 끼리만 한 명씩 차례로 처리한다(잠금 번호 261112, 1 — 트랜잭션이 끝나면 저절로 풀림).
+--   메뉴 고르기·진행자 저장·읽기는 이 차례를 기다리지 않는다.
+--   한 명에 3ms 남짓(개발용 Mac 기준)이라 29명이 한꺼번에 눌러도 0.2초 안에 끝난다. Supabase 무료 플랜이 5배 느려도 1초 안쪽.
+--   기다리다 제한 시간을 넘기면 Postgres 오류(57014 등)를 코드 그대로 돌려준다. 참가자 화면이 잠시 뒤 다시 보내고,
+--   같은 사람이 다시 보내도 처음 뽑은 팀이 나온다.
 create or replace function public.pick(p_dept text, p_name text) returns text
 language plpgsql security definer set search_path = public as $$
 declare
   teams constant text[] := array['red', 'blue', 'yellow', 'green'];
   me     people;
-  mid    bigint;                       -- 내 id(표를 잠근 뒤 다시 읽을 때)
+  mid    bigint;                       -- 내 id(차례가 온 뒤 다시 읽을 때)
   pid    bigint[];                     -- 명단 전체 id (id 순)
   cur    int[];                        -- 사람별 팀 번호 1~4. 뽑은 사람은 고정, 나머지는 계획
-  pg     int[];                        -- 사람마다 그룹 번호 4칸(전체·임원 여부·부서·성별), 0 = 없음
-  w      int[];                        -- 그룹별 무게
-  lo     int[];                        -- 그룹별 팀당 최소 = 내림(그룹 인원 / 4)
-  hi     int[];                        -- 그룹별 팀당 최대 = 올림(그룹 인원 / 4)
-  cnt    int[];                        -- (그룹, 팀)별 계획 인원: cnt[(그룹-1)*4 + 팀]
+  -- 칸 = (그룹, 팀). 그룹은 '전체', 임원 여부, 부서마다, 성별마다 하나씩. 칸 번호 = 그룹 시작 위치 + 팀 번호(1~4)
+  b1 int[]; b2 int[]; b3 int[]; b4 int[];  -- 사람별 그룹 시작 위치: 전체·임원 여부·부서·성별(성별이 비면 무게 0인 빈 그룹)
+  cw     int[];                        -- 칸별 무게(벌점 배수)
+  clo    int[];                        -- 칸별 팀당 최소 = 내림(그룹 인원 / 4)
+  chi    int[];                        -- 칸별 팀당 최대 = 올림(그룹 인원 / 4)
+  cnt    int[];                        -- 칸별 계획 인원
   todo   int[] := '{}';                -- 아직 안 뽑은 사람(나 포함)
-  ok     int[];                        -- 내가 갈 수 있는 팀
+  ok     int[] := '{}';                -- 내가 갈 수 있는 팀
+  okb    boolean[] := array[false, false, false, false];  -- 팀마다 내가 갈 수 있는지
   done   int[] := array[0, 0, 0, 0];   -- 팀별 이미 뽑은 인원
   sz     int[];
-  mv     int[];                        -- 이번에 해 볼 변경: (사람, 원래 팀, 새 팀) × 1~2
-  n int; nf int; mi int; i int; k int; g int; a int; b int; p int; q int; d int; ca int; cb int;
+  n int; nf int; mi int; i int; k int; c int; p int; q int; a int; b int; d int; m int; r int;
   cost int := 0; best int; myteam int;
 begin
-  -- 지나치게 긴 입력은 바로 거절(누구나 부를 수 있는 함수라, 큰 입력으로 표 잠금을 오래 쥐어 다른 사람을 막지 못하게)
+  -- 지나치게 긴 입력은 바로 거절(누구나 부를 수 있는 함수라, 큰 입력으로 차례를 오래 쥐어 다른 사람을 막지 못하게)
   if char_length(p_dept) > 100 or char_length(p_name) > 100 then
     raise exception '명단에 없는 부서·이름이에요.';
   end if;
-  -- 먼저 잠그지 않고 확인: 명단에 없거나, 이미 뽑았거나, 메뉴를 안 고른 사람은 표를 잠그지 않고 끝냄
+  -- 차례를 기다리기 전에 먼저 확인: 명단에 없거나, 이미 뽑았거나, 메뉴를 안 고른 사람은 기다리지 않고 끝냄
   select * into me from people
   where dept = norm_dept(p_dept) and name = norm_name(p_name);
   if not found then
@@ -190,8 +204,9 @@ begin
     raise exception '조식 메뉴를 먼저 골라 주세요.';
   end if;
 
-  -- 동시에 여러 명이 눌러도 한 명씩 처리(읽기는 막지 않음). 잠근 뒤 다시 읽어, 기다리는 사이 바뀐 것(다른 기기에서 뽑음 등)을 반영
-  lock table people in share row exclusive mode;
+  -- 차례 기다리기(pick 끼리만). 앞사람이 커밋한 뒤에 차례가 오므로, 아래에서 새로 읽으면 앞사람이 뽑은 팀이 보인다.
+  -- 기다리는 사이 바뀐 것(다른 기기에서 뽑음, 진행자가 지움 등)도 다시 읽어 반영한다.
+  perform pg_advisory_xact_lock(261112, 1);
   mid := me.id;
   select * into me from people where id = mid;
   if not found then
@@ -204,22 +219,35 @@ begin
     raise exception '조식 메뉴를 먼저 골라 주세요.';
   end if;
 
-  select array_agg(id order by id), array_agg(coalesce(array_position(teams, team), 0) order by id)
-  into pid, cur from people;
-  n  := cardinality(pid);
-  mi := array_position(pid, me.id);
-
+  -- 명단·팀·그룹을 한 문장으로 읽는다(그사이 진행자가 명단을 고쳐도 서로 어긋나지 않게)
   with u as (
-    select id, o, gkey from people,
+    select id, team, o, gkey from people,
       unnest(array['all', 'x' || is_exec::text, 'd' || dept, 'g' || gender]) with ordinality as t(gkey, o)),
   gs as (
     select gkey, count(*)::int as gsize, row_number() over (order by gkey)::int as gno
-    from u where gkey is not null group by gkey)
-  select (select array_agg(coalesce(gs.gno, 0) order by u.id, u.o) from u left join gs using (gkey)),
-         (select array_agg(case when gkey = 'all' then 10000 when gkey like 'x%' then 20 else 10 end order by gno) from gs),
-         (select array_agg(gsize / 4 order by gno) from gs),
-         (select array_agg((gsize + 3) / 4 order by gno) from gs)
-  into pg, w, lo, hi;
+    from u where gkey is not null group by gkey),
+  pb as (
+    select u.id, u.team, u.o, (coalesce(gs.gno, (select count(*) from gs)::int + 1) - 1) * 4 as base
+    from u left join gs using (gkey)),
+  cells as (
+    select gno, t, case when gkey = 'all' then 10000 when gkey like 'x%' then 20 else 10 end as w,
+           gsize / 4 as lo, (gsize + 3) / 4 as hi
+    from gs, generate_series(1, 4) t)
+  select (select array_agg(id order by id) from pb where o = 1),
+         (select array_agg(coalesce(array_position(teams, team), 0) order by id) from pb where o = 1),
+         (select array_agg(base order by id) from pb where o = 1),
+         (select array_agg(base order by id) from pb where o = 2),
+         (select array_agg(base order by id) from pb where o = 3),
+         (select array_agg(base order by id) from pb where o = 4),
+         (select array_agg(w order by gno, t) from cells) || array[0, 0, 0, 0],  -- 끝의 4칸: 성별이 빈 사람의 빈 그룹
+         (select array_agg(lo order by gno, t) from cells) || array[0, 0, 0, 0],
+         (select array_agg(hi order by gno, t) from cells) || array[0, 0, 0, 0]
+  into pid, cur, b1, b2, b3, b4, cw, clo, chi;
+  n  := cardinality(pid);
+  mi := array_position(pid, mid);
+  if mi is null then
+    raise exception '명단에 없는 부서·이름이에요.';
+  end if;
 
   for i in 1..n loop
     if cur[i] > 0 then done[cur[i]] := done[cur[i]] + 1; else todo := todo || i; end if;
@@ -227,89 +255,128 @@ begin
   nf := cardinality(todo);
 
   -- 내가 갈 수 있는 팀: 지금까지 뽑은 인원이 (가장 적은 팀 + 3)명 미만인 팀
-  select array_agg(x) into ok from generate_series(1, 4) x
-  where done[x] < (select min(y) from unnest(done) y) + 3;
+  m := least(done[1], done[2], done[3], done[4]);
+  for k in 1..4 loop
+    if done[k] < m + 3 then okb[k] := true; ok := ok || k; end if;
+  end loop;
 
-  -- 첫 계획: 나는 갈 수 있는 팀 중 아무 데나, 나머지는 무작위 순서로 인원 적은 팀부터 채움
+  -- 첫 계획: 나는 갈 수 있는 팀 중 아무 데나, 나머지는 무작위 순서로 인원 적은 팀부터 채움(적은 팀이 여럿이면 그중 아무 데나)
   cur[mi] := ok[1 + floor(random() * cardinality(ok))::int];
   sz := done;
   sz[cur[mi]] := sz[cur[mi]] + 1;
   for i in select x from unnest(todo) x where x <> mi order by random() loop
-    select x into b from generate_series(1, 4) x order by sz[x], random() limit 1;
+    m := least(sz[1], sz[2], sz[3], sz[4]);
+    r := 1 + floor(random() * ((sz[1] = m)::int + (sz[2] = m)::int + (sz[3] = m)::int + (sz[4] = m)::int))::int;
+    b := 0;
+    loop
+      b := b + 1;
+      if sz[b] = m then r := r - 1; exit when r = 0; end if;
+    end loop;
     cur[i] := b;
     sz[b] := sz[b] + 1;
   end loop;
 
-  cnt := array_fill(0, array[cardinality(w) * 4]);
+  cnt := array_fill(0, array[cardinality(cw)]);
   for i in 1..n loop
-    for k in 1..4 loop
-      g := pg[(i - 1) * 4 + k];
-      if g > 0 then cnt[(g - 1) * 4 + cur[i]] := cnt[(g - 1) * 4 + cur[i]] + 1; end if;
-    end loop;
+    k := cur[i];
+    cnt[b1[i] + k] := cnt[b1[i] + k] + 1;
+    cnt[b2[i] + k] := cnt[b2[i] + k] + 1;
+    cnt[b3[i] + k] := cnt[b3[i] + k] + 1;
+    cnt[b4[i] + k] := cnt[b4[i] + k] + 1;
   end loop;
-
-  for g in 1..cardinality(w) loop
-    for k in 1..4 loop
-      cost := cost + w[g] * (greatest(0, cnt[(g - 1) * 4 + k] - hi[g]) + greatest(0, lo[g] - cnt[(g - 1) * 4 + k]));
-    end loop;
+  for c in 1..cardinality(cw) loop
+    cost := cost + cw[c] * (greatest(0, cnt[c] - chi[c]) + greatest(0, clo[c] - cnt[c]));
   end loop;
-  cost := cost + done[cur[mi]] - (select min(y) from unnest(done) y);
+  cost := cost + done[cur[mi]] - least(done[1], done[2], done[3], done[4]);
   best := cost;
   myteam := cur[mi];
 
-  -- 계획 다듬기: 안 뽑은 사람 둘을 골라 팀을 맞바꾸거나(같은 팀이면 한 명을 다른 팀으로 옮김),
+  -- 계획 다듬기: 안 뽑은 사람 둘(p, q)을 골라 팀을 맞바꾸거나(같은 팀이면 p 를 다른 팀으로 옮김),
   -- 벌점이 늘지 않으면 받아들인다. 초반에는 조금 늘어나는 것도 가끔 받아들여 막다른 곳을 빠져나온다.
   -- 벌점이 가장 낮았던 계획의 내 팀을 고른다.
+  -- 빠르게 하려고 벌점 변화(d)는 칸 인원을 그대로 둔 채 계산하고, 받아들일 때만 칸 인원을 고친다(고쳤다 되돌리지 않음).
+  --   칸 x 에서 한 명 빠질 때: 무게 × (x 인원 <= 최소면 +1, > 최대면 -1, 아니면 0)
+  --   칸 y 에 한 명 들어갈 때: 무게 × (y 인원 >= 최대면 +1, < 최소면 -1, 아니면 0)
+  --   맞바꿀 때 두 사람이 같은 그룹이면(예: 같은 부서) 그 그룹 인원은 그대로라 0. '전체' 그룹은 늘 같아서 b2~b4 만 본다.
   for step in 1..2000 loop
     p := todo[1 + floor(random() * nf)::int];
     q := todo[1 + floor(random() * nf)::int];
-    if cur[p] = cur[q] then
+    a := cur[p];
+    b := cur[q];
+    if a = b then  -- p 를 a 팀에서 다른 팀 b 로 옮김
       b := 1 + floor(random() * 3)::int;
-      if b >= cur[p] then b := b + 1; end if;
-      mv := array[p, cur[p], b];
+      if b >= a then b := b + 1; end if;
+      continue when p = mi and not okb[b];
       q := 0;
-    else
-      mv := array[p, cur[p], cur[q], q, cur[q], cur[p]];
-    end if;
-    if (p = mi and not mv[3] = any(ok)) or (q = mi and not mv[6] = any(ok)) then
-      continue;
+      d := cw[b1[p] + a] * (case when cnt[b1[p] + a] <= clo[b1[p] + a] then 1 when cnt[b1[p] + a] > chi[b1[p] + a] then -1 else 0 end)
+         + cw[b1[p] + b] * (case when cnt[b1[p] + b] >= chi[b1[p] + b] then 1 when cnt[b1[p] + b] < clo[b1[p] + b] then -1 else 0 end)
+         + cw[b2[p] + a] * (case when cnt[b2[p] + a] <= clo[b2[p] + a] then 1 when cnt[b2[p] + a] > chi[b2[p] + a] then -1 else 0 end)
+         + cw[b2[p] + b] * (case when cnt[b2[p] + b] >= chi[b2[p] + b] then 1 when cnt[b2[p] + b] < clo[b2[p] + b] then -1 else 0 end)
+         + cw[b3[p] + a] * (case when cnt[b3[p] + a] <= clo[b3[p] + a] then 1 when cnt[b3[p] + a] > chi[b3[p] + a] then -1 else 0 end)
+         + cw[b3[p] + b] * (case when cnt[b3[p] + b] >= chi[b3[p] + b] then 1 when cnt[b3[p] + b] < clo[b3[p] + b] then -1 else 0 end)
+         + cw[b4[p] + a] * (case when cnt[b4[p] + a] <= clo[b4[p] + a] then 1 when cnt[b4[p] + a] > chi[b4[p] + a] then -1 else 0 end)
+         + cw[b4[p] + b] * (case when cnt[b4[p] + b] >= chi[b4[p] + b] then 1 when cnt[b4[p] + b] < clo[b4[p] + b] then -1 else 0 end)
+         + (case when p = mi then done[b] - done[a] else 0 end);
+    else           -- p 는 a → b, q 는 b → a 로 맞바꿈
+      continue when (p = mi and not okb[b]) or (q = mi and not okb[a]);
+      d := (case when b2[p] = b2[q] then 0 else
+              cw[b2[p] + a] * (case when cnt[b2[p] + a] <= clo[b2[p] + a] then 1 when cnt[b2[p] + a] > chi[b2[p] + a] then -1 else 0 end)
+            + cw[b2[p] + b] * (case when cnt[b2[p] + b] >= chi[b2[p] + b] then 1 when cnt[b2[p] + b] < clo[b2[p] + b] then -1 else 0 end)
+            + cw[b2[q] + b] * (case when cnt[b2[q] + b] <= clo[b2[q] + b] then 1 when cnt[b2[q] + b] > chi[b2[q] + b] then -1 else 0 end)
+            + cw[b2[q] + a] * (case when cnt[b2[q] + a] >= chi[b2[q] + a] then 1 when cnt[b2[q] + a] < clo[b2[q] + a] then -1 else 0 end) end)
+         + (case when b3[p] = b3[q] then 0 else
+              cw[b3[p] + a] * (case when cnt[b3[p] + a] <= clo[b3[p] + a] then 1 when cnt[b3[p] + a] > chi[b3[p] + a] then -1 else 0 end)
+            + cw[b3[p] + b] * (case when cnt[b3[p] + b] >= chi[b3[p] + b] then 1 when cnt[b3[p] + b] < clo[b3[p] + b] then -1 else 0 end)
+            + cw[b3[q] + b] * (case when cnt[b3[q] + b] <= clo[b3[q] + b] then 1 when cnt[b3[q] + b] > chi[b3[q] + b] then -1 else 0 end)
+            + cw[b3[q] + a] * (case when cnt[b3[q] + a] >= chi[b3[q] + a] then 1 when cnt[b3[q] + a] < clo[b3[q] + a] then -1 else 0 end) end)
+         + (case when b4[p] = b4[q] then 0 else
+              cw[b4[p] + a] * (case when cnt[b4[p] + a] <= clo[b4[p] + a] then 1 when cnt[b4[p] + a] > chi[b4[p] + a] then -1 else 0 end)
+            + cw[b4[p] + b] * (case when cnt[b4[p] + b] >= chi[b4[p] + b] then 1 when cnt[b4[p] + b] < clo[b4[p] + b] then -1 else 0 end)
+            + cw[b4[q] + b] * (case when cnt[b4[q] + b] <= clo[b4[q] + b] then 1 when cnt[b4[q] + b] > chi[b4[q] + b] then -1 else 0 end)
+            + cw[b4[q] + a] * (case when cnt[b4[q] + a] >= chi[b4[q] + a] then 1 when cnt[b4[q] + a] < clo[b4[q] + a] then -1 else 0 end) end)
+         + (case when p = mi then done[b] - done[a] when q = mi then done[a] - done[b] else 0 end);
     end if;
 
-    d := 0;
-    for m in 0..cardinality(mv) / 3 - 1 loop
-      i := mv[m * 3 + 1]; a := mv[m * 3 + 2]; b := mv[m * 3 + 3];
-      for k in 1..4 loop
-        g := pg[(i - 1) * 4 + k];
-        continue when g = 0;
-        ca := cnt[(g - 1) * 4 + a];
-        cb := cnt[(g - 1) * 4 + b];
-        d := d + w[g] * ((case when ca <= lo[g] then 1 when ca > hi[g] then -1 else 0 end)
-                       + (case when cb >= hi[g] then 1 when cb < lo[g] then -1 else 0 end));
-        cnt[(g - 1) * 4 + a] := ca - 1;
-        cnt[(g - 1) * 4 + b] := cb + 1;
-      end loop;
-      if i = mi then d := d + done[b] - done[a]; end if;
-      cur[i] := b;
-    end loop;
-
-    if d <= 0 or (d < 100 and random() < exp(-d / greatest(0.3, 15 * (1 - step / 2000.0)))) then
+    if d <= 0 or (d < 100 and random() < exp(-d / greatest(0.3, 15 * (1 - step / 2000.0::float8)))) then
+      if q = 0 then
+        cnt[b1[p] + a] := cnt[b1[p] + a] - 1;  cnt[b1[p] + b] := cnt[b1[p] + b] + 1;
+        cnt[b2[p] + a] := cnt[b2[p] + a] - 1;  cnt[b2[p] + b] := cnt[b2[p] + b] + 1;
+        cnt[b3[p] + a] := cnt[b3[p] + a] - 1;  cnt[b3[p] + b] := cnt[b3[p] + b] + 1;
+        cnt[b4[p] + a] := cnt[b4[p] + a] - 1;  cnt[b4[p] + b] := cnt[b4[p] + b] + 1;
+      else
+        if b2[p] <> b2[q] then
+          cnt[b2[p] + a] := cnt[b2[p] + a] - 1;  cnt[b2[p] + b] := cnt[b2[p] + b] + 1;
+          cnt[b2[q] + b] := cnt[b2[q] + b] - 1;  cnt[b2[q] + a] := cnt[b2[q] + a] + 1;
+        end if;
+        if b3[p] <> b3[q] then
+          cnt[b3[p] + a] := cnt[b3[p] + a] - 1;  cnt[b3[p] + b] := cnt[b3[p] + b] + 1;
+          cnt[b3[q] + b] := cnt[b3[q] + b] - 1;  cnt[b3[q] + a] := cnt[b3[q] + a] + 1;
+        end if;
+        if b4[p] <> b4[q] then
+          cnt[b4[p] + a] := cnt[b4[p] + a] - 1;  cnt[b4[p] + b] := cnt[b4[p] + b] + 1;
+          cnt[b4[q] + b] := cnt[b4[q] + b] - 1;  cnt[b4[q] + a] := cnt[b4[q] + a] + 1;
+        end if;
+        cur[q] := a;
+      end if;
+      cur[p] := b;
       cost := cost + d;
       if cost <= best then best := cost; myteam := cur[mi]; end if;
-    else -- 받아들이지 않으면 되돌림
-      for m in 0..cardinality(mv) / 3 - 1 loop
-        i := mv[m * 3 + 1]; a := mv[m * 3 + 2]; b := mv[m * 3 + 3];
-        for k in 1..4 loop
-          g := pg[(i - 1) * 4 + k];
-          continue when g = 0;
-          cnt[(g - 1) * 4 + a] := cnt[(g - 1) * 4 + a] + 1;
-          cnt[(g - 1) * 4 + b] := cnt[(g - 1) * 4 + b] - 1;
-        end loop;
-        cur[i] := a;
-      end loop;
     end if;
   end loop;
 
-  update people set team = teams[myteam], picked_at = now() where id = me.id;
+  -- 계획을 세우는 사이 진행자가 이 사람을 지웠거나 조식을 지웠으면(전체 다시 뽑기 등) 팀을 넣지 않는다
+  update people set team = teams[myteam], picked_at = now()
+  where id = mid and team is null and menu is not null;
+  if not found then
+    select * into me from people where id = mid;
+    if not found then
+      raise exception '명단에 없는 부서·이름이에요.';
+    end if;
+    if me.team is not null then
+      return me.team;
+    end if;
+    raise exception '조식 메뉴를 먼저 골라 주세요.';
+  end if;
   return teams[myteam];
 end $$;
 
@@ -479,18 +546,30 @@ begin
 end $$;
 
 -- 진행자 설정 저장. 'schedule'(일정표 글, 4000자까지 — 참가자 화면에도 보임)만 바꿀 수 있다(관리자 비밀번호 'admin_code' 는 여기서 못 바꾼다).
+-- 고치기 전 일정표 글은 people_log 에 op = 'SCHEDULE' 로 남긴다(잘못 덮어써도 되찾을 수 있게). 글이 그대로면 아무것도 바꾸지 않는다.
 create or replace function public.admin_set(p_code text, p_key text, p_value text) returns void
 language plpgsql security definer set search_path = public as $$
+declare
+  v_new text := coalesce(p_value, '');
+  v_old text;
 begin
   perform check_admin(p_code);
   if p_key is distinct from 'schedule' then
     raise exception '바꿀 수 없는 설정이에요.';
   end if;
-  if char_length(coalesce(p_value, '')) > 4000 then
+  if char_length(v_new) > 4000 then
     raise exception '일정표가 너무 길어요. 4000자까지 적을 수 있어요.';
   end if;
-  insert into config (key, value) values (p_key, coalesce(p_value, ''))
-  on conflict (key) do update set value = excluded.value;
+  -- 진행자 두 명이 동시에 저장해도 예전 글이 빠짐없이 남게, 일정표 줄을 잠그고 읽는다(처음 저장이면 빈 줄부터 만든다)
+  insert into config (key, value) values ('schedule', '') on conflict (key) do nothing;
+  select value into v_old from config where key = 'schedule' for update;
+  if v_old is distinct from v_new then
+    if v_old <> '' then
+      insert into people_log (op, old) values ('SCHEDULE', jsonb_build_object('key', 'schedule', 'value', v_old));
+    end if;
+    insert into config (key, value) values ('schedule', v_new)
+    on conflict (key) do update set value = excluded.value;
+  end if;
 end $$;
 
 -- ── 실행 권한 ────────────────────────────────────────────
@@ -509,3 +588,17 @@ grant execute on function
   public.admin_remove(text, bigint), public.admin_reset(text, bigint), public.admin_reset_all(text),
   public.board_state(text), public.admin_assign(text, text, jsonb), public.admin_clear(text, text), public.admin_set(text, text, text)
   to anon, authenticated;
+
+-- ── 참가자 요청의 제한 시간 ───────────────────────────────
+-- Supabase 는 참가자 화면(anon)의 요청이 3초를 넘으면 취소한다(오류 코드 57014). 뽑기는 한 명씩 차례로 처리하므로
+-- 여럿이 한꺼번에 누르면 뒤에 선 사람은 앞사람들을 기다린 시간까지 이 안에 들어야 한다. 서버가 느릴 때를 대비해 8초로 늘린다.
+-- (참가자 화면은 요청 하나를 20초까지 기다리므로 그보다 짧게 잡는다. 시간 초과(57014)면 화면이 잠시 뒤 다시 보낸다.)
+-- 이 앱에서 anon 은 위에서 허락한 함수만 부르고, 모두 금방 끝나는 함수라 늘려도 오래 붙잡히는 요청은 없다.
+-- 권한이 없어 못 바꾸면 경고만 남기고 나머지는 그대로 설치된다. 확인: select rolconfig from pg_roles where rolname = 'anon';
+do $$
+begin
+  alter role anon set statement_timeout = '8s';
+exception when others then
+  raise warning 'anon 의 제한 시간을 바꾸지 못했어요(Supabase 기본 3초 그대로): %', sqlerrm;
+end $$;
+notify pgrst, 'reload config';  -- Supabase API(PostgREST)가 바뀐 제한 시간을 바로 읽게 함
