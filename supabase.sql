@@ -5,19 +5,23 @@
 --    다시 Run 할 때 '여기를-바꾸세요' 를 그대로 두면 기존 비밀번호가 유지돼요.
 --
 -- 구조: 참가자 화면은 테이블에 직접 접근하지 못하고, 아래 함수들만 부를 수 있다.
---   departments() / login() / choose_menu() / pick() / schedule() / team_members()  ← 참가자용 (누구나)
+--   departments() / login() / choose_menu() / choose_activity() / pick() / pick_room() / schedule() / team_members() / room_members()  ← 참가자용 (누구나)
+--   로그인 뒤 일정·방 뽑기·팀 뽑기·아침 메뉴·자유시간은 아무 순서로나 할 수 있다(서로 먼저 해야 하는 것이 없다).
 --   board() / admin_add() / admin_update() / admin_remove() / admin_reset() / admin_reset_all()  ← 진행자용 (관리자 비밀번호 필요)
 -- 일정표: 진행자가 진행자 화면에서 적고(admin_set), 참가자 화면이 schedule() 로 받아 보여준다.
--- 준비해 둔 기능(시험용: 객실표·자유시간)은 진행자 화면에만 있다. 참가자가 부를 수 있는 함수는 없다.
+-- 객실은 참가자가 직접 뽑고(pick_room — 한 번 뽑으면 끝) 참가자 화면이 room_members() 로 같은 방 사람을 받아 보여준다.
+--   진행자는 방을 직접 옮기거나, 비워서(admin_assign·admin_clear) 다시 뽑게 하거나, 방 없는 사람을 한꺼번에 넣을 수 있다.
+-- 금요일 저녁 뒤 자유시간(스키·휴식)은 참가자가 직접 고르고(choose_activity) 언제든 바꿀 수 있다. 진행자도 고칠 수 있다.
 --   board_state() / admin_assign() / admin_clear() / admin_set()  ← 진행자용 (관리자 비밀번호 필요)
--- 여럿이 동시에 뽑을 때: pick() 끼리만 한 명씩 차례로 처리한다. 메뉴 고르기·진행자 저장·읽기는 뽑기를 기다리지 않는다.
+-- 여럿이 동시에 뽑을 때: pick() 끼리, pick_room() 끼리만 한 명씩 차례로 처리한다(둘은 서로 다른 차례라 서로 기다리지 않음).
+--   메뉴 고르기·진행자 저장·읽기는 뽑기를 기다리지 않는다.
 -- 참가자 요청의 제한 시간: 맨 아래에서 anon 을 8초로 늘린다(Supabase 기본 3초).
 -- 되돌리기용 기록(people_log): 명단 줄이 바뀌거나 지워질 때, 일정표를 고칠 때 예전 값을 남긴다.
 
 -- 이전 버전(명단·기록) 테이블 정리 — 비어 있음
 drop table if exists public.members, public.draws;
--- 이전 버전에 잠깐 있던 참가자용 함수·설정 정리(일정표·객실·자유시간을 참가자 화면에 켜는 장치 — 지금은 진행자 화면에만 둔다)
-drop function if exists public.extras(text, text), public.choose_activity(text, text, text);
+-- 이전 버전에 잠깐 있던 참가자용 함수 정리(일정표·객실·자유시간을 참가자 화면에 켜는 장치). choose_activity 는 아래에서 다시 만든다.
+drop function if exists public.extras(text, text);
 
 -- ── 테이블 ──────────────────────────────────────────────
 create table if not exists public.people (
@@ -38,10 +42,28 @@ alter table public.people
 -- 'ugeoji' = 우거지 해장국, 'miyeok' = 소고기 미역국, 'hwangtae' = 버섯 황태 해장국
 alter table public.people
   add column if not exists menu text check (menu in ('ugeoji', 'miyeok', 'hwangtae'));
--- 객실: 남자 방 'm1'~'m5', 여자 방 'f1'·'f2'. 자유시간(저녁 식사 뒤): 'ski' = 스키, 'sauna' = 사우나. 둘 다 진행자만 넣고 볼 수 있다.
+-- 객실: 남자 방 'm1'~'m5', 여자 방 'f1'·'f2'. 참가자가 직접 뽑고(pick_room), 자기 방과 같은 방 사람을 볼 수 있다. 진행자도 고칠 수 있다.
+-- 자유시간(12월 18일 금요일 저녁 식사 뒤): 'ski' = 스키, 'rest' = 휴식. 참가자가 직접 고르고 언제든 바꿀 수 있다.
 alter table public.people
   add column if not exists room     text check (room in ('m1', 'm2', 'm3', 'm4', 'm5', 'f1', 'f2')),
-  add column if not exists activity text check (activity in ('ski', 'sauna'));
+  add column if not exists activity text check (activity in ('ski', 'rest'));
+-- 예전 버전에는 'sauna'(사우나)가 있었다. 위 add column 은 칸이 이미 있으면 새 조건을 달지 않으므로, 예전 조건을 떼고
+-- 'sauna' 는 'rest' 로 바꾼 뒤 새 조건을 단다. 몇 번 다시 Run 해도 괜찮다(이미 새 조건이면 아무것도 안 한다).
+do $$
+declare c record;
+begin
+  for c in
+    select conname from pg_constraint
+    where conrelid = 'public.people'::regclass and contype = 'c'
+      and pg_get_constraintdef(oid) like '%activity%' and pg_get_constraintdef(oid) not like '%rest%'
+  loop
+    execute format('alter table public.people drop constraint %I', c.conname);
+  end loop;
+  update public.people set activity = 'rest' where activity = 'sauna';
+  if not exists (select 1 from pg_constraint where conrelid = 'public.people'::regclass and conname = 'people_activity_check') then
+    alter table public.people add constraint people_activity_check check (activity in ('ski', 'rest'));
+  end if;
+end $$;
 
 -- 설정: 'admin_code'(관리자 비밀번호), 'schedule'(일정표 글 — 진행자가 적고 참가자 화면에도 보임)
 -- 변경 기록(되돌리기용): people 의 줄이 바뀌거나 지워질 때마다 예전 값을 남긴다. 진행자가 실수로 전체 삭제·전체 다시 뽑기를 해도
@@ -118,10 +140,10 @@ language sql stable security definer set search_path = public as $$
   select distinct dept from people order by dept
 $$;
 
--- 명단에 있으면 {dept, name, team, menu}, 없으면 null
+-- 명단에 있으면 {dept, name, team, menu, room, activity}, 없으면 null (room·activity 는 아직 없으면 null)
 create or replace function public.login(p_dept text, p_name text) returns json
 language sql stable security definer set search_path = public as $$
-  select json_build_object('dept', dept, 'name', name, 'team', team, 'menu', menu)
+  select json_build_object('dept', dept, 'name', name, 'team', team, 'menu', menu, 'room', room, 'activity', activity)
   from people
   where dept = norm_dept(p_dept) and name = norm_name(p_name)
 $$;
@@ -149,7 +171,31 @@ begin
   return v;
 end $$;
 
--- 팀 뽑기. 이미 뽑았으면 그 팀을 그대로 돌려준다(한 번만). 조식 메뉴를 아직 안 골랐으면 뽑을 수 없다.
+-- 자유시간(금요일 저녁 식사 뒤) 고르기: 'ski' = 스키, 'rest' = 휴식. 조식과 달리 이미 골랐어도 언제든 바꿀 수 있다(새 값으로 덮어씀).
+-- 저장된 값을 돌려준다.
+create or replace function public.choose_activity(p_dept text, p_name text, p_activity text) returns text
+language plpgsql security definer set search_path = public as $$
+declare v text;
+begin
+  -- 지나치게 긴 입력은 정리하거나 줄을 잠그기 전에 바로 거절(누구나 부를 수 있는 함수라, 큰 입력으로 다른 사람을 막지 못하게)
+  if char_length(p_dept) > 100 or char_length(p_name) > 100 then
+    raise exception '명단에 없는 부서·이름이에요.';
+  end if;
+  if p_activity is null or p_activity not in ('ski', 'rest') then
+    raise exception '자유시간을 다시 골라 주세요.';
+  end if;
+  -- 값이 같으면 줄을 다시 쓰지 않는다(같은 걸 또 눌러도 되돌리기 기록이 쌓이지 않게)
+  update people set activity = p_activity
+  where dept = norm_dept(p_dept) and name = norm_name(p_name) and activity is distinct from p_activity;
+  select activity into v from people
+  where dept = norm_dept(p_dept) and name = norm_name(p_name);
+  if not found then
+    raise exception '명단에 없는 부서·이름이에요.';
+  end if;
+  return v;
+end $$;
+
+-- 팀 뽑기. 이미 뽑았으면 그 팀을 그대로 돌려준다(한 번만). 조식 메뉴를 고르지 않았어도 뽑을 수 있다(순서 상관없음).
 -- 누를 때마다 '아직 안 뽑은 사람 전원(나 포함)을 어떻게 나누면 가장 고른지' 계획을 새로 세우고, 그 계획의 내 팀을 준다.
 -- 1) 고른 기준: 팀 인원, 임원·비임원, 부서마다, 남·여 인원이 팀마다 (그 인원 ÷ 4)의 내림~올림 사이면 완벽.
 --    벗어난 만큼 벌점(팀 인원 10000 → 반드시 맞춤, 임원 20, 부서·성별 10).
@@ -190,7 +236,7 @@ begin
   if char_length(p_dept) > 100 or char_length(p_name) > 100 then
     raise exception '명단에 없는 부서·이름이에요.';
   end if;
-  -- 차례를 기다리기 전에 먼저 확인: 명단에 없거나, 이미 뽑았거나, 메뉴를 안 고른 사람은 기다리지 않고 끝냄
+  -- 차례를 기다리기 전에 먼저 확인: 명단에 없거나 이미 뽑은 사람은 기다리지 않고 끝냄
   select * into me from people
   where dept = norm_dept(p_dept) and name = norm_name(p_name);
   if not found then
@@ -198,10 +244,6 @@ begin
   end if;
   if me.team is not null then
     return me.team;
-  end if;
-  -- 조식 메뉴를 먼저 골라야 한다(진행자가 메뉴를 지운 뒤 예전에 열어 둔 화면에서 누른 경우도 여기서 막힘)
-  if me.menu is null then
-    raise exception '조식 메뉴를 먼저 골라 주세요.';
   end if;
 
   -- 차례 기다리기(pick 끼리만). 앞사람이 커밋한 뒤에 차례가 오므로, 아래에서 새로 읽으면 앞사람이 뽑은 팀이 보인다.
@@ -214,9 +256,6 @@ begin
   end if;
   if me.team is not null then
     return me.team;
-  end if;
-  if me.menu is null then
-    raise exception '조식 메뉴를 먼저 골라 주세요.';
   end if;
 
   -- 명단·팀·그룹을 한 문장으로 읽는다(그사이 진행자가 명단을 고쳐도 서로 어긋나지 않게)
@@ -364,9 +403,9 @@ begin
     end if;
   end loop;
 
-  -- 계획을 세우는 사이 진행자가 이 사람을 지웠거나 조식을 지웠으면(전체 다시 뽑기 등) 팀을 넣지 않는다
+  -- 계획을 세우는 사이 진행자가 이 사람을 지웠으면 팀을 넣지 않는다(이미 팀이 들어 있으면 그 팀을 돌려줌)
   update people set team = teams[myteam], picked_at = now()
-  where id = mid and team is null and menu is not null;
+  where id = mid and team is null;
   if not found then
     select * into me from people where id = mid;
     if not found then
@@ -375,9 +414,244 @@ begin
     if me.team is not null then
       return me.team;
     end if;
-    raise exception '조식 메뉴를 먼저 골라 주세요.';
+    raise exception '잠시 뒤 다시 눌러 주세요.';  -- 줄은 있고 팀도 비었는데 못 넣은 경우(사실상 없음)
   end if;
   return teams[myteam];
+end $$;
+
+-- 방 뽑기. 남녀 따로, 같은 부서 사람은 되도록 같은 방, 직급은 보지 않고 무작위. 한 번 뽑으면 끝(다시 부르면 같은 방을 돌려줌).
+-- 다시 뽑게 하려면 진행자가 그 사람(또는 전원)의 방을 비운다(admin_assign·admin_clear).
+-- 생각은 팀 뽑기(pick)와 같다: 누를 때마다 '같은 성별에서 아직 방이 없는 사람 전원(나 포함)을 그 성별의 방에 어떻게 넣으면
+-- 가장 좋은지' 계획을 새로 세우고, 그 계획의 내 방을 준다. 이미 방이 있는 사람(뽑았거나 진행자가 넣은 사람)은 그대로 둔다.
+-- 1) 방 인원: 그 성별 인원 ÷ 방 수의 내림~올림 사이면 0, 벗어난 만큼 벌점 10000(반드시 맞춤). 예: 남 20명 5실 → 4명씩, 여 9명 2실 → 5·4명.
+-- 2) 같은 부서 모으기: 방마다 '그 방에 있는 부서 수'를 더한 것(= (방, 부서) 짝의 수)이 벌점. 적을수록 같은 부서가 한 방에 모인다.
+--    부서가 방보다 크면 쪼개지는 건 어쩔 수 없다(그래도 되도록 적은 방으로).
+-- 3) 계획은 무작위 부서 순서로 '같은 부서가 이미 있는 방, 없으면 빈자리가 많은 방'에 채워 넣어 시작하고, 3000번 바꿔 보며 다듬는다.
+--    벌점이 같은 계획끼리는 무작위라 매번 다르다.
+-- 뽑을 때마다 (이미 뽑은 사람을 그대로 둔 채) 가장 좋은 계획을 따르므로, 모두 다 뽑으면 처음부터 한꺼번에 나눈 것만큼 좋은 나눔이 된다.
+-- 뽑는 도중의 방 인원은 맞추지 않는다(예: 첫 두 사람이 같은 부서면 같은 방). 마지막 인원은 계획이 맞춘다.
+-- (가짜 29명 명단(남 20·여 9, 부서 6개)으로 시험: 한 명씩 무작위 순서로 다 뽑기 400번 모두 방 인원이 맞고 (방, 부서) 짝의 수가
+--  이론상 가장 적은 값(남 7·여 6)이었다. 진행자가 8명·15명을 먼저 아무 방에 넣어 둔 뒤 나머지가 뽑기 600번은 599번이 그 상태의
+--  가장 적은 값, 1번이 그보다 1 많음. 한 명에 7ms 남짓(개발용 Mac)이라 29명이 한꺼번에 눌러도 0.2초 안에 끝난다.)
+-- ⚠️ 명단에 있는데 안 누르는 사람이 있으면 그 자리만큼 방 인원이 어긋날 수 있다 → 진행자가 '방 없는 사람만 넣기'로 채운다.
+-- 성별이 빈 사람은 뽑을 수 없고(진행자가 성별을 넣거나 직접 방을 넣음) 계획에서도 뺀다.
+-- 진행자가 다른 성별의 방에 직접 넣은 사람도 계획에서 뺀다(그 사람은 그 방에 그대로 둠).
+-- 여럿이 동시에 누르면 pick_room 끼리만 한 명씩 차례로 처리한다(잠금 번호 261112, 2 — 팀 뽑기의 261112, 1 과 달라 서로 기다리지 않음).
+--   메뉴 고르기·팀 뽑기·진행자 저장·읽기는 이 차례를 기다리지 않는다. 기다리다 제한 시간을 넘기면 Postgres 오류(57014 등)를
+--   코드 그대로 돌려준다. 참가자 화면이 잠시 뒤 다시 보내고, 같은 사람이 다시 보내도 처음 뽑은 방이 나온다.
+create or replace function public.pick_room(p_dept text, p_name text) returns text
+language plpgsql security definer set search_path = public as $$
+declare
+  me     people;
+  mid    bigint;                       -- 내 id(차례가 온 뒤 다시 읽을 때)
+  rooms  text[];                       -- 내 성별의 방 키
+  nr     int;                          -- 방 수
+  pid    bigint[];                     -- 계획에 드는 사람(같은 성별) id
+  pd     int[];                        -- 사람별 부서 번호 1~nd
+  cur    int[];                        -- 사람별 방 번호 1~nr. 방이 있는 사람은 고정, 나머지는 계획
+  cnt    int[];                        -- 방별 계획 인원
+  dc     int[];                        -- (부서, 방) 칸별 계획 인원. 칸 번호 = (부서 번호 - 1) × nr + 방 번호
+  tc     int[];                        -- (부서, 방) 칸별 계획 인원 중 아직 방이 없는 사람(옮길 수 있는 사람)만
+  cap    int[];                        -- 첫 계획에서 방마다 채울 인원
+  dk     float8[];                     -- 첫 계획에서 부서를 줄 세울 무작위 순서
+  todo   int[] := '{}';                -- 아직 방이 없는 사람(나 포함)
+  nd int; n int; nf int; mi int; lo int; hi int; extra int;
+  i int; j int; k int; p int; q int; a int; b int; xp int; xq int; m int; d int; dg int; e float8;
+  cost int := 0; best int; myroom int;
+  steps constant int := 3000;
+begin
+  -- 지나치게 긴 입력은 바로 거절(누구나 부를 수 있는 함수라, 큰 입력으로 차례를 오래 쥐어 다른 사람을 막지 못하게)
+  if char_length(p_dept) > 100 or char_length(p_name) > 100 then
+    raise exception '명단에 없는 부서·이름이에요.';
+  end if;
+  -- 차례를 기다리기 전에 먼저 확인: 명단에 없거나, 이미 방이 있거나, 성별이 없는 사람은 기다리지 않고 끝냄
+  select * into me from people
+  where dept = norm_dept(p_dept) and name = norm_name(p_name);
+  if not found then
+    raise exception '명단에 없는 부서·이름이에요.';
+  end if;
+  if me.room is not null then
+    return me.room;
+  end if;
+  if me.gender is null then
+    raise exception '명단에 성별이 없어 방을 뽑을 수 없어요. 진행자에게 말해 주세요.';
+  end if;
+
+  -- 차례 기다리기(pick_room 끼리만). 앞사람이 커밋한 뒤에 차례가 오므로, 아래에서 새로 읽으면 앞사람이 뽑은 방이 보인다.
+  -- 기다리는 사이 바뀐 것(다른 기기에서 뽑음, 진행자가 방을 넣음·성별을 고침·지움 등)도 다시 읽어 반영한다.
+  perform pg_advisory_xact_lock(261112, 2);
+  mid := me.id;
+  select * into me from people where id = mid;
+  if not found then
+    raise exception '명단에 없는 부서·이름이에요.';
+  end if;
+  if me.room is not null then
+    return me.room;
+  end if;
+  if me.gender is null then
+    raise exception '명단에 성별이 없어 방을 뽑을 수 없어요. 진행자에게 말해 주세요.';
+  end if;
+  rooms := case me.gender when '남' then array['m1', 'm2', 'm3', 'm4', 'm5'] else array['f1', 'f2'] end;
+  nr := cardinality(rooms);
+
+  -- 같은 성별 사람(방이 없거나 이 성별의 방에 있는 사람)과 부서·방을 한 문장으로 읽는다
+  with g as (
+    select id, dense_rank() over (order by dept)::int as dno, coalesce(array_position(rooms, room), 0) as r
+    from people
+    where gender = me.gender and (room is null or room = any (rooms)))
+  select array_agg(id order by id), array_agg(dno order by id), array_agg(r order by id), max(dno)
+  into pid, pd, cur, nd from g;
+  n  := coalesce(cardinality(pid), 0);
+  mi := array_position(pid, mid);
+  if mi is null then  -- 두 번 읽는 사이 진행자가 이 사람을 고친 경우(사실상 없음)
+    raise exception '잠시 뒤 다시 눌러 주세요.';
+  end if;
+  lo := n / nr;                -- 방마다 최소(내림)
+  hi := (n + nr - 1) / nr;     -- 방마다 최대(올림)
+
+  cnt := array_fill(0, array[nr]);
+  dc  := array_fill(0, array[nd * nr]);
+  tc  := array_fill(0, array[nd * nr]);
+  for i in 1..n loop
+    if cur[i] > 0 then
+      cnt[cur[i]] := cnt[cur[i]] + 1;
+      dc[(pd[i] - 1) * nr + cur[i]] := dc[(pd[i] - 1) * nr + cur[i]] + 1;
+    else
+      todo := todo || i;
+    end if;
+  end loop;
+  nf := cardinality(todo);
+
+  -- 첫 계획: 방마다 채울 인원을 정하고(최소 인원, 이미 그보다 많으면 지금 인원, 남는 자리는 아직 최대가 아닌 방 아무 데나 한 명씩),
+  -- 방 없는 사람을 부서끼리 붙여 무작위 부서 순서로 한 명씩, 자리가 남은 방 중 '같은 부서가 가장 많은 방(이미 방이 있는 사람 포함),
+  -- 같으면 빈자리가 많은 방, 그래도 같으면 아무 데나'에 넣는다. 이미 방이 있는 사람의 부서를 따라가므로 다듬기가 덜 헤맨다.
+  cap := array_fill(lo, array[nr]);
+  for k in 1..nr loop
+    cap[k] := greatest(lo, cnt[k]);
+  end loop;
+  extra := n;
+  for k in 1..nr loop
+    extra := extra - cap[k];
+  end loop;
+  while extra > 0 loop
+    select k2 into k from generate_series(1, nr) k2 order by (cap[k2] < hi) desc, random() limit 1;
+    cap[k] := cap[k] + 1;
+    extra := extra - 1;
+  end loop;
+  select array_agg(random()) into dk from generate_series(1, nd);
+  for i in select x from unnest(todo) x order by dk[pd[x]], random() loop
+    select k2 into k from generate_series(1, nr) k2
+    where cnt[k2] < cap[k2]
+    order by dc[(pd[i] - 1) * nr + k2] desc, cap[k2] - cnt[k2] desc, random() limit 1;
+    if not found then  -- 자리는 늘 남지만, 혹시 모자라면 아무 방에나
+      k := 1 + floor(random() * nr)::int;
+    end if;
+    cur[i] := k;
+    cnt[k] := cnt[k] + 1;
+    dc[(pd[i] - 1) * nr + k] := dc[(pd[i] - 1) * nr + k] + 1;
+    tc[(pd[i] - 1) * nr + k] := tc[(pd[i] - 1) * nr + k] + 1;
+  end loop;
+
+  for k in 1..nr loop
+    cost := cost + 10000 * (greatest(0, cnt[k] - hi) + greatest(0, lo - cnt[k]));
+  end loop;
+  for k in 1..nd * nr loop
+    if dc[k] > 0 then cost := cost + 1; end if;
+  end loop;
+  best := cost;
+  myroom := cur[mi];
+
+  -- 계획 다듬기: 방 없는 사람 둘(p, q)을 골라
+  --   같은 방이면 p 를 다른 방으로 옮기고,
+  --   다른 방·다른 부서면 맞바꾼다. 절반은 두 사람만, 절반은 두 사람이 속한 '부서 덩어리'를 같은 수만큼 통째로 맞바꾼다
+  --   (예: p 방의 영업부 3명 중 2명 ↔ q 방의 품질부 2명). 한 명씩 맞바꾸면 벌점이 두 번 올랐다 내려가야 하는 자리 바꿈을
+  --   한 번에 할 수 있어, 이미 방이 정해진 사람이 몇 있을 때도 가장 좋은 계획을 잘 찾는다.
+  --   같은 부서 둘이면 맞바꿔도 벌점은 그대로고 누가 어느 방인지만 바뀐다.
+  -- 벌점이 늘지 않으면 받아들인다. 초반에는 조금 늘어나는 것도 가끔 받아들여 막다른 곳을 빠져나온다.
+  -- 벌점이 같은 계획 사이는 자유롭게 오가므로 누가 어느 방인지가 무작위가 된다.
+  -- 벌점이 가장 낮았던 계획(같으면 나중 것)의 내 방을 고른다.
+  -- 빠르게 하려고 벌점 변화(d)는 바뀌는 칸만 보고 계산한다(m = 옮기는 사람 수).
+  --   방 인원: x 방에서 한 명 빠질 때 10000 × (x 인원 <= 최소면 +1, > 최대면 -1, 아니면 0), y 방에 들어갈 때 (>= 최대면 +1, < 최소면 -1)
+  --   부서 짝: (부서, 빠지는 방) 칸이 m명이었으면 짝이 없어져 -1, (부서, 들어가는 방) 칸이 0명이었으면 짝이 생겨 +1
+  -- 길잡이: 짝의 수만 보면 벌점이 같은 계획이 너무 많아(평평해서) 더 나은 계획 쪽으로 가는 길을 잘 못 찾는다.
+  --   그래서 앞쪽 80% 동안은 '같은 부서끼리 한 방에 더 많이 모이는 쪽'(칸 인원² 의 합, 바뀐 양 dg)을 조금 더 쳐 준다.
+  --   이 덤은 점점 줄어 뒤쪽 20% 에는 0 이라, 마지막 고르기는 위 벌점만 본다(덤 때문에 결과 기준이 바뀌지 않음).
+  for step in 1..steps loop
+    p := todo[1 + floor(random() * nf)::int];
+    q := todo[1 + floor(random() * nf)::int];
+    a := cur[p];
+    b := cur[q];
+    xp := (pd[p] - 1) * nr;
+    xq := (pd[q] - 1) * nr;
+    if a = b then  -- p 를 a 방에서 다른 방 b 로 옮김
+      b := 1 + floor(random() * (nr - 1))::int;
+      if b >= a then b := b + 1; end if;
+      q := 0;
+      m := 1;
+      d := 10000 * ((case when cnt[a] <= lo then 1 when cnt[a] > hi then -1 else 0 end)
+                  + (case when cnt[b] >= hi then 1 when cnt[b] < lo then -1 else 0 end))
+         + (case when dc[xp + a] = 1 then -1 else 0 end) + (case when dc[xp + b] = 0 then 1 else 0 end);
+      dg := 2 * (dc[xp + b] - dc[xp + a] + 1);
+    elsif xp = xq then  -- 같은 부서 둘을 맞바꿈: 벌점은 그대로
+      m := 1;
+      d := 0;
+      dg := 0;
+    else           -- p 쪽 m명은 a → b, q 쪽 m명은 b → a (방 인원은 그대로)
+      m := case when random() < 0.5 then 1 else least(tc[xp + a], tc[xq + b]) end;
+      d := (case when dc[xp + a] = m then -1 else 0 end) + (case when dc[xp + b] = 0 then 1 else 0 end)
+         + (case when dc[xq + b] = m then -1 else 0 end) + (case when dc[xq + a] = 0 then 1 else 0 end);
+      dg := 2 * m * (dc[xp + b] - dc[xp + a] + m) + 2 * m * (dc[xq + a] - dc[xq + b] + m);
+    end if;
+
+    -- e = 벌점 변화 - 길잡이 덤. 방 인원을 어기는 변화(d >= 100)는 받지 않고, 나머지는 e 가 0 이하면 받고 아니면 온도에 따라 가끔 받는다.
+    e := d - 1.5 * greatest(0, 1 - step / (0.8 * steps)) * dg;
+    if d < 100 and (e <= 0 or random() < exp(-e / greatest(0.1, 1 - step / steps::float8))) then
+      if q = 0 then
+        cnt[a] := cnt[a] - 1;  cnt[b] := cnt[b] + 1;
+      else
+        cur[q] := a;
+      end if;
+      cur[p] := b;
+      if m > 1 then  -- 덩어리 맞바꾸기: p·q 말고 m - 1 명씩 더 옮긴다(같은 부서 안에서 누구든 벌점은 같음)
+        i := m - 1;
+        j := m - 1;
+        for k in select x from unnest(todo) x order by random() loop
+          exit when i = 0 and j = 0;
+          if k <> p and k <> q then
+            if i > 0 and pd[k] = pd[p] and cur[k] = a then cur[k] := b; i := i - 1;
+            elsif j > 0 and pd[k] = pd[q] and cur[k] = b then cur[k] := a; j := j - 1;
+            end if;
+          end if;
+        end loop;
+      end if;
+      dc[xp + a] := dc[xp + a] - m;  dc[xp + b] := dc[xp + b] + m;
+      tc[xp + a] := tc[xp + a] - m;  tc[xp + b] := tc[xp + b] + m;
+      if q > 0 then
+        dc[xq + b] := dc[xq + b] - m;  dc[xq + a] := dc[xq + a] + m;
+        tc[xq + b] := tc[xq + b] - m;  tc[xq + a] := tc[xq + a] + m;
+      end if;
+      cost := cost + d;
+      if cost <= best then best := cost; myroom := cur[mi]; end if;
+    end if;
+  end loop;
+
+  -- 계획을 세우는 사이 진행자가 이 사람에게 방을 넣었거나, 지웠거나, 성별을 바꿨으면 그것을 따른다
+  update people set room = rooms[myroom]
+  where id = mid and room is null and gender = me.gender;
+  if not found then
+    select * into me from people where id = mid;
+    if not found then
+      raise exception '명단에 없는 부서·이름이에요.';
+    end if;
+    if me.room is not null then
+      return me.room;
+    end if;
+    if me.gender is null then
+      raise exception '명단에 성별이 없어 방을 뽑을 수 없어요. 진행자에게 말해 주세요.';
+    end if;
+    raise exception '잠시 뒤 다시 눌러 주세요.';  -- 그사이 성별이 바뀐 경우: 다시 누르면 바뀐 성별의 방에서 뽑음
+  end if;
+  return rooms[myroom];
 end $$;
 
 -- 일정표 글(진행자가 진행자 화면에서 적음). 명단에 있는 사람만 받을 수 있다: 명단에 없으면 null, 적어 둔 일정이 없으면 ''.
@@ -395,6 +669,15 @@ language sql stable security definer set search_path = public as $$
   from people me
   join people p on p.team = me.team
   where me.dept = norm_dept(p_dept) and me.name = norm_name(p_name) and me.team is not null
+$$;
+
+-- 같은 방 사람들: 객실이 정해진 사람에게만 같은 방 사람들 [{dept, name, title}] (나 포함, 부서·이름 순). 방이 없거나 명단에 없으면 null.
+create or replace function public.room_members(p_dept text, p_name text) returns json
+language sql stable security definer set search_path = public as $$
+  select json_agg(json_build_object('dept', p.dept, 'name', p.name, 'title', p.title) order by p.dept, p.name)
+  from people me
+  join people p on p.room = me.room
+  where me.dept = norm_dept(p_dept) and me.name = norm_name(p_name) and me.room is not null
 $$;
 
 -- ── 진행자용 (관리자 비밀번호 필요) ───────────────────────
@@ -517,7 +800,7 @@ begin
     where coalesce(r->>'id', '') !~ '^\d{1,18}$'
        or (coalesce(r->>'value', '') <> ''
            and not (r->>'value' = any (case when p_what = 'room'
-                      then array['m1', 'm2', 'm3', 'm4', 'm5', 'f1', 'f2'] else array['ski', 'sauna'] end)))) then
+                      then array['m1', 'm2', 'm3', 'm4', 'm5', 'f1', 'f2'] else array['ski', 'rest'] end)))) then
     raise exception '보낸 내용이 올바르지 않아요. 새로고침한 뒤 다시 해 주세요.';
   end if;
   if p_what = 'room' then
@@ -577,13 +860,13 @@ revoke all on function public.norm_dept(text), public.norm_name(text), public.ch
   from public, anon, authenticated;
 
 revoke all on function
-  public.departments(), public.login(text, text), public.choose_menu(text, text, text), public.pick(text, text), public.schedule(text, text), public.team_members(text, text),
+  public.departments(), public.login(text, text), public.choose_menu(text, text, text), public.choose_activity(text, text, text), public.pick(text, text), public.pick_room(text, text), public.schedule(text, text), public.team_members(text, text), public.room_members(text, text),
   public.board(text), public.admin_add(text, jsonb), public.admin_update(text, bigint, jsonb),
   public.admin_remove(text, bigint), public.admin_reset(text, bigint), public.admin_reset_all(text),
   public.board_state(text), public.admin_assign(text, text, jsonb), public.admin_clear(text, text), public.admin_set(text, text, text)
   from public;
 grant execute on function
-  public.departments(), public.login(text, text), public.choose_menu(text, text, text), public.pick(text, text), public.schedule(text, text), public.team_members(text, text),
+  public.departments(), public.login(text, text), public.choose_menu(text, text, text), public.choose_activity(text, text, text), public.pick(text, text), public.pick_room(text, text), public.schedule(text, text), public.team_members(text, text), public.room_members(text, text),
   public.board(text), public.admin_add(text, jsonb), public.admin_update(text, bigint, jsonb),
   public.admin_remove(text, bigint), public.admin_reset(text, bigint), public.admin_reset_all(text),
   public.board_state(text), public.admin_assign(text, text, jsonb), public.admin_clear(text, text), public.admin_set(text, text, text)

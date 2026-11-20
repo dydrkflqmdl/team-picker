@@ -9,7 +9,7 @@
   <link rel="stylesheet" href="style.css?v=5" /><!-- style.css 를 고치면 v 숫자를 올린다 -->
   <script src="supabase.js?v=2.117.3" integrity="sha384-BWcjm9OdFth9TbhCxZPdm+gAOUMAzQy9nmTs12ioXdCcbVnJaPMn+fMUoQCLt60R"></script>
   <!-- common.js 를 고치면 v 숫자를 올린다(브라우저에 남아 있는 예전 common.js 를 새 화면이 쓰지 않게) -->
-  <script src="common.js?v=8"></script>
+  <script src="common.js?v=9"></script>
   <style>
     .head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
     .stats { color: var(--muted); }
@@ -277,24 +277,17 @@
       </div>
     </details>
 
-    <!-- 준비해 둔 기능(시험용): 진행자 화면에만 있다. 참가자 화면(index.html)에는 이 기능이 없고, 참가자가 부를 수 있는 DB 함수도 없다 -->
-    <h2 class="section admin-only">준비해 둔 기능 (시험용)
-      <small>객실표·자유시간이에요. <b>진행자 화면에서만</b> 보이고, 참가자 화면에는 나오지 않아요.</small>
+    <!-- 객실·자유시간: 객실은 여기서 나누면 참가자 화면에 "내 방"으로 보이고, 자유시간은 참가자가 직접 고른다(진행자는 대신 고칠 수 있음). 나누기·비우기·대신 고치기는 진행자 화면에서만 -->
+    <h2 class="section admin-only">객실·자유시간
+      <small>객실은 참가자가 <b>방 뽑기</b>로 직접 뽑아요. 자유시간도 참가자가 직접 골라요.</small>
     </h2>
 
     <details class="card admin-only" id="roomCard">
       <summary>객실표 <small id="roomCount"></small></summary>
+      <p class="msg hint-line">참가자가 <b>방 뽑기</b>로 직접 뽑아요(남녀 따로, 같은 부서끼리, 무작위). 방을 비우면 그 사람이 다시 뽑을 수 있어요. 뽑지 않은 사람은 <b>방 없는 사람만 넣기</b>로 채울 수 있어요. <b>자동으로 나누기</b>는 이미 뽑은 방까지 전부 새로 나눠요.</p>
       <div class="rooms" id="rooms"></div>
       <div id="roomless"></div>
       <div class="row tools2">
-        <label>나누는 기준
-          <select id="roomRule">
-            <option value="rank">직급이 비슷한 사람끼리</option>
-            <option value="dept">같은 부서끼리</option>
-            <option value="team">같은 팀끼리</option>
-            <option value="mix">무작위로 섞기</option>
-          </select>
-        </label>
         <button class="primary" id="roomAuto">자동으로 나누기</button>
         <button id="roomFill" hidden>방 없는 사람만 넣기</button>
         <label class="check"><input type="checkbox" id="roomMove" /> 직접 옮기기</label>
@@ -304,7 +297,9 @@
     </details>
 
     <details class="card admin-only" id="actCard">
-      <summary>저녁 식사 뒤 자유시간 <small id="actCount"></small></summary>
+      <summary>12/18(금) 저녁 식사 뒤 자유시간 <small id="actCount"></small></summary>
+      <p class="msg hint-line"><b>스키를 고른 사람은 18일 저녁 식사 때 술을 마실 수 없어요.</b> 참가자 화면에서 이 안내를 받았어요.</p>
+      <p class="msg hint-line">참가자가 직접 스키·휴식 중에 고르고, 언제든 바꿀 수 있어요. 필요하면 아래 <b>직접 고치기</b>로 대신 고칠 수 있어요.</p>
       <div id="acts"></div>
       <div class="row tools2">
         <label class="check"><input type="checkbox" id="actMove" /> 직접 고치기</label>
@@ -799,7 +794,7 @@
     }
   }
 
-  // ── 일정표(참가자 화면에도 보임) · 준비해 둔 기능(시험용: 객실표·자유시간 — 진행자 화면에만 있음) ──
+  // ── 일정표(참가자 화면에도 보임) · 객실·자유시간(나누기·대신 고치기는 진행자 화면에만 있음) ──
   // 값을 저장한 뒤 다시 받아 그림(명단 표에서 고치던 줄은 닫지 않음 — reload() 도 마찬가지).
   // 저장은 됐는데 다시 받기만 실패했으면 "다시 눌러 주세요"가 아니라 그 사실을 알림(다음 5초 새로고침이 화면을 맞추고 이 문구도 지움)
   async function resync() {
@@ -908,7 +903,7 @@ Day 2 · 12/18(금) — 함께 성장하기
 12:00 점심 식사
 13:00~17:30 특강 2부 : 팀워크
 18:00 저녁 식사
-20:00 자유시간 (스키 · 사우나)
+20:00 자유시간 (스키 · 휴식)
 
 Day 3 · 12/19(토) — 함께 만드는 내년
 07:30~09:00 조식
@@ -976,51 +971,57 @@ Day 3 · 12/19(토) — 함께 만드는 내년
     $('#planEditBtn').focus();
   }));
 
-  // 객실 나누기 계획 [{ id, value: 방 }]. 성별마다 그 성별의 방들에 인원이 최대한 같게(차이 1명 이내) 나눈다.
-  // 고른 기준의 순서로 줄을 세운 뒤 앞에서부터 한 방씩 채우므로, 순서가 이웃한 사람끼리 한 방이 된다(순서가 같은 사람끼리는 누를 때마다 무작위).
+  // 객실 나누기 계획 [{ id, value: 방 }]. 규칙은 한 가지: 남녀는 따로, 같은 부서 사람은 가능한 한 같은 방, 방 인원 차이는 1명 이내, 직급은 보지 않고, 같은 조건이면 무작위.
+  // 성별마다: 부서 순서를 섞고 부서 안 사람도 섞어 줄을 세운 뒤 앞에서부터 방마다 잘라 넣는다. 이걸 ROOM_TRIES 번 해 보고
+  // "(방, 부서) 짝의 수"(부서가 여러 방으로 쪼개진 정도)가 가장 적은 안을 고른다. 같은 안이 여럿이면 그중 무작위.
   // onlyNew 면 이미 방이 있는 사람은 그대로 두고, 방 없는 사람을 한 명씩 넣는다. 인원 차이가 1명 이내로 유지되도록 "지금 인원이 가장 적은 방들" 가운데서만 고르고,
-  // 그 안에서는 고른 기준에 맞는 방을 고른다(직급은 방 사람들의 평균 직급과 가까운 방, 부서·팀은 같은 부서·팀이 많은 방, 무작위는 아무 방).
+  // 그 안에서는 같은 부서 사람이 많은 방, 같으면 무작위.
   const shuffle = (list) => {
     const a = [...list];
     for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; }
     return a;
   };
-  const ROOM_RULES = {
-    rank: (a, b) => rankOf(a) - rankOf(b),
-    dept: (a, b) => byKo(a.dept, b.dept) || rankOf(a) - rankOf(b),
-    team: (a, b) => place(TEAM_KEYS, a.team) - place(TEAM_KEYS, b.team),
-    mix: () => 0,
-  };
-  // 사람 p 를 방(지금 그 방에 있는 사람들 mem)에 넣을 때의 어울리지 않는 정도(작을수록 어울림)
-  const ROOM_FIT = {
-    rank: (p, mem) => (mem.length ? Math.abs(mem.reduce((s, x) => s + rankOf(x), 0) / mem.length - rankOf(p)) : 0),
-    dept: (p, mem) => -mem.filter((x) => x.dept === p.dept).length,
-    team: (p, mem) => (p.team ? -mem.filter((x) => x.team === p.team).length : 0),
-    mix: () => 0,
-  };
-  function roomPlan(rule, onlyNew) {
+  const ROOM_TRIES = 500;
+  // 줄 세운 사람들을 방 크기대로 앞에서부터 자른 안과, 그 안의 (방, 부서) 짝의 수
+  function roomCut(list, sizes) {
+    let from = 0, pairs = 0;
+    const cut = sizes.map((n) => {
+      const part = list.slice(from, from + n);
+      from += n;
+      pairs += new Set(part.map((p) => p.dept || '')).size;
+      return part;
+    });
+    return { cut, pairs };
+  }
+  function roomPlan(onlyNew) {
     const rows = [];
     for (const g of ['남', '여']) {
       const keys = ROOM_KEYS.filter((k) => roomGender(k) === g);
-      const list = shuffle(people.filter((p) => p.gender === g && !(onlyNew && p.room))).sort(ROOM_RULES[rule]);
+      const list = people.filter((p) => p.gender === g && !(onlyNew && p.room));
       if (onlyNew) {
         const mem = keys.map((k) => people.filter((p) => p.room === k));
-        for (const p of list) {
+        for (const p of shuffle(list)) {
           const least = Math.min(...mem.map((m) => m.length));
           const open = mem.map((m, i) => i).filter((i) => mem[i].length === least); // 인원이 가장 적은 방들(여기에만 넣어야 방 인원 차이가 1명 이내로 유지됨)
-          const score = open.map((i) => ROOM_FIT[rule](p, mem[i]));
-          const best = open.filter((_, n) => score[n] === Math.min(...score));
-          const i = best[Math.floor(Math.random() * best.length)]; // 같게 어울리면 무작위
+          const same = open.map((i) => mem[i].filter((x) => x.dept === p.dept).length);
+          const best = open.filter((_, n) => same[n] === Math.max(...same)); // 같은 부서 사람이 가장 많은 방
+          const i = best[Math.floor(Math.random() * best.length)]; // 같으면 무작위
           mem[i].push(p);
           rows.push({ id: p.id, value: keys[i] });
         }
       } else {
-        let from = 0;
-        keys.forEach((k, n) => { // 예: 20명 ÷ 5실 = 4명씩, 9명 ÷ 2실 = 5명·4명(남는 사람은 앞쪽 방부터 한 명씩)
-          const take = Math.floor(list.length / keys.length) + (n < list.length % keys.length ? 1 : 0);
-          for (const p of list.slice(from, from + take)) rows.push({ id: p.id, value: k });
-          from += take;
-        });
+        // 예: 20명 ÷ 5실 = 4명씩, 9명 ÷ 2실 = 5명·4명(남는 사람은 앞쪽 방부터 한 명씩)
+        const sizes = keys.map((_, n) => Math.floor(list.length / keys.length) + (n < list.length % keys.length ? 1 : 0));
+        const depts = [...new Set(list.map((p) => p.dept || ''))];
+        let best = [], bestPairs = Infinity;
+        for (let t = 0; t < ROOM_TRIES; t++) {
+          const order = shuffle(depts);
+          const line = [];
+          for (const d of order) line.push(...shuffle(list.filter((p) => (p.dept || '') === d)));
+          const { cut, pairs } = roomCut(line, sizes);
+          if (pairs < bestPairs) { best = cut; bestPairs = pairs; }
+        }
+        best.forEach((part, n) => { for (const p of part) rows.push({ id: p.id, value: keys[n] }); });
       }
     }
     // 성별을 몰라 못 나눈 사람: 전부 새로 나눌 때는 예전 방도 비워 둠(방 인원이 어긋나지 않게)
@@ -1031,21 +1032,20 @@ Day 3 · 12/19(토) — 함께 만드는 내년
     const housed = people.filter((p) => p.room).length;
     if (!people.length) throw new Error('명단이 비어 있어요. 아래 명단 관리에서 먼저 추가해 주세요.');
     const unsexed = people.filter((p) => !p.gender && p.room).length; // 성별이 없어 못 나누는데 지금 방이 있는 사람
-    if (!onlyNew && housed && !confirm(`이미 방이 정해진 ${housed}명을 포함해 전부 새로 나눌까요?` + (unsexed ? `\n성별이 없는 ${unsexed}명은 방이 비워져요.` : ''))) return;
-    const rule = $('#roomRule').value;
-    const rows = roomPlan(rule, onlyNew);
+    if (!onlyNew && housed && !confirm(`이미 방이 정해진 ${housed}명(참가자가 직접 뽑은 방 포함)을 포함해 전부 새로 나눌까요?\n방이 없는 사람만 채우려면 취소하고 '방 없는 사람만 넣기'를 눌러 주세요.` + (unsexed ? `\n성별이 없는 ${unsexed}명은 방이 비워져요.` : ''))) return;
+    const rows = roomPlan(onlyNew);
     const placed = rows.filter((r) => r.value).length;
     if (!placed) throw new Error('나눌 사람이 없어요. 성별이 들어 있는 사람만 나눌 수 있어요(아래 명단 관리에서 수정).');
     $('#roomMsg').textContent = '';
     await rpc('admin_assign', { p_code: code, p_what: 'room', p_rows: rows });
     await resync();
     const unknown = people.filter((p) => !p.gender && !p.room).length;
-    $('#roomMsg').textContent = (onlyNew ? `방 없는 ${placed}명을 "${$('#roomRule').selectedOptions[0].textContent}" 기준으로 넣었어요(방 인원 차이는 1명 이내로 맞춰요).` : `${placed}명을 나눴어요.`) + (unknown ? ` 성별이 없는 ${unknown}명은 넣지 못했어요. 직접 옮기기를 켜서 넣어 주세요.` : '');
+    $('#roomMsg').textContent = (onlyNew ? `방 없는 ${placed}명을 같은 부서 사람이 많은 방에 넣었어요(방 인원 차이는 1명 이내로 맞춰요).` : `${placed}명을 남녀 따로, 같은 부서끼리 되도록 한 방에 나눴어요(방 인원 차이는 1명 이내예요).`) + (unknown ? ` 성별이 없는 ${unknown}명은 넣지 못했어요. 직접 옮기기를 켜서 넣어 주세요.` : '');
   }
   $('#roomAuto').addEventListener('click', hold($('#roomAuto'), () => assignRooms(false)));
   $('#roomFill').addEventListener('click', hold($('#roomFill'), () => assignRooms(true)));
   $('#roomClear').addEventListener('click', hold($('#roomClear'), async () => {
-    if (!confirm(`${people.filter((p) => p.room).length}명의 객실을 모두 비울까요? 되돌릴 수 없어요.`)) return;
+    if (!confirm(`${people.filter((p) => p.room).length}명의 객실을 모두 비울까요? 참가자가 직접 뽑은 방도 지워져서 모두 다시 뽑아야 해요. 되돌릴 수 없어요.`)) return;
     await rpc('admin_clear', { p_code: code, p_what: 'room' });
     $('#roomMsg').textContent = '';
     await resync();
@@ -1309,7 +1309,7 @@ Day 3 · 12/19(토) — 함께 만드는 내년
   // ── 사람 이름을 누르면 뜨는 작은 메뉴 ──
   // 위쪽 "아직 안 뽑은 사람"·팀 열의 이름(data-who)과 표의 "대신 뽑기"(data-proxy)가 엶. 한 번에 하나만 열리고, 지금 상태는 sheet 에 있음.
   //   step 'menu'  = 할 수 있는 일 고르기 (안 뽑은 사람: 대신 뽑기·수정·삭제 / 뽑은 사람: 다시 뽑기·수정)
-  //   step 'proxy' = 대신 뽑기 확인(조식 메뉴가 비었으면 여기서 고름)   step 'done' = 뽑은 결과
+  //   step 'proxy' = 대신 뽑기 확인(조식 메뉴가 비었으면 원할 때 여기서 같이 고를 수 있음)   step 'done' = 뽑은 결과
   // 5초 새로고침이 다시 그려도(render → renderSheet) 메뉴는 따로 떠 있어 사라지지 않고, 그 사람이 명단에서 빠지면 닫힘
   let sheet = null;
   const narrow = () => window.matchMedia('(max-width: 700px)').matches;
@@ -1321,7 +1321,7 @@ Day 3 · 12/19(토) — 함께 만드는 내년
   function openSheet(id, step, trigger) {
     if (tv || saving) return;
     const r = trigger && trigger.getBoundingClientRect();
-    sheet = { id, step, from: step, anchor: r ? { left: r.left, top: r.top, bottom: r.bottom } : null, menu: '', forceMenu: false, busy: false, err: '', html: '', result: null };
+    sheet = { id, step, from: step, anchor: r ? { left: r.left, top: r.top, bottom: r.bottom } : null, menu: '', busy: false, err: '', html: '', result: null };
     renderSheet();
     $('#sheet').querySelector('button:not(.link)')?.focus({ preventScroll: true });
   }
@@ -1338,14 +1338,13 @@ Day 3 · 12/19(토) — 함께 만드는 내년
       const r = s.result;
       html = head(r.name, esc(r.dept)) + `
         <div class="result team-${r.team}">${TEAMS[r.team]} 팀</div>
-        <p>${esc(r.name)} 님을 ${TEAMS[r.team]} 팀으로 뽑았어요.${r.menu ? ` 조식은 ${MENUS[r.menu]}(으)로 정했어요.` : ''}</p>
+        <p>${esc(r.name)} 님을 ${TEAMS[r.team]} 팀으로 뽑았어요.${r.menu ? ` 조식은 ${MENUS[r.menu]}(으)로 정했어요.` : ''}${r.menuErr ? ` 조식 메뉴는 정하지 못했어요(${esc(r.menuErr)}). 팀은 뽑혔어요.` : ''}</p>
         <div class="acts"><button type="button" class="primary" data-sa="close">닫기</button></div>`;
     } else if (s.step === 'proxy') {
-      const needMenu = s.forceMenu || !p.menu;
       html = head(p.name, esc(p.dept)) + (p.team
         ? `<p>이미 ${TEAMS[p.team]} 팀으로 뽑혀 있어요.</p><div class="acts"><button type="button" data-sa="close">닫기</button></div>`
         : `<p><b>${esc(p.name)}</b> 님(${esc(p.dept)})을 대신해서 팀을 뽑을까요?</p>`
-          + (needMenu ? `<p>조식 메뉴를 아직 안 골랐어요. 이 분 대신 골라 주세요.</p>
+          + (!p.menu ? `<p>조식 메뉴는 안 골라도 팀을 뽑을 수 있어요. 같이 정하려면 골라 주세요(다시 누르면 취소).</p>
               <div class="chips" role="group" aria-label="조식 메뉴">${MENU_KEYS.map((m) => `<button type="button" class="chip pick" data-sm="${m}" aria-pressed="${s.menu === m}"${off}>${MENUS[m]}</button>`).join('')}</div>` : '')
           + (s.err ? `<p class="err" role="alert">${esc(s.err)}</p>` : '')
           + `<div class="acts two"><button type="button" class="primary" data-sa="go"${off}>${s.busy ? '뽑는 중…' : '뽑기'}</button><button type="button" data-sa="back"${off}>취소</button></div>`);
@@ -1366,25 +1365,23 @@ Day 3 · 12/19(토) — 함께 만드는 내년
     el.style.left = `${Math.max(8, Math.min(a.left, innerWidth - w - 8))}px`;
     el.style.top = `${top}px`;
   }
-  // 대신 뽑기: 조식 메뉴가 비어 있으면 고른 메뉴를 choose_menu 로 넣은 뒤(admin_update 는 직급·성별까지 덮어써서 쓰지 않음) pick 을 부름
+  // 대신 뽑기: 팀 뽑기(pick)는 조식 메뉴 없이도 됨. 메뉴를 골랐을 때만 pick 뒤에 choose_menu 로 넣음(admin_update 는 직급·성별까지 덮어써서 쓰지 않음)
   async function sheetPick() {
     const s = sheet;
     const p = s && people.find((x) => x.id === s.id);
     if (!p) return;
-    const needMenu = s.forceMenu || !p.menu;
-    if (needMenu && !s.menu) { s.err = '조식 메뉴를 먼저 골라 주세요.'; renderSheet(); return; }
+    const wantMenu = !p.menu && s.menu;
     s.busy = true; s.err = '';
     renderSheet();
     let synced = false;
     try {
-      let menu = '';
-      if (needMenu) menu = await rpc('choose_menu', { p_dept: p.dept, p_name: p.name, p_menu: s.menu });
       const team = await rpc('pick', { p_dept: p.dept, p_name: p.name });
+      let menu = '', menuErr = '';
+      if (wantMenu) { try { menu = await rpc('choose_menu', { p_dept: p.dept, p_name: p.name, p_menu: s.menu }); } catch (e) { menuErr = e.message; } }
       s.step = 'done';
-      s.result = { name: p.name, dept: p.dept, team, menu: needMenu ? menu : '' };
+      s.result = { name: p.name, dept: p.dept, team, menu, menuErr };
     } catch (e) {
       s.err = e.message;
-      if (e.message.includes('조식 메뉴를 먼저')) s.forceMenu = true; // 화면에는 메뉴가 있다고 나오지만 DB 에서는 지워진 경우
     } finally {
       s.busy = false;
     }
@@ -1396,7 +1393,7 @@ Day 3 · 12/19(토) — 함께 만드는 내년
     const b = e.target.closest('button[data-sa], button[data-sm]');
     const s = sheet;
     if (!b || !s || s.busy) return;
-    if (b.dataset.sm) { s.menu = b.dataset.sm; s.err = ''; renderSheet(); return; }
+    if (b.dataset.sm) { s.menu = s.menu === b.dataset.sm ? '' : b.dataset.sm; s.err = ''; renderSheet(); return; }
     const act = b.dataset.sa, id = s.id;
     if (act === 'close') return closeSheet();
     if (act === 'proxy') { s.step = 'proxy'; renderSheet(); $('#sheet').querySelector('button:not(.link)')?.focus({ preventScroll: true }); return; }
