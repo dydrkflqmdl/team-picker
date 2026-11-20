@@ -28,7 +28,7 @@ const ROOMS = { m1: '남자 1호', m2: '남자 2호', m3: '남자 3호', m4: '�
 const ROOM_KEYS = Object.keys(ROOMS);
 const roomGender = (key) => (key[0] === 'm' ? '남' : '여');
 // 저녁 식사 뒤 자유시간에 할 것
-const ACTS = { ski: '스키', sauna: '사우나' };
+const ACTS = { ski: '스키', rest: '휴식' };
 const ACT_KEYS = Object.keys(ACTS);
 
 const $ = (s) => document.querySelector(s);
