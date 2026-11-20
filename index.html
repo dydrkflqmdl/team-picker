@@ -152,6 +152,10 @@
     .mbtn.is-done .mb-state { color: var(--text); }
     .mbtn.is-done .mb-check { background: var(--green); color: #fff; }
     .mbtn.is-done .mb-check::before { content: '✓'; font-size: 16px; font-weight: 900; margin-top: 0; }
+    /* 끝낸 방·팀·아침 메뉴는 메인에서 다 보이므로 눌리지 않게(disabled) — 브라우저가 흐리게 그리지 않도록 색을 그대로 둠 */
+    .mbtn:disabled { color: var(--text); -webkit-text-fill-color: currentColor; opacity: 1; cursor: default; }
+    .mbtn:disabled:active { background: var(--card); }
+    .mb-edit { padding: 2px 10px; border-radius: 999px; background: var(--chip); color: var(--muted); font-size: 12px; font-weight: 800; }
     .mb-big { font-size: 20px; font-weight: 900; line-height: 1.3; }
     .mb-team { display: inline-block; padding: 3px 14px; border-radius: 999px; font-size: 17px; font-weight: 900; line-height: 1.4; box-shadow: inset 0 0 0 1px rgb(0 0 0 / .1); }
     .mb-thumb { flex: none; width: 46px; height: 46px; border-radius: 12px; object-fit: cover; background: var(--chip); }
@@ -765,12 +769,21 @@
     : '');
   // 메인 화면: 큰 단추 다섯 개. 끝낸 것(방·팀·메뉴·자유시간을 정함)은 고른 결과를 크게 + ✓, 아직 안 한 것은 "👉 아직 안 …"으로 눈에 띄게.
   // 방·팀은 받아 둔 같은 방·우리 팀 사람들(loadRoom·loadCrew)도 이름표로. 맨 위에는 남은 것 개수(일정표는 셈에 안 넣음)
+  // 끝내면 제목에서 '뽑기·고르기'를 빼고, 자유시간 말고는 눌리지 않게(결과가 메인에 다 보이므로). 자유시간은 언제든 바꿀 수 있어 계속 눌림
+  const HOME_TITLES = {
+    Room: ['🛏️ 17~19일 지낼 방 뽑기', '🛏️ 17~19일 지낼 방'],
+    Team: ['🎲 17일 내 팀 뽑기', '🎲 17일 내 팀'],
+    Menu: ['🍳 18일 아침 메뉴 고르기', '🍳 18일 아침 메뉴'],
+    Act: ['⛷️ 18일 자유시간 뭐 할지 고르기', '⛷️ 18일 자유시간'],
+  };
   function paintHome() {
     const left = [];
     const set = (id, label, done, html, more = '') => {
       const btn = $(`#go${id}`);
       btn.classList.toggle('is-done', done);
       btn.classList.toggle('is-todo', !done);
+      fill(btn.querySelector('.mb-title'), HOME_TITLES[id][done ? 1 : 0]);
+      btn.disabled = done && id !== 'Act';
       fill($(`#sr${id}`), done ? '끝났어요.' : '');
       fill($(`#st${id}`), html);
       fill($(`#pv${id}`), done ? more : '');
@@ -785,7 +798,8 @@
       peopleHtml(`우리 팀 · 지금까지 뽑은 ${team.length}명`, team, '아직 안 뽑은 사람은 뽑으면 나타나요.'));
     set('Menu', '아침 메뉴', hasMenu(), hasMenu() ? `<img class="mb-thumb" src="menu_${me.menu}_art.jpg" alt="" width="46" height="46" /><b class="mb-big">${esc(MENUS[me.menu])}</b>` : todo('골랐어요'));
     set('Act', '자유시간', hasAct(), !hasAct() ? todo('골랐어요')
-      : me.activity === 'ski' ? '<b class="mb-big">스키</b><span class="sr-only"> · </span><span class="mb-warn">🙅 저녁 술 금지!</span>' : `<b class="mb-big">${esc(ACTS[me.activity])}</b>`);
+      : (me.activity === 'ski' ? '<b class="mb-big">스키</b><span class="sr-only"> · </span><span class="mb-warn">🙅 저녁 술 금지!</span>' : `<b class="mb-big">${esc(ACTS[me.activity])}</b>`)
+        + '<span class="sr-only"> · </span><span class="mb-edit">바꾸기</span>');
     fill($('#homeLeft'), left.length ? `남은 것 <b>${left.length}개</b>: ${left.join(' · ')}` : '다 끝났어요! 🎉 즐거운 워크숍 보내요');
     fill($('#homeBar'), ['Room', 'Team', 'Menu', 'Act'].map((k) => `<i${$(`#go${k}`).classList.contains('is-done') ? ' class="on"' : ''}></i>`).join(''));
     $('#homeProg').classList.toggle('all-done', !left.length);
