@@ -109,6 +109,22 @@
     #planInput { min-height: 220px; }
     @media (prefers-reduced-motion: reduce) { .col li.new { animation: none; } }
 
+    /* 한눈에 보기: 맨 위 카드. 사람마다 한 줄(부서·이름·방·팀·아침·자유시간). 좁은 화면에서는 카드 안에서 옆으로 밀림 */
+    .glance-sum { margin: 0 0 10px; font-size: 15px; }
+    .glance-sum b { font-size: 17px; }
+    .glance-wrap { overflow-x: auto; max-width: 100%; }
+    .glance { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 14px; }
+    .glance th, .glance td { text-align: left; padding: 6px 10px; border-top: 1px solid var(--line); white-space: nowrap; }
+    .glance th { color: var(--muted); font-weight: 500; background: var(--card); box-shadow: 0 1px 0 var(--line); }
+    .glance th button { padding: 2px 0; font-size: inherit; font-weight: inherit; color: inherit; text-decoration: none; }
+    .glance th[aria-sort] button { color: var(--text); font-weight: 600; }
+    .glance th[aria-sort="ascending"] button::after { content: ' ▲'; font-size: 10px; }
+    .glance th[aria-sort="descending"] button::after { content: ' ▼'; font-size: 10px; }
+    .glance .dot { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; }
+    .glance .yet { color: var(--danger); font-weight: 600; }
+    .glance .nodrink { margin-left: 6px; padding: 0 6px; border-radius: 999px; font-size: 11px; background: var(--chip); color: var(--muted); }
+    @media (max-width: 700px) { .glance th button { padding: 8px 0; } }
+
     /* 마지막 갱신 · 프로젝터 보기 단추 */
     .bar { display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; font-size: 13px; color: var(--muted); }
     .bar[hidden] { display: none; }
@@ -226,6 +242,25 @@
   </section>
 
   <div id="boardView" hidden>
+    <!-- 한눈에 보기: 한 사람의 방·팀·아침·자유시간을 한 줄로(진행자 화면에만 있음). 내용은 아래 스크립트의 renderGlance 가 채움 -->
+    <details class="card admin-only" id="glanceCard" open>
+      <summary>한눈에 보기 <small>· 머리글을 누르면 그 칸으로 줄을 세워요</small></summary>
+      <p class="glance-sum" id="glanceSum" aria-live="polite"></p>
+      <div class="glance-wrap">
+        <table class="glance">
+          <thead><tr>
+            <th aria-sort="ascending"><button class="link" data-gsort="dept">부서</button></th>
+            <th><button class="link" data-gsort="name">이름</button></th>
+            <th><button class="link" data-gsort="room">방</button></th>
+            <th><button class="link" data-gsort="team">팀</button></th>
+            <th><button class="link" data-gsort="menu">아침</button></th>
+            <th><button class="link" data-gsort="act">자유시간</button></th>
+          </tr></thead>
+          <tbody id="glanceBody"></tbody>
+        </table>
+      </div>
+    </details>
+
     <!-- 팀 인원이 어긋났을 때만 나옴(진행자용 안내라 프로젝터 보기에서는 숨김) -->
     <div class="teamwarn admin-only" id="teamWarn" role="alert" hidden></div>
     <div class="columns" id="columns"></div>
@@ -467,12 +502,58 @@
       showError(msg);
       setTimeout(() => { if ($('#error').textContent === msg) showError(''); }, 10000);
     }
+    renderGlance();
     renderDepts();
     renderRankNote();
     renderTable(); // 수정 중인 줄도 포함해 항상 다시 그림(그 줄의 입력값·초점·커서는 renderTable 이 지켜 줌)
     renderExtras();
     renderSheet();
   }
+
+  // ── 한눈에 보기: 한 사람의 방·팀·아침·자유시간을 한 줄로. 정렬은 이 표만의 것(명단 관리 표와 따로) ──
+  let gsort = { key: 'dept', dir: 1 };
+  let glanceSig = '';
+  const GSORTS = {
+    dept: (a, b) => byKo(a.dept, b.dept),
+    name: (a, b) => byKo(a.name, b.name),
+    room: (a, b) => place(ROOM_KEYS, a.room) - place(ROOM_KEYS, b.room),
+    team: (a, b) => place(TEAM_KEYS, a.team) - place(TEAM_KEYS, b.team),
+    menu: (a, b) => place(MENU_KEYS, a.menu) - place(MENU_KEYS, b.menu),
+    act: (a, b) => place(ACT_KEYS, a.activity) - place(ACT_KEYS, b.activity),
+  };
+  function renderGlance() {
+    if (tv) return;
+    const n = people.length;
+    const cnt = (f) => people.filter(f).length;
+    const ski = cnt((p) => p.activity === 'ski'), rest = cnt((p) => p.activity === 'rest');
+    const sum = `방 <b>${cnt((p) => p.room)}</b>/${n} · 팀 <b>${cnt((p) => p.team)}</b>/${n} · 아침 <b>${cnt((p) => p.menu)}</b>/${n} · 자유시간 <b>${cnt((p) => p.activity)}</b>/${n}(${ACTS.ski} ${ski} · ${ACTS.rest} ${rest})`;
+    const yet = '<span class="yet">아직</span>';
+    const rows = [...people].sort((a, b) => gsort.dir * GSORTS[gsort.key](a, b) || byKo(a.dept, b.dept) || byKo(a.name, b.name)).map((p) => `
+      <tr>
+        <td>${esc(p.dept)}</td>
+        <td>${esc(p.name)}</td>
+        <td>${ROOMS[p.room] ? esc(ROOMS[p.room]) : yet}</td>
+        <td>${p.team ? `<span class="dot team-${p.team}">${TEAMS[p.team]}</span>` : yet}</td>
+        <td>${MENUS[p.menu] ? esc(MENUS[p.menu]) : yet}</td>
+        <td>${ACTS[p.activity] ? esc(ACTS[p.activity]) + (p.activity === 'ski' ? '<span class="nodrink">술 금지</span>' : '') : yet}</td>
+      </tr>`).join('') || `<tr><td colspan="6" class="empty">명단이 비어 있어요.</td></tr>`;
+    const sig = sum + '|' + rows;
+    if (sig !== glanceSig) { // 내용이 같으면 다시 그리지 않음
+      glanceSig = sig;
+      $('#glanceSum').innerHTML = sum;
+      $('#glanceBody').innerHTML = rows;
+    }
+    for (const b of document.querySelectorAll('.glance th button')) {
+      if (b.dataset.gsort === gsort.key) b.parentNode.setAttribute('aria-sort', gsort.dir > 0 ? 'ascending' : 'descending');
+      else b.parentNode.removeAttribute('aria-sort');
+    }
+  }
+  $('.glance thead').addEventListener('click', (e) => {
+    const key = e.target.dataset.gsort;
+    if (!key) return;
+    gsort = { key, dir: gsort.key === key ? -gsort.dir : 1 };
+    renderGlance();
+  });
 
   // ── 명단 관리: 분류 · 찾기 · 정렬 ──
   // 보기 조건은 이 화면에만 있다(DB 는 건드리지 않고, 화면을 새로고침하면 처음으로 돌아감)
