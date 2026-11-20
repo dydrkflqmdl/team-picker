@@ -24,7 +24,7 @@ const TEAM_KEYS = Object.keys(TEAMS);
 const MENUS = { ugeoji: '우거지 해장국', miyeok: '소고기 미역국', hwangtae: '버섯 황태 해장국' };
 const MENU_KEYS = Object.keys(MENUS);
 // 객실 7개(남자 5 + 여자 2). 앞의 영어 이름은 DB에 저장되는 값이고, 첫 글자가 방의 성별(m = 남자 방, f = 여자 방)
-const ROOMS = { m1: '남자 1호', m2: '남자 2호', m3: '남자 3호', m4: '남자 4호', m5: '남자 5호', f1: '여자 1호', f2: '여자 2호' };
+const ROOMS = { m1: '남자 1호실', m2: '남자 2호실', m3: '남자 3호실', m4: '남자 4호실', m5: '남자 5호실', f1: '여자 1호실', f2: '여자 2호실' };
 const ROOM_KEYS = Object.keys(ROOMS);
 const roomGender = (key) => (key[0] === 'm' ? '남' : '여');
 // 저녁 식사 뒤 자유시간에 할 것

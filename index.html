@@ -10,7 +10,7 @@
   <!-- Supabase 연결 파일은 저장소에 같이 둔 것(2.117.3 버전). 받은 파일이 바뀌지 않았는지 integrity 로 확인. 올릴 때는 v 숫자와 integrity 를 같이 바꾼다 -->
   <script src="supabase.js?v=2.117.3" integrity="sha384-BWcjm9OdFth9TbhCxZPdm+gAOUMAzQy9nmTs12ioXdCcbVnJaPMn+fMUoQCLt60R"></script>
   <!-- common.js 를 고치면 v 숫자를 올린다(휴대폰에 남아 있는 예전 common.js 를 새 화면이 쓰지 않게) -->
-  <script src="common.js?v=9"></script>
+  <script src="common.js?v=10"></script>
   <style>
     /* 가로로 돌려도 글자가 멋대로 커지지 않게. 키보드로 옮겨 간 메뉴 카드가 화면 아래에 붙은 단추 줄에 가리지 않게 */
     html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; scroll-padding-bottom: 120px; }
@@ -216,7 +216,6 @@
     .room-stage[data-state="done"] .room-door.r { transform: translateX(100%); }
     .room-stage[data-state="done"] .room-name { opacity: 1; transform: none; transition: opacity .4s .3s, transform .5s .3s cubic-bezier(.2, 1.4, .4, 1); }
     .room-stage.shown .room-door, .room-stage.shown .room-name { transition: none; } /* 이미 방이 있어서 들어오자마자 보여 줄 때는 문이 열리는 모습 없이 */
-    .room-rule { margin: 0 0 12px; text-align: center; font-size: 14px; }
     .room-result { text-align: center; font-size: 17px; margin: 0 0 14px; min-height: 1.5em; }
     .room-result b { font-size: 20px; }
     #roomBtn { margin-bottom: 4px; }
@@ -383,7 +382,6 @@
         <div class="room-door r"></div>
         <div class="room-key" aria-hidden="true">🔑</div>
       </div>
-      <p class="hint room-rule" id="roomRule">남녀 따로, 같은 부서 사람과 되도록 같은 방이 돼요. 한 번 뽑으면 바꿀 수 없어요.</p>
       <p class="room-result" id="roomText" aria-live="polite"></p>
       <button class="primary block" id="roomBtn">🔑 방 뽑기</button>
       <button class="primary block back" id="roomHomeBtn" hidden>메인으로 돌아가기</button>
@@ -709,7 +707,6 @@
     $('#roomReveal').textContent = has ? ROOMS[me.room] : '';
     $('#roomText').innerHTML = has ? `<b>${esc(ROOMS[me.room])}</b>에서 지내요!` : '버튼을 눌러 방을 뽑으세요. 한 번만 뽑을 수 있어요.';
     $('#roomBtn').hidden = has;
-    $('#roomRule').hidden = false;
     $('#roomHomeBtn').hidden = !has;
     if (has && landed && !reduced()) $('#roomText').animate([{ opacity: 0 }, { opacity: 0, offset: 0.7 }, { opacity: 1 }], { duration: 1000 });
   }
