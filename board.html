@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>팀 현황</title>
+  <title>관리자 페이지</title>
   <meta name="robots" content="noindex" />
   <meta name="color-scheme" content="light dark" />
   <link rel="stylesheet" href="style.css?v=5" /><!-- style.css 를 고치면 v 숫자를 올린다 -->
@@ -204,6 +204,7 @@
     }
     /* 프로젝터 보기(?tv=1): 전체 폭 · 큰 글씨 · 큰 인원 숫자. 관리용 칸(.admin-only)은 숨김 */
     body.tv .admin-only { display: none !important; }
+    body:not(.tv) .tv-only { display: none !important; } /* 제목: 평소엔 '관리자 페이지', 프로젝터 보기엔 '팀 현황' */
     body.tv { font-size: 20px; }
     body.tv main { max-width: none; padding: 16px 28px 32px; }
     body.tv h1 { font-size: 34px; }
@@ -258,7 +259,7 @@
 <main>
   <div class="head">
     <div class="head-main">
-      <h1>팀 현황</h1>
+      <h1><span class="admin-only">관리자 페이지</span><span class="tv-only">팀 현황</span></h1>
       <span class="stats" id="stats"></span>
     </div>
     <!-- 마지막 갱신 · 프로젝터 보기 · 이 기기에서 비밀번호 지우기(로그인한 뒤에만 보임) -->
@@ -1618,7 +1619,7 @@ Day 3 · 12/19(토) — 함께 만드는 내년
   function setTv(on) {
     tv = on;
     document.body.classList.toggle('tv', on);
-    $('#tvBtn').textContent = on ? '관리 화면으로' : '프로젝터 보기';
+    $('#tvBtn').textContent = on ? '관리자 페이지로' : '프로젝터 보기';
     try {
       const u = new URL(location.href);
       if (on) u.searchParams.set('tv', '1'); else u.searchParams.delete('tv');
