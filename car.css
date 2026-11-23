@@ -1,0 +1,67 @@
+/* 탑승 차량 뽑기(car.js). index.html 의 단추 #goCar 와 화면 #carCard 용. 색은 style.css 의 변수를 그대로 써서 어두운 화면에서도 맞음 */
+
+/* 메인 단추 안의 작은 차 */
+.mb-car { flex: none; width: 26px; height: 46px; }
+
+/* 차량 화면 */
+#carCard > .card { padding: 14px 10px 16px; }
+#carBtn { margin-bottom: 4px; }
+#carHomeBtn { min-height: 56px; }
+#carCrewCard { margin-top: 16px; }
+.car-stage[hidden] { display: none; }
+.car-stage { margin: 0 0 12px; }
+.car-result { text-align: center; font-size: 17px; margin: 0 0 14px; min-height: 1.5em; }
+.car-result b { font-size: 20px; }
+.car-retry[hidden] { display: none; }
+.car-retry { display: block; margin: 0 auto 14px; padding: 10px 12px; font-size: 14px; }
+
+/* 뽑기 전·뽑는 중: 회색 차(?)와 차 열쇠. 뽑는 중에는 둘 다 흔들림 */
+.car-wait { display: flex; align-items: center; justify-content: center; gap: 18px; height: 190px; border-radius: 18px; background: var(--chip); overflow: hidden; }
+.car-wait .mini { height: 130px; width: auto; }
+.car-key { font-size: 54px; line-height: 1; animation: car-key-bob 1.6s ease-in-out infinite; }
+@keyframes car-key-bob { 50% { transform: translateY(-8px); } }
+@keyframes car-key-shake { 25% { transform: rotate(-20deg); } 75% { transform: rotate(20deg); } }
+@keyframes car-jiggle { 25% { transform: translateX(-3px) rotate(-1.5deg); } 75% { transform: translateX(3px) rotate(1.5deg); } }
+.car-stage[data-state="drawing"] .car-key { animation: car-key-shake .22s linear infinite; }
+.car-stage[data-state="drawing"] .car-wait .mini { animation: car-jiggle .2s linear infinite; }
+
+/* 결과: 차량 이름(크게) + 위에서 본 차. 나타날 때만 살짝 커지며 떠오름 */
+.car-reveal { display: none; text-align: center; }
+.car-stage[data-state="done"] .car-wait { display: none; }
+.car-stage[data-state="done"] .car-reveal { display: block; animation: car-in .6s cubic-bezier(.2, 1.2, .4, 1); }
+.car-stage.shown .car-reveal { animation: none; } /* 이미 차량이 있어서 들어오자마자 보여 줄 때는 연출 없이 */
+@keyframes car-in { from { opacity: 0; transform: translateY(14px) scale(.92); } }
+.car-title { margin: 0 0 6px; padding: 0 8px; font-size: clamp(24px, 7.5vw, 32px); font-weight: 900; line-height: 1.25; overflow-wrap: anywhere; }
+.car-title .car-label { display: block; margin-top: 2px; color: var(--muted); font-size: 16px; font-weight: 700; }
+.car-result-label { display: block; margin-top: 2px; color: var(--muted); font-size: 14px; }
+.car-svg { display: block; width: 100%; max-width: 340px; height: auto; margin: 0 auto; overflow: visible; }
+
+/* 운전자 표시: 메인 단추(문구·"운전"), 이름표의 "운전", 같은 차 사람 목록의 운전자 */
+.mb-carlabel { color: var(--muted); font-size: 14px; font-weight: 700; }
+.mb-driving, .mb-drv, .crew .drv-tag { padding: 0 8px; border-radius: 999px; background: var(--text); color: var(--card); font-size: 12px; font-weight: 800; }
+.mb-drv, .crew .drv-tag { margin-left: 1px; padding: 0 6px; font-size: 11px; vertical-align: 1px; }
+.crew .drv-tag { margin-left: 4px; vertical-align: 2px; }
+.crew li.drv { box-shadow: inset 0 0 0 1.5px var(--line); }
+
+/* 그림의 색. 차 몸통 색은 car.js 가 차량마다 정함 */
+.car-svg .cs-tire { fill: #2b2f37; }
+.car-svg .cs-glass { fill: #bcd9ee; }
+.car-svg .cs-cabin { fill: var(--chip); }
+.car-svg .cs-mirror { fill: #2b2f37; opacity: .55; }
+.car-svg .cs-light { fill: #fde68a; }
+.car-svg .cs-tail { fill: #f87171; }
+.car-svg .cs-wheel { fill: none; stroke: var(--muted); stroke-width: 3; }
+.car-svg .cs-seat { fill: var(--card); stroke: var(--line); stroke-width: 1.5; }
+.car-svg .cs-seat.driver { fill: var(--card); }
+.car-svg .cs-seat.empty { fill: none; stroke: var(--muted); stroke-dasharray: 5 4; }
+.car-svg .cs-seat.me { fill: rgb(79 70 229 / .16); fill: color-mix(in srgb, var(--accent) 16%, var(--card)); stroke: var(--accent); stroke-width: 3; }
+.car-svg .cs-head { fill: var(--line); }
+.car-svg .cs-name { fill: var(--text); font-weight: 700; text-anchor: middle; }
+.car-svg .cs-name.me { font-weight: 900; }
+.car-svg .cs-label { fill: var(--muted); font-size: 15px; font-weight: 800; text-anchor: middle; }
+.car-svg .cs-label.sm { font-size: 11px; font-weight: 700; }
+.car-svg .cs-empty-text { fill: var(--muted); font-size: 12px; font-weight: 500; text-anchor: middle; }
+.car-svg .cs-me-tag { fill: var(--accent); }
+.car-svg .cs-me-text { fill: var(--accent-text); font-size: 10px; font-weight: 800; text-anchor: middle; }
+@media (prefers-color-scheme: dark) { .car-svg .cs-glass { fill: #3d5a70; } .car-svg .cs-tire { fill: #4b5260; } }
+@media (prefers-reduced-motion: reduce) { .car-stage * { animation: none !important; transition: none !important; } }

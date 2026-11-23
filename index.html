@@ -7,6 +7,7 @@
   <meta name="robots" content="noindex" />
   <meta name="color-scheme" content="light dark" /><!-- 삼성 인터넷 등의 강제 다크 모드가 이 화면의 어두운 색을 한 번 더 바꾸지 않게 -->
   <link rel="stylesheet" href="style.css?v=5" /><!-- style.css 를 고치면 v 숫자를 올린다 -->
+  <link rel="stylesheet" href="car.css?v=3" /><!-- 탑승 차량 뽑기. car.css·car.js 를 고치면 v 숫자를 올린다 -->
   <!-- Supabase 연결 파일은 저장소에 같이 둔 것(2.117.3 버전). 받은 파일이 바뀌지 않았는지 integrity 로 확인. 올릴 때는 v 숫자와 integrity 를 같이 바꾼다 -->
   <script src="supabase.js?v=2.117.3" integrity="sha384-BWcjm9OdFth9TbhCxZPdm+gAOUMAzQy9nmTs12ioXdCcbVnJaPMn+fMUoQCLt60R"></script>
   <!-- common.js 를 고치면 v 숫자를 올린다(휴대폰에 남아 있는 예전 common.js 를 새 화면이 쓰지 않게) -->
@@ -116,7 +117,7 @@
     .nag b { display: block; margin-bottom: 4px; font-size: 20px; }
     @keyframes nag-in { from { opacity: 0; transform: translate(-50%, -50%) scale(.8); } }
 
-    /* 메인 화면: 맨 위에 "남은 것 N개"(+ 보이는 것만큼의 칸 막대), 그 아래 큰 단추(일정표·아침 메뉴·점심·자유시간 + 방·팀은 HIDDEN_TASKS 에서 빼면 다시 보임).
+    /* 메인 화면: 맨 위에 "남은 것 N개"(+ 보이는 것만큼의 칸 막대), 그 아래 큰 단추(일정표·탑승 차량·아침 메뉴·점심·자유시간 + 방·팀은 HIDDEN_TASKS 에서 빼면 다시 보임).
        한 단추 = 제목 + 결과(끝낸 것: 고른 것을 크게, 방·팀은 같은 방·우리 팀 사람 이름표까지) + 오른쪽 표시.
        아직 안 한 것(.is-todo) = 연한 보라로 채운 카드 + "👉 아직 안 …" + 보라 › (살짝 들썩임) — 한눈에 "해야 할 것".
        끝낸 것(.is-done) = 흰 카드 그대로 차분하게 + 초록 ✓. 일정표 단추는 둘 다 아님(회색 ›). 단추 높이 64px 이상 */
@@ -206,6 +207,20 @@
     .acts button:disabled { opacity: .6; }
     .acts button[aria-pressed="true"]:disabled { opacity: 1; } /* 마감 뒤에도 고른 것은 또렷하게 */
     .act-note { margin: 10px 0 0; }
+    #lunchNote { margin-bottom: 35px; } /* 점심은 카드가 없어서, 자유시간 화면(카드 안쪽 18 + 테두리 1 + 카드 아래 16 = 35px)과 같은 글~뒤로 가기 간격을 직접 줌 */
+    /* 점심 고르기: 조식 카드(.dish-box)와 같은 모양의 단추. 사진은 메뉴마다 한 장(4:3, 카드 폭을 채움). 조식의 .dish-pics 는 건드리지 않고 점심 전용 .lunch-pic 을 따로 씀 */
+    .lunch-dishes { display: block; margin: 0 0 12px; }
+    .lunch-dishes button { display: block; width: 100%; margin: 0 0 12px; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+    .lunch-dishes button:last-child { margin-bottom: 0; }
+    .lunch-pic { display: block; position: relative; aspect-ratio: 4 / 3; background: #1e2326; } /* 사진이 안 떠도 어두운 자리가 그대로 남음 */
+    @supports not (aspect-ratio: 1) { .lunch-pic { height: 0; padding-top: 75%; } } /* aspect-ratio 를 모르는 예전 브라우저용(3/4) */
+    .lunch-pic img { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; }
+    .lunch-dishes button[aria-pressed="true"] .dish-box { border-color: var(--accent); box-shadow: 0 0 0 3px rgb(99 102 241 / .3); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent); }
+    .lunch-dishes button[aria-pressed="true"] .dish-name::before { border-color: var(--accent); background: radial-gradient(var(--accent) 45%, transparent 50%); }
+    .lunch-dishes button:focus-visible { outline: none; }
+    .lunch-dishes button:focus-visible .dish-box { outline: 2px solid var(--accent); outline-offset: 3px; }
+    .lunch-dishes button:disabled { opacity: .6; cursor: default; }
+    .lunch-dishes button[aria-pressed="true"]:disabled { opacity: 1; } /* 마감 뒤에도 고른 것은 또렷하게 */
     .act-state { margin: 0 0 12px; font-size: 15px; }
     .act-state b { font-size: 17px; }
     /* 방 뽑기: 문 두 짝이 닫혀 있고 가운데 열쇠. 뽑는 중에는 열쇠가 흔들리고, 답이 오면 문이 양옆으로 열리며 방 이름이 나타남 */
@@ -277,6 +292,10 @@
     <h1 tabindex="-1">지낼 방 뽑기</h1>
     <p class="sub">12월 17일(목) ~ 19일(토) · 2박 3일</p>
   </header>
+  <header id="headCar" class="with-who" hidden>
+    <h1 tabindex="-1">탑승 차량 뽑기</h1>
+    <p class="sub" id="carSub"></p>
+  </header>
   <header id="headAct" class="with-who" hidden>
     <h1 tabindex="-1">18일 자유시간</h1>
     <p class="sub">12/18(금) 저녁 식사 뒤 자유시간 · 20:00</p>
@@ -317,6 +336,7 @@
     </div>
     <p class="hint home-lead" id="homeLead">하고 싶은 것부터 아무 순서로 눌러 주세요.</p>
     <button class="mbtn" id="goPlan"><span class="mb-main"><span class="mb-title">📅 17~19일 일정 한눈에 보기</span><span class="mb-state">12/17(목) ~ 19일(토) 시간표</span></span><span class="mb-check" aria-hidden="true"></span></button>
+    <button class="mbtn" id="goCar"><span class="mb-main"><span class="mb-title">🚗 타고 갈 차량 뽑기</span><span class="sr-only" id="srCar"></span><span class="mb-state" id="stCar"></span><span id="pvCar"></span></span><span class="mb-check" aria-hidden="true"></span></button>
     <button class="mbtn" id="goRoom"><span class="mb-main"><span class="mb-title">🛏️ 17~19일 지낼 방 뽑기</span><span class="sr-only" id="srRoom"></span><span class="mb-state" id="stRoom"></span><span id="pvRoom"></span></span><span class="mb-check" aria-hidden="true"></span></button>
     <button class="mbtn" id="goTeam"><span class="mb-main"><span class="mb-title">🎲 17일 내 팀 뽑기</span><span class="sr-only" id="srTeam"></span><span class="mb-state" id="stTeam"></span><span id="pvTeam"></span></span><span class="mb-check" aria-hidden="true"></span></button>
     <button class="mbtn" id="goMenu"><span class="mb-main"><span class="mb-title">🍳 18일 아침 메뉴 고르기</span><span class="sr-only" id="srMenu"></span><span class="mb-state" id="stMenu"></span><span id="pvMenu"></span></span><span class="mb-check" aria-hidden="true"></span></button>
@@ -415,6 +435,31 @@
     </section>
   </section>
 
+  <!-- 탑승 차량 뽑기: 메인의 단추(일정 보기 바로 다음). 기능은 car.js. 뽑은 뒤에도 눌러서 지금 그림(같은 차 사람)을 볼 수 있음 -->
+  <section id="carCard" hidden>
+    <div class="me">
+      <button class="link back">메인으로 돌아가기</button>
+    </div>
+    <div class="card">
+      <div class="car-stage" id="carStage" data-state="idle">
+        <div class="car-wait" aria-hidden="true">
+          <svg class="mini" viewBox="0 0 40 72" focusable="false"><rect x="2" y="12" width="6" height="14" rx="2.5" fill="#2b2f37"/><rect x="32" y="12" width="6" height="14" rx="2.5" fill="#2b2f37"/><rect x="2" y="46" width="6" height="14" rx="2.5" fill="#2b2f37"/><rect x="32" y="46" width="6" height="14" rx="2.5" fill="#2b2f37"/><rect x="6" y="2" width="28" height="68" rx="13" fill="#9aa1ab"/><rect x="9" y="4" width="7" height="3" rx="1.5" fill="#fde68a"/><rect x="24" y="4" width="7" height="3" rx="1.5" fill="#fde68a"/><rect x="9" y="65" width="7" height="3" rx="1.5" fill="#f87171"/><rect x="24" y="65" width="7" height="3" rx="1.5" fill="#f87171"/><rect x="10" y="16" width="20" height="9" rx="3" fill="#cfe6f7"/><rect x="10" y="48" width="20" height="7" rx="3" fill="#cfe6f7"/><rect x="10" y="28" width="20" height="17" rx="4" fill="#fff" fill-opacity=".3"/><text x="20" y="40" text-anchor="middle" font-size="14" font-weight="800" fill="#fff">?</text></svg>
+          <span class="car-key">🔑</span>
+        </div>
+        <div class="car-reveal" id="carReveal"></div>
+      </div>
+      <p class="car-result" id="carText" aria-live="polite"></p>
+      <button class="link car-retry" id="carRetry" hidden>다시 받기</button>
+      <button class="primary block" id="carBtn" hidden>🔑 뽑아봐!</button>
+      <button class="primary block back" id="carHomeBtn" hidden>메인으로 돌아가기</button>
+    </div>
+    <section class="card" id="carCrewCard" hidden>
+      <h2><span>같은 차 사람들</span> <small id="carCount"></small></h2>
+      <ul class="crew" id="carList"></ul>
+      <p class="hint crew-note" id="carNote">아직 안 뽑은 사람은 뽑으면 나타나요.</p>
+    </section>
+  </section>
+
   <!-- 18일 자유시간: 메인의 단추. 스키를 고를 때는 "저녁 술 금지" 약속을 받고, 마감 전까지 바꿀 수 있음(마감 뒤에는 단추가 잠김) -->
   <section id="actCard" hidden>
     <div class="me">
@@ -444,21 +489,21 @@
     <div class="me">
       <button class="link back">메인으로 돌아가기</button>
     </div>
-    <div class="card">
-      <p class="act-state" id="lunchState" aria-live="polite"></p>
-      <div class="acts" id="lunchChoices" role="group" aria-label="18일 점심 메뉴 (하나만 고를 수 있어요)">
-        <button type="button" data-lunch="plain" aria-pressed="false">🍲 일반 설렁탕</button>
-        <button type="button" data-lunch="spicy" aria-pressed="false">🌶️ 얼큰 설렁탕</button>
-      </div>
+    <p class="act-state" id="lunchState" aria-live="polite"></p>
+    <div id="lunchPick"><!-- 조식(#menuPick)처럼 카드 밖 전체 폭 -->
+      <div class="lunch-dishes" id="lunchChoices" role="group" aria-label="18일 점심 메뉴 (하나만 고를 수 있어요)"></div><!-- 단추(사진 + 이름)는 이 화면이 처음 필요할 때 그림(showLunch) -->
+      <p class="hint fine">상기 이미지는 실제와 다를 수 있습니다.</p>
       <p class="hint act-note" id="lunchNote"></p>
     </div>
     <button class="block back">메인으로 돌아가기</button>
   </section>
 </main>
 
+<script src="car.js?v=4"></script><!-- 탑승 차량 뽑기(아래 스크립트가 쓰는 Car). 이 파일은 아래 스크립트보다 먼저 -->
+<script>if (!window.Car) { window.Car = { home() { const b = document.querySelector('#goCar'); if (b) b.hidden = true; }, load() {}, ensure() {}, reset() {} }; }</script><!-- car.js 를 못 받았으면 차량 단추만 숨기고(막대·남은 것에서도 빠짐) 나머지는 그대로 -->
 <script>
   const ME_KEY = 'team-picker-me';
-  // 메인에서 숨기는 것('Room' = 방 뽑기, 'Team' = 팀 뽑기). 다시 보이게 하려면 여기서 빼면 됨(화면·DB 함수는 그대로 있음).
+  // 메인에서 숨기는 것('Room' = 방 뽑기, 'Team' = 팀 뽑기, 'Car' = 탑승 차량 뽑기도 넣으면 숨김). 다시 보이게 하려면 여기서 빼면 됨(화면·DB 함수는 그대로 있음).
   // 숨기는 동안은 메인에 그리지 않고, '남은 것'·진행 막대에서도 빼고, 같은 방·우리 팀 사람을 받으러 가지도 않음
   const HIDDEN_TASKS = new Set(['Room', 'Team']);
   let me = null; // { dept, name, team, menu }
@@ -483,9 +528,9 @@
   }
   const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-  // 화면 바꾸기: 'login'(로그인) → 'home'(메인). 메인의 단추가 'plan'(일정표) · 'lunch'(18일 점심) · 'room'(방 뽑기) · 'team'(팀 뽑기) · 'menu'(아침 메뉴) · 'act'(자유시간)
-  const HEADS = { login: 'headLogin', home: 'headHome', plan: 'headPlan', lunch: 'headLunch', menu: 'headMenu', team: 'headPick', room: 'headRoom', act: 'headAct' };
-  const CARDS = { login: 'loginCard', home: 'homeCard', plan: 'planCard', lunch: 'lunchCard', menu: 'menuCard', team: 'meCard', room: 'roomCard', act: 'actCard' };
+  // 화면 바꾸기: 'login'(로그인) → 'home'(메인). 메인의 단추가 'plan'(일정표) · 'car'(탑승 차량, car.js) · 'lunch'(18일 점심) · 'room'(방 뽑기) · 'team'(팀 뽑기) · 'menu'(아침 메뉴) · 'act'(자유시간)
+  const HEADS = { login: 'headLogin', home: 'headHome', plan: 'headPlan', lunch: 'headLunch', menu: 'headMenu', team: 'headPick', room: 'headRoom', act: 'headAct', car: 'headCar' };
+  const CARDS = { login: 'loginCard', home: 'homeCard', plan: 'planCard', lunch: 'lunchCard', menu: 'menuCard', team: 'meCard', room: 'roomCard', act: 'actCard', car: 'carCard' };
   let shown = null; // 지금 보이는 화면
   function screen(name) {
     for (const k in CARDS) {
@@ -737,6 +782,15 @@
   }
   function showLunch() {
     who();
+    if (!$('#lunchChoices').children.length) { // 점심 사진은 이 화면이 처음 필요할 때 받음(사진이 늦거나 안 떠도 이름은 보임)
+      $('#lunchChoices').innerHTML = LUNCH_KEYS.map((key) => `
+        <button type="button" data-lunch="${key}" aria-pressed="false">
+          <span class="dish-box"><!-- 사진은 장식(alt 없음). 단추 이름은 아래 메뉴 이름 -->
+            <span class="lunch-pic" aria-hidden="true"><img src="lunch_${key}.jpg" alt="" /></span>
+            <span class="dish-name">${LUNCHES[key]}</span>
+          </span>
+        </button>`).join('');
+    }
     paintLunch();
     screen('lunch');
   }
@@ -763,11 +817,13 @@
       if (me === mine) paintLunch(); // 단추를 다시 켠 뒤, 마감이면 다시 잠금
     }
   }
-  all('#lunchCard [data-lunch]').forEach((el) => el.addEventListener('click', guard(async () => {
-    if (busy || !me || me.lunch === el.dataset.lunch) return;
+  const onLunchClick = guard(async (e) => {
+    const el = e.target.closest('[data-lunch]');
+    if (!el || busy || !me || me.lunch === el.dataset.lunch) return;
     if (choicesClosed()) return paintLunch(); // 시계가 마감을 넘긴 직후: 잠긴 모습으로
     await saveLunch(el.dataset.lunch);
-  })));
+  });
+  $('#lunchChoices').addEventListener('click', onLunchClick); // 단추는 showLunch 가 나중에 그리므로 위임
 
   // ── 17~19일 지낼 방 뽑기 ──
   // 같은 방 사람들. 방이 있는 사람에게만 받아 옴(우리 팀 사람들과 같은 방식: 못 받으면 받아 둔 것을 그대로, 방이 바뀌면 다시 받음)
@@ -877,11 +933,14 @@
     Menu: ['🍳 18일 아침 메뉴 고르기', '🍳 18일 아침 메뉴'],
     Act: ['⛷️ 18일 자유시간 뭐 할지 고르기', '⛷️ 18일 자유시간'],
   };
-  const HOME_TASKS = ['Room', 'Team', 'Menu', 'Lunch', 'Act']; // 메인 단추 순서(막대 칸도 이 순서에서 보이는 것만)
+  const HOME_TASKS = ['Car', 'Room', 'Team', 'Menu', 'Lunch', 'Act']; // 메인 단추 순서(막대 칸도 이 순서에서 보이는 것만)
   function paintHome() {
     const left = [];
     const missed = []; // 마감까지 못 고른 것(진행자에게 말해야 함)
     const closed = choicesClosed();
+    // 탑승 차량 단추(car.js). 남은 것 목록에는 맨 앞에. 차량은 '뽑기'라 마감이 없음(방·팀처럼).
+    // car.js 쪽 오류가 메인 전체를 막지 않게 감싸고, 실패하면 차량 단추만 숨김(막대·남은 것에서도 빠짐)
+    try { Car.home(left); } catch (e) { $('#goCar').hidden = true; }
     const set = (id, label, done, html, more = '') => {
       const btn = $(`#go${id}`);
       btn.hidden = HIDDEN_TASKS.has(id); // 숨긴 것은 그리지도, 남은 것에 세지도 않음
@@ -908,13 +967,14 @@
     set('Team', '팀 뽑기', hasTeam(), hasTeam() ? `<span class="mb-team team-${me.team}">${esc(TEAMS[me.team])} 팀</span>` : todo('뽑았어요'),
       peopleHtml(`우리 팀 · 지금까지 뽑은 ${team.length}명`, team, '아직 안 뽑은 사람은 뽑으면 나타나요.'));
     set('Menu', '아침 메뉴', hasMenu(), hasMenu() ? `<img class="mb-thumb" src="menu_${me.menu}_art.jpg" alt="" width="46" height="46" /><b class="mb-big">${esc(MENUS[me.menu])}</b>${editPill}` : todo('골랐어요', true));
-    set('Lunch', '점심 메뉴', hasLunch(), hasLunch() ? `<b class="mb-big">${esc(LUNCHES[me.lunch])}</b>${editPill}` : todo('골랐어요', true));
+    set('Lunch', '점심 메뉴', hasLunch(), hasLunch() ? `<img class="mb-thumb" src="lunch_${me.lunch}.jpg" alt="" width="46" height="46" /><b class="mb-big">${esc(LUNCHES[me.lunch])}</b>${editPill}` : todo('골랐어요', true));
     set('Act', '자유시간', hasAct(), !hasAct() ? todo('골랐어요', true)
       : (me.activity === 'ski' ? '<b class="mb-big">스키</b><span class="sr-only"> · </span><span class="mb-warn">🙅 저녁 술 금지!</span>' : `<b class="mb-big">${esc(ACTS[me.activity])}</b>`)
         + editPill);
     fill($('#homeLeft'), left.length ? `남은 것 <b>${left.length}개</b>: ${left.join(' · ')}`
       : missed.length ? `마감돼서 못 고른 것 <b>${missed.length}개</b>: ${missed.join(' · ')}<br />진행자에게 말해 주세요` : '다 끝났어요! 🎉 즐거운 워크숍 보내요');
-    fill($('#homeBar'), HOME_TASKS.filter((k) => !HIDDEN_TASKS.has(k)).map((k) => `<i${$(`#go${k}`).classList.contains('is-done') ? ' class="on"' : ''}></i>`).join(''));
+    // 막대 칸: 숨긴 것(HIDDEN_TASKS)과, 화면에서 숨겨진 단추(car.js 를 못 받은 차량 단추 등)는 빼고
+    fill($('#homeBar'), HOME_TASKS.filter((k) => !HIDDEN_TASKS.has(k) && !$(`#go${k}`).hidden).map((k) => `<i${$(`#go${k}`).classList.contains('is-done') ? ' class="on"' : ''}></i>`).join(''));
     $('#homeProg').classList.toggle('all-done', !left.length && !missed.length);
     $('#homeLead').hidden = !left.length;
   }
@@ -927,6 +987,7 @@
     // 같은 방·우리 팀 사람들: 아직 안 받았으면 받음(받아 둔 것은 30초 새로고침·앱 복귀 때 새로 받음)
     if (!HIDDEN_TASKS.has('Room') && (!roomMates || roomMates.key !== roomKey())) loadRoom();
     if (!HIDDEN_TASKS.has('Team') && (!crew || crew.key !== crewKey())) loadCrew();
+    if (!HIDDEN_TASKS.has('Car')) Car.ensure(); // 차량 상태도(못 받아도 다른 단추에는 영향 없음)
   }
   // 휴대폰의 뒤로 가기(안드로이드 단추·아이폰 쓸어 넘기기·카톡 뒤로)가 사이트 밖이 아니라 메인으로 오게:
   // 메인에서 다른 화면으로 들어갈 때 방문 기록을 하나 남기고, 그 기록에서 뒤로 가면(popstate) 메인을 보여줌
@@ -1144,6 +1205,7 @@
     planError = '';
     crew = null;
     roomMates = null;
+    Car.reset();
     planOpen.clear();
     store.set(ME_KEY, null);
     still();
@@ -1202,6 +1264,7 @@
       if (shown === 'home' || shown === 'plan') loadPlan();
       if (shown === 'team' || (shown === 'home' && !HIDDEN_TASKS.has('Team'))) loadCrew(); // 숨긴 동안 메인에서는 받지 않음. 그사이 팀·방에 들어온 사람도 보이게(메인의 이름표 포함). 팀·방이 없으면 부르지 않음
       if (shown === 'room' || (shown === 'home' && !HIDDEN_TASKS.has('Room'))) loadRoom();
+      if (shown === 'car' || (shown === 'home' && !HIDDEN_TASKS.has('Car'))) Car.load(); // 같은 차에 새로 탄 사람이 보이게
     } finally {
       refreshing = false;
     }
@@ -1210,9 +1273,9 @@
   document.addEventListener('visibilitychange', () => { if (!document.hidden) { wake(); syncClosed(); refresh(); } });
   addEventListener('pageshow', (e) => { if (e.persisted) { wake(); syncClosed(); refresh(); } });
   addEventListener('online', refresh);
-  // 메인·일정표·방 뽑기·자유시간·점심 화면을 보고 있는 동안 30초마다. 진행자가 "다시 뽑기"로 내 팀·조식·방을 지웠거나 자유시간을 바꾼 것이 저절로 보임
+  // 메인·일정표·방 뽑기·자유시간·점심·탑승 차량 화면을 보고 있는 동안 30초마다. 진행자가 "다시 뽑기"로 내 팀·조식·방을 지웠거나 자유시간을 바꾼 것이 저절로 보임
   // (조식 고르기 화면은 고르는 중이라 제외 — 다른 앱에 다녀올 때만 확인. 팀 뽑기 화면은 팀을 뽑은 뒤에만: 뽑는 중(busy)에는 refresh 가 건너뜀)
-  setInterval(() => { if (shown === 'home' || shown === 'plan' || shown === 'room' || shown === 'act' || shown === 'lunch' || (shown === 'team' && me && me.team)) refresh(); }, 30000);
+  setInterval(() => { if (shown === 'home' || shown === 'plan' || shown === 'room' || shown === 'act' || shown === 'lunch' || shown === 'car' || (shown === 'team' && me && me.team)) refresh(); }, 30000);
 
   $('#loginForm').addEventListener('submit', guard(async (e) => {
     e.preventDefault();
