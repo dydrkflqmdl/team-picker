@@ -1029,23 +1029,38 @@ begin
     order by t.o;
 end $$;
 
--- 차량 목록 + 지금 정원(자동이면 그때의 명단으로 계산). driver_ok = 운전자가 명단에 실제로 있음.
+-- 정원 계산(한곳): 주어진 차량 목록(p_cars, car_check 를 통과한 모양)과 지금 명단으로 차량마다 정원을 계산한다.
+--   driver_ok = 운전자가 명단에 실제로 있음.
 --   N = 명단 인원 - 명단에 있는 운전자 수, F = 적은 seats 합, A = 자동 차량 수 → 자동 정원 = ceil(max(N - F, 0) / A)
+--   뽑기·옮기기(car_caps())와 차량 목록 저장 전 검사(admin_set_cars)가 모두 이 계산을 쓴다.
+create or replace function public.car_caps_of(p_cars jsonb)
+returns table (ord int, id text, name text, label text, seats int, auto boolean, driver bigint, driver_ok boolean)
+language sql stable set search_path = public as $$
+  with l as materialized (
+    select t.o::int as ord, t.e->>'id' as id, btrim(t.e->>'name') as name, coalesce(btrim(t.e->>'label'), '') as label,
+           (t.e->>'seats')::int as seats, (t.e->>'driver')::bigint as driver
+    from jsonb_array_elements(p_cars) with ordinality as t(e, o)),
+  d as (select l.ord as o, (l.driver is not null and exists (select 1 from people p where p.id = l.driver)) as ok from l),
+  k as (select ((select count(*) from people) - (select count(*) from d where d.ok))::int as n,
+               coalesce((select sum(l.seats) from l where l.seats is not null), 0)::int as f,
+               (select count(*) from l where l.seats is null)::int as a)
+  select l.ord, l.id, l.name, l.label,
+         coalesce(l.seats, ceil(greatest(k.n - k.f, 0)::numeric / greatest(k.a, 1))::int),
+         l.seats is null, l.driver, d.ok
+  from l join d on d.o = l.ord cross join k
+  order by l.ord
+$$;
+
+-- 저장된 차량 목록(config 'cars', car_list() 로 검사) + 지금 정원. 계산은 car_caps_of 한곳에서
 create or replace function public.car_caps()
 returns table (ord int, id text, name text, label text, seats int, auto boolean, driver bigint, driver_ok boolean)
 language plpgsql stable set search_path = public as $$
 begin
   return query
-    with l as materialized (select * from car_list()),
-    d as (select l.ord as o, (l.driver is not null and exists (select 1 from people p where p.id = l.driver)) as ok from l),
-    k as (select ((select count(*) from people) - (select count(*) from d where d.ok))::int as n,
-                 coalesce((select sum(l.seats) from l where l.seats is not null), 0)::int as f,
-                 (select count(*) from l where l.seats is null)::int as a)
-    select l.ord, l.id, l.name, l.label,
-           coalesce(l.seats, ceil(greatest(k.n - k.f, 0)::numeric / greatest(k.a, 1))::int),
-           l.seats is null, l.driver, d.ok
-    from l join d on d.o = l.ord cross join k
-    order by l.ord;
+    select c.* from car_caps_of((
+      select coalesce(jsonb_agg(jsonb_build_object('id', l.id, 'name', l.name, 'label', l.label, 'seats', l.seats, 'driver', l.driver) order by l.ord), '[]'::jsonb)
+      from car_list() l)) c
+    order by c.ord;
 end $$;
 
 -- ── 참가자용 ─────────────────────────────────────────────
@@ -1053,6 +1068,11 @@ end $$;
 -- 운전자면 뽑지 않고 운전하는 차량을, 이미 차량이 있으면 그 차량을 그대로 돌려준다(새로 뽑지 않음).
 -- 빈자리가 남은 차량들 가운데 남은 자리 수에 비례해 무작위로 고른다(빈자리 하나하나가 같은 확률).
 -- 성별·나이·직급·부서는 보지 않는다.
+-- 마감(choices_closed() — 점심·조식·자유시간과 같은 11월 25일(수) 15시, 한국 시간) 뒤에는 아직 차량이 없는 참가자를 거절한다.
+--   오류는 기존 고르기와 같은 raise exception(P0001), 문구는 "탑승 차량 뽑기는 11월 25일(수) 15시에 마감됐어요. …"(화면은 common.js 의 CHOICE_CLOSED_ERR 로 알아봄).
+--   이미 뽑은 사람·운전자는 마감 뒤에도 자기 차량을 돌려받는다.
+--   car_state 와 진행자 함수(admin_set_car·admin_clear_cars·admin_set_cars)는 마감과 상관없이 된다.
+--   마감 직전에 눌러 차례를 기다린 사람은 받아들여진다(누른 시각 기준 — choices_closed() 가 now(), 즉 요청이 시작된 시각을 보므로. choose_lunch 등과 같음).
 create or replace function public.pick_car(p_dept text, p_name text) returns text
 language plpgsql security definer set search_path = public as $$
 declare
@@ -1081,6 +1101,12 @@ begin
   end if;
   if me.car is not null then
     return me.car;
+  end if;
+  -- 마감(choices_closed(), 점심·조식·자유시간과 같은 시각) 뒤에는 아직 차량이 없는 사람을 거절.
+  -- choices_closed() 는 now()(이 요청이 시작된 시각) 기준이라 차례를 기다린 뒤에 다시 봐도 값이 같으므로 여기서 한 번만 본다.
+  -- 오류 코드는 기존 고르기와 같은 P0001(raise exception). 문구 "…뽑기는 …에 마감됐어요" 는 화면이 마감 거절로 알아봄(common.js 의 CHOICE_CLOSED_ERR)
+  if choices_closed() then
+    raise exception '탑승 차량 뽑기는 11월 25일(수) 15시에 마감됐어요. 차량은 진행자에게 말해 주세요.';
   end if;
 
   -- 차례 기다리기(pick_car·진행자 차량 바꾸기끼리만). 앞사람이 커밋한 뒤에 차례가 오므로 아래에서 새로 읽으면 앞사람이 탄 자리가 보인다.
@@ -1231,6 +1257,9 @@ end $$;
 -- 검사: 1~20대, id 는 영문 소문자·숫자·_·- 1~20자로 겹치지 않음, 이름 1~30자로 겹치지 않음, 문구 0~30자,
 --   정원은 없거나 1~99 정수, 운전자는 명단에 있는 사람으로 차량끼리 겹치지 않고 어느 차량의 손님도 아님.
 -- 탄 사람이 있는 차량을 빼거나, 정원을 적었는데 지금 탄 인원보다 작으면 거절한다(먼저 사람을 옮기거나 비움).
+-- 자동 정원도 새 목록으로 다시 계산해(car_caps_of — 뽑기와 같은 계산), 저장 때문에 정원이 탄 인원보다 작아지는 차량이 있으면
+--   어느 차량이 몇 명 넘는지 모두 알려 주고 거절한다(예: 운전자를 나중에 지정·다른 차량에 숫자 정원·차량 더하기로 자동 정원이 줄어듦).
+--   이미 넘어 있던 차량(명단에서 사람이 지워진 경우 등)은 이번 저장으로 정원이 더 줄지 않으면 막지 않는다(문구만 고치는 저장 등).
 -- 이름·문구 앞뒤 공백은 지우고 id·name·label·seats·driver 만 남겨 저장한다. 고치기 전 목록은 people_log 에 op = 'CARS' 로 남긴다.
 create or replace function public.admin_set_cars(p_code text, p_cars jsonb) returns void
 language plpgsql security definer set search_path = public as $$
@@ -1239,6 +1268,7 @@ declare
   v_old   text;
   v_oldj  jsonb;
   v_new   text;
+  v_oldcap jsonb;   -- 지금 목록의 차량별 정원 {id: 정원}
   r       record;
   pp      people;
 begin
@@ -1292,6 +1322,20 @@ begin
         coalesce((select btrim(x->>'name') from jsonb_array_elements(p_cars) x where x->>'id' = pp.car limit 1), pp.car);
     end if;
   end loop;
+  -- 새 목록으로 계산한 정원이 탄 인원보다 작아지는 차량(지금 정원보다 줄어든 경우만). 예전 목록이 깨져 있으면 예전 정원은 없음으로 봄
+  begin
+    select coalesce(jsonb_object_agg(c.id, c.seats), '{}'::jsonb) into v_oldcap from car_caps() c;
+  exception when others then
+    v_oldcap := '{}'::jsonb;
+  end;
+  select string_agg(format('"%s" 은(는) 정원 %s명인데 %s명이 타 있어요(%s명 넘어요)', c.name, c.seats, n.cnt, n.cnt - c.seats), ', ' order by c.ord)
+  into msg
+  from car_caps_of(p_cars) c
+  join (select p.car, count(*)::int as cnt from people p where p.car is not null group by p.car) n on n.car = c.id
+  where n.cnt > c.seats and (v_oldcap->>c.id is null or c.seats < (v_oldcap->>c.id)::int);
+  if msg is not null then
+    raise exception '이대로 저장하면 정원보다 많이 탄 차량이 생겨요: %. 먼저 직접 옮기기로 그 차량의 사람을 옮기거나 비워 주세요.', msg;
+  end if;
   select jsonb_agg(
            jsonb_build_object('id', t.e->>'id', 'name', btrim(t.e->>'name'), 'label', coalesce(btrim(t.e->>'label'), ''))
            || case when jsonb_typeof(t.e->'seats') = 'number' then jsonb_build_object('seats', (t.e->>'seats')::int) else '{}'::jsonb end
@@ -1308,8 +1352,8 @@ begin
   end if;
 end $$;
 
--- 차량 뽑기 실행 권한(이 묶음의 함수만). 안쪽 함수(car_check·car_list·car_caps)는 아무도 직접 못 부른다.
-revoke all on function public.car_check(jsonb), public.car_list(), public.car_caps() from public, anon, authenticated;
+-- 차량 뽑기 실행 권한(이 묶음의 함수만). 안쪽 함수(car_check·car_list·car_caps·car_caps_of)는 아무도 직접 못 부른다.
+revoke all on function public.car_check(jsonb), public.car_list(), public.car_caps(), public.car_caps_of(jsonb) from public, anon, authenticated;
 revoke all on function
   public.pick_car(text, text), public.car_state(text, text),
   public.board_cars(text), public.admin_set_car(text, bigint, text), public.admin_clear_cars(text), public.admin_set_cars(text, jsonb)
