@@ -38,6 +38,10 @@
       select.car-sel { font-size: 16px; padding: 8px 10px; min-height: 40px; }
       .car-row input, #carCopyBox { font-size: 16px; }
       .cars .room ol li { align-items: center; }
+      /* 차량 목록 고치기: 칸이 여러 줄로 접히므로 차량마다 구분선·여백을 두어 어느 칸이 어느 차량인지 보이게 */
+      .car-row { margin: 0; padding: 12px 0; border-bottom: 1px solid var(--line); }
+      .car-row:first-child { padding-top: 0; }
+      .car-row input.car-name, .car-row input.car-label { flex-basis: 100%; max-width: none; }
     }`;
   document.head.appendChild(css);
 
@@ -52,7 +56,7 @@
   const say = (text, bad) => { msgEl.textContent = text || ''; msgEl.classList.toggle('err', !!bad); };
   const person = (p) => `${esc(p.name)} <span class="hint">${p.title ? esc(p.title) + ' · ' : ''}${esc(p.dept)}</span>`;
 
-  // 보이는 차량 이름: "1호차 · 가온 이사님 차량"(문구가 없으면 이름만)
+  // 보이는 차량 이름: "1호차 · 가온님 차량"(문구가 없으면 이름만)
   const fullName = (c) => (c.label ? `${c.name} · ${c.label}` : c.name);
   // 운전자: 없으면 null, 명단에 있으면 그 사람, 명단에서 지워졌으면 { missing: true, id }
   const driverOf = (c) => (c.driver == null ? null : data.people.find((p) => p.id === c.driver) || { missing: true, id: c.driver });
@@ -246,6 +250,14 @@
   rowsEl.addEventListener('click', (e) => { if (e.target.matches('.car-del')) e.target.closest('.car-row').remove(); });
   const saveBtn = $('#carSave');
   saveBtn.addEventListener('click', async () => {
+    // 정원 칸에 숫자가 아닌 글자(예: "4명")를 넣으면 브라우저가 값을 빈칸으로 넘겨 조용히 '자동'이 되므로, 저장을 막고 알림
+    const bad = [...rowsEl.querySelectorAll('.car-seats')].find((el) => el.validity && el.validity.badInput);
+    if (bad) {
+      const name = bad.closest('.car-row').querySelector('.car-name').value.trim();
+      say(`${name ? `"${name}" 의 ` : ''}정원에는 숫자만 적어 주세요(예: 4). 자동으로 두려면 칸을 비워 주세요.`, true);
+      bad.focus();
+      return;
+    }
     // 정원 칸이 비면 seats 를 빼서 자동(반씩), 운전자가 '없음'이면 driver 를 뺌
     const cars = [...rowsEl.querySelectorAll('.car-row')].map((r) => {
       const seats = r.querySelector('.car-seats').value.trim(), drv = r.querySelector('.car-driver').value;

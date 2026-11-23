@@ -11,7 +11,7 @@
   // 좌석 그림 치수(viewBox 320 폭 기준)
   const W = 320, BODY_X = 20, BODY_W = 280, CAB_X = 36, CAB_W = 248;
   const SEAT_W = 80, SEAT_H = 56, GAP_X = 4, GAP_Y = 8, PER_ROW = 3, FRONT_Y = 112;
-  const DRV_X = 54, DRV_W = 50; // 운전석에서 이름 가운데(왼쪽에서), 이름이 쓸 폭(핸들 오른쪽)
+  const DRV_X = 52, DRV_W = 52, WHEEL_DX = 24, WHEEL_R = 7; // 운전석: 이름 가운데(왼쪽에서), 이름이 쓸 폭(핸들 오른쪽), 핸들 자리(가운데에서 왼쪽으로)·크기
 
   // car_state 의 cars[] = {id, name, label, seats(지금 정원 — 자동이면 명단으로 계산된 값), auto, count(탄 손님 수), driver: {dept,name,title}|null}
   let data = null;   // { key, cars, car: id|null(운전자면 운전하는 차량), members: 그 차량 손님 [{dept,name,title}]|null }
@@ -32,7 +32,7 @@
   const crewOf = (st) => { const c = carOf(st); return [...(c.driver ? [{ ...c.driver, drive: true }] : []), ...membersOf(st)]; };
   // 목적격 조사: 끝 글자에 받침이 있으면 '을', 없으면(한글이 아니어도) '를'
   const obj = (w) => { const c = (w || '').charCodeAt(w.length - 1) - 0xac00; return c >= 0 && c < 11172 && c % 28 ? '을' : '를'; };
-  // 보이는 이름: "1호차 · 가온 이사님 차량"(문구가 없으면 이름만)
+  // 보이는 이름: "1호차 · 가온님 차량"(문구가 없으면 이름만)
   const fullName = (c) => (c.label ? `${c.name} · ${c.label}` : c.name);
 
   // ── 그림 ──
@@ -51,16 +51,28 @@
       + '</svg>';
   }
 
-  // 이름이 좌석에 들어가게 글자 크기를 줄이고, 그래도 넘치면 줄임표. 한글·한자는 글자 폭 1, 대문자 .7, 나머지 .58
-  const em = (s) => [...s].reduce((a, ch) => a + (ch.charCodeAt(0) > 0x2e7f ? 1 : /[A-Z]/.test(ch) ? 0.7 : ch === ' ' ? 0.3 : 0.58), 0);
-  function fit(name, width) {
-    const inner = width - 8;
+  // 이름이 좌석에 들어가게 글자 크기를 줄이고, 그래도 넘치면 줄임표.
+  // 글자 폭은 화면 글꼴로 실제로 잼(canvas measureText — 화면이 아직 숨겨져 있어도 잴 수 있음).
+  // 잴 수 없는 브라우저에서만 어림값(한글·한자 .9, 대문자 .7, 나머지 .58)
+  const em = (s) => [...s].reduce((a, ch) => a + (ch.charCodeAt(0) > 0x2e7f ? 0.9 : /[A-Z]/.test(ch) ? 0.7 : ch === ' ' ? 0.3 : 0.58), 0);
+  let ctx = null, family = '';
+  function textW(s, fs, weight) {
+    try {
+      if (!ctx) { ctx = document.createElement('canvas').getContext('2d'); family = getComputedStyle(document.body).fontFamily; }
+      ctx.font = `${weight} ${fs}px ${family}`;
+      const w = ctx.measureText(s).width;
+      if (w > 0 || !s) return w;
+    } catch { /* 아래 어림값 */ }
+    return em(s) * fs;
+  }
+  function fit(name, width, pad = 8, weight = 700) {
+    const inner = width - pad;
     let fs = 14;
-    while (fs > 10 && em(name) * fs > inner) fs -= 0.5;
+    while (fs > 10 && textW(name, fs, weight) > inner) fs -= 0.5;
     let text = name;
-    if (em(text) * fs > inner) {
+    if (textW(text, fs, weight) > inner) {
       const chars = [...text];
-      while (chars.length > 1 && em(chars.join('') + '…') * fs > inner) chars.pop();
+      while (chars.length > 1 && textW(chars.join('') + '…', fs, weight) > inner) chars.pop();
       text = chars.join('') + '…';
     }
     return { text, fs };
@@ -101,10 +113,10 @@
         g += `<g><title>${esc(drv ? `운전: ${drv.name}${drv.title ? ' ' + drv.title : ''}` : '운전석')}</title>`
           + `<rect class="cs-seat driver${drvMe ? ' me' : ''}" x="${s.x}" y="${s.y}" width="${SEAT_W}" height="${SEAT_H}" rx="12"/>`
           + `<rect class="cs-head" x="${cx - 16}" y="${s.y + 5}" width="32" height="7" rx="3.5"/>`
-          + `<circle class="cs-wheel" cx="${cx - 22}" cy="${s.y + 36}" r="8"/>`; // 핸들: 칸 안 왼쪽(윗선에 걸치지 않게)
+          + `<circle class="cs-wheel" cx="${cx - WHEEL_DX}" cy="${s.y + 36}" r="${WHEEL_R}"/>`; // 핸들: 칸 안 왼쪽(윗선에 걸치지 않게)
         if (drv) {
-          // 핸들 오른쪽 좁은 자리에 "운전"(작게) + 이름. 이름이 길면 줄이고, 전체 이름은 위 title 로
-          const f = fit(drv.name, DRV_W);
+          // 핸들 오른쪽 좁은 자리에 "운전"(작게) + 이름(다섯 글자 이름까지 들어감). 더 길면 줄이고, 전체 이름은 아래 같은 차 사람 목록에
+          const f = fit(drv.name, DRV_W, 4, drvMe ? 900 : 700);
           g += `<text class="cs-label sm" x="${s.x + DRV_X}" y="${s.y + 25}" dy=".35em">운전</text>`
             + `<text class="cs-name${drvMe ? ' me' : ''}" x="${s.x + DRV_X}" y="${s.y + 42}" dy=".35em" style="font-size:${f.fs}px">${esc(f.text)}</text>`;
           if (drvMe) g += meTag(s);
@@ -120,7 +132,7 @@
         + `<rect class="cs-seat${mine ? ' me' : p ? '' : ' empty'}" x="${s.x}" y="${s.y}" width="${SEAT_W}" height="${SEAT_H}" rx="12"/>`
         + `<rect class="cs-head" x="${cx - 16}" y="${s.y + 5}" width="32" height="7" rx="3.5"/>`;
       if (p) {
-        const f = fit(p.name, SEAT_W);
+        const f = fit(p.name, SEAT_W, 8, mine ? 900 : 700);
         g += `<text class="cs-name${mine ? ' me' : ''}" x="${cx}" y="${s.y + 36}" dy=".35em" style="font-size:${f.fs}px">${esc(f.text)}</text>`;
         if (mine) g += meTag(s);
       } else {
@@ -157,14 +169,18 @@
 
   // ── 메인 단추 ──
   // 받은 결과가 있으면 끝냈는지 아닌지로, 아직 못 받았으면(받는 중·못 받음) 색을 칠하지 않은 단추로. 못 받았어도 다른 단추에는 영향이 없음
+  // 끝낸 뒤에도(운전자도) 눌려서 지금 그림(같은 차 사람이 늘어난 모습)을 볼 수 있음 — 자유시간의 '바꾸기'처럼 '그림 보기' 표시.
+  // index.html 의 HIDDEN_TASKS 에 'Car' 를 넣으면 숨김(남은 것·막대에서도 빠짐)
   function home(left) {
     const btn = $('#goCar');
+    btn.hidden = typeof HIDDEN_TASKS !== 'undefined' && HIDDEN_TASKS.has('Car');
+    if (btn.hidden) return;
     const st = state();
     const done = !!(st && st.car);
     const todo = !!(st && !st.car);
     btn.classList.toggle('is-done', done);
     btn.classList.toggle('is-todo', todo);
-    btn.disabled = done;
+    btn.disabled = false;
     fill(btn.querySelector('.mb-title'), done ? '🚗 타고 갈 차량' : '🚗 타고 갈 차량 뽑기');
     fill($('#srCar'), done ? '끝났어요.' : '');
     let html = '', more = '';
@@ -172,7 +188,8 @@
       const car = carOf(st), people = membersOf(st), crew = crewOf(st);
       html = `${miniCar(colorOf(st, car.id), 'mb-car')}<b class="mb-big">${esc(car.name)}</b>`
         + (car.label ? `<span class="sr-only"> · </span><span class="mb-carlabel">${esc(car.label)}</span>` : '')
-        + (driving(st) ? '<span class="sr-only"> · </span><span class="mb-driving">운전</span>' : '');
+        + (driving(st) ? '<span class="sr-only"> · </span><span class="mb-driving">운전</span>' : '')
+        + '<span class="sr-only"> · </span><span class="mb-edit">그림 보기</span>';
       const note = people.length < car.seats ? '아직 안 뽑은 사람은 뽑으면 나타나요.' : '';
       more = crew.length ? `<span class="mb-people"><span class="mb-plabel">같은 차 사람 ${crew.length}명<span class="sr-only">: </span></span><span class="mb-chips">${crewChips(st)}</span>${note ? `<span class="mb-pnote">${note}</span>` : ''}</span>` : '';
     } else if (todo) {
@@ -192,7 +209,6 @@
     const has = !!(st && st.car);
     const stage = $('#carStage');
     stage.hidden = !st;
-    stage.classList.toggle('shown', has && !landed); // 이미 차량이 있던 사람은 연출 없이 바로
     stage.dataset.state = has ? 'done' : 'idle';
     $('#carSub').textContent = has ? (driving(st) ? '운전하는 차량이에요. 뽑지 않아도 돼요.' : '한 번 뽑은 차량은 바꿀 수 없어요.') : '누구와 같은 차를 탈지 완전 랜덤으로 정해져요';
     $('#carBtn').hidden = !st || has;
@@ -219,8 +235,11 @@
     $('#carNote').hidden = people.length >= car.seats;
     if (landed && !reduced()) $('#carText').animate([{ opacity: 0 }, { opacity: 0, offset: 0.7 }, { opacity: 1 }], { duration: 1000 });
   }
+  // 화면에 들어올 때만 연출 여부를 정함: 그냥 들어오면(이미 차량이 있던 사람·운전자·'그림 보기') 연출 없이 바로(.shown),
+  // 방금 뽑았으면(landed) 연출. 그 뒤 car_state 답으로 다시 그려도(paintScreen) 이 표시는 건드리지 않아 연출이 끝까지 돎
   function show(landed = false) {
     who();
+    $('#carStage').classList.toggle('shown', !landed);
     paintScreen(landed);
     screen('car');
     load();
