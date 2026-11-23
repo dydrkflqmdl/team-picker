@@ -10,7 +10,9 @@ const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; ch
   '.json': 'application/json', '.jpg': 'image/jpeg', '.png': 'image/png', '.gif': 'image/gif', '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.woff2': 'font/woff2' };
 const CORS = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, POST, OPTIONS', 'access-control-expose-headers': '*' };
 
-export async function startServer({ port = Number(process.env.TEST_SERVER_PORT || 54330) } = {}) {
+// missing: 예전 DB 흉내 — 이 이름의 함수는 DB 에 있어도 없는 것처럼 404 PGRST202 로 답함(배포 순서가 어긋난 경우 시험). 돌려받은 server.missing(Set)으로 시험 중에 바꿀 수 있음
+export async function startServer({ port = Number(process.env.TEST_SERVER_PORT || 54330), missing = [] } = {}) {
+  const gone = new Set(missing);
   const pool = new pg.Pool({ host: '127.0.0.1', port: PGPORT, user: 'postgres', database: DB, max: 10 });
   const sigCache = new Map();
   const calls = []; // 받은 rpc 기록 {fn, args, status, ms}
@@ -30,6 +32,7 @@ export async function startServer({ port = Number(process.env.TEST_SERVER_PORT |
   const notFound = (message) => ({ status: 404, body: { code: 'PGRST202', message, details: null, hint: null } });
 
   async function rpc(fn, body) {
+    if (gone.has(fn)) return notFound(`Could not find the function public.${fn} in the schema cache`);
     const client = await pool.connect();
     try {
       const sig = await signature(client, fn);
@@ -107,7 +110,7 @@ export async function startServer({ port = Number(process.env.TEST_SERVER_PORT |
   await new Promise((ok, fail) => { server.once('error', fail); server.listen(port, '127.0.0.1', ok); });
   const addr = server.address();
   return {
-    url: `http://127.0.0.1:${addr.port}`, port: addr.port, calls,
+    url: `http://127.0.0.1:${addr.port}`, port: addr.port, calls, missing: gone,
     async close() { server.closeAllConnections?.(); await new Promise((r) => server.close(r)); await pool.end(); },
   };
 }

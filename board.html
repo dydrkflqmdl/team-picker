@@ -47,7 +47,7 @@
     /* 초기화 칸(맨 아래): 전체 초기화 한 줄 + 항목별 초기화 여섯 개를 한곳에 */
     .reset-zone { margin-top: 0; }
     .reset-zone .reset-items { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
-    #resetMsg.err { color: var(--danger); }
+    #resetMsg.err, #quickMsg.err, #teamMsg.err, #roomMsg.err { color: var(--danger); }
     .columns { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 16px; }
     @media (max-width: 900px) { .columns { grid-template-columns: repeat(2, 1fr); } }
     @media (max-width: 480px) { .columns { grid-template-columns: 1fr; } }
@@ -162,7 +162,6 @@
     .glance .dot { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; }
     .glance .yet { color: var(--danger); font-weight: 600; }
     .glance .nodrink, .glance .drv { margin-left: 2px; padding: 0 6px; border-radius: 999px; font-size: 11px; background: var(--chip); color: var(--muted); }
-    @media (max-width: 700px) { .glance th button { padding: 8px 0; } }
 
     /* 마지막 갱신 · 프로젝터 보기 단추 (그 아래 한 줄 경고) */
     .head-side { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; max-width: 100%; }
@@ -275,6 +274,23 @@
     .veil textarea { min-height: 96px; font-size: 13px; white-space: pre; }
     .veil .acts { display: grid; gap: 8px; margin-top: 10px; }
     .veil .acts button { min-height: 44px; }
+    /* 휴대폰(700px 이하)만: 누르는 자리를 키우고(터치 높이 40px 이상), 한눈에 보기 표를 줄여 옆으로 밀지 않고도 모든 열이 보이게 함. 넓은 화면의 모양은 그대로.
+       한눈에 보기 표: 글자 11px · 칸 여백 2px · 칸 안 글은 줄바꿈 허용(띄어쓰기 자리에서만 — "버섯 황태 해장국"은 두세 줄). 열·정보는 그대로, 그래도 모자라면 표 칸 안에서만 옆으로 밀림 */
+    @media (max-width: 700px) {
+      button.sm, a.btn { min-height: 40px; }
+      .chip.pick { min-height: 40px; padding: 8px 14px; }
+      .bar button.link, .people th button, .glance th button { min-height: 40px; }
+      .people tbody td:last-child button, .sheet-h button.link { min-height: 40px; }
+      .facet .chips { gap: 8px 6px; }
+      .glance { font-size: 11px; }
+      .glance-wrap { margin: 0 -8px; max-width: none; }
+      .glance th, .glance td { padding: 6px 2px; white-space: normal; word-break: keep-all; overflow-wrap: normal; }
+      .glance th:first-child, .glance td:first-child { min-width: 5.6em; overflow-wrap: anywhere; } /* 부서 이름(대개 5글자)은 한 줄에, 더 길면 글자 사이에서 줄바꿈(나머지 열은 띄어쓰기 자리에서만) */
+      .glance th button { padding: 0; line-height: 1.25; text-align: left; }
+      .glance th button::after { font-size: 8px; }
+      .glance .dot { padding: 1px 6px; }
+      .glance .nodrink, .glance .drv { display: inline-block; margin-left: 0; }
+    }
     /* 휴대폰에서 입력칸의 글자가 16px 보다 작으면 아이폰 Safari 가 칸을 누를 때 화면을 확대함 — 마지막에 두어 위의 14px 규칙보다 앞서게 */
     @media (max-width: 700px) {
       .people input, .people select, .tools input, .quick input, #rosterInput, #planInput, .copybox, #code, .sheet input, .sheet select, .sheet textarea, .veil textarea { font-size: 16px; }
@@ -366,11 +382,14 @@
     <!-- 탑승 차량: 참가자가 11/25 15시 마감 전까지 차량 뽑기로 직접 뽑고, 진행자는 직접 옮기기·차량 목록 고치기를 할 수 있음(진행자 화면에만 있음. 모두 비우기는 맨 끝 초기화 칸의 '탑승 차량 초기화'). 기능은 car-board.js -->
     <details class="card admin-only" id="carCard">
       <summary><span class="sum-t">탑승 차량</span> <small class="sum-n" id="carCount">-</small></summary>
-      <p class="msg hint-line" id="carDeadline">참가자는 <span data-deadline></span>까지 차량을 뽑을 수 있어요. 그 뒤로는 여기서만 바꿀 수 있어요. (방법: 아래 <b>직접 옮기기</b>를 켜서 인원이 적은 차량에 넣어요.)</p>
-      <p class="msg hint-line" id="carNote">운전자는 뽑지 않고 차량이 정해져 있어요. 나머지 전원은 차량 수대로 반씩 나눠 타요. 마감 전에는 차량을 비우면 그 사람이 다시 뽑을 수 있어요.</p>
+      <p class="msg hint-line" id="carDeadline"></p><!-- 마감 안내: 내용은 아래 스크립트의 syncDeadline 이 마감 전·후에 맞게 채움 -->
+      <p class="msg hint-line" id="carNote">운전자는 뽑지 않고 차량이 정해져 있어요. 나머지 전원은 차량 수대로 반씩 나눠 타요. <span id="carNoteTail"></span></p>
       <div class="teamwarn" id="carWarn" role="alert" hidden></div>
       <div class="cars" id="carView"></div>
+      <!-- 칸 아래 도구 줄: 맨 앞 두 단추는 자동 섞기(팀·객실표·탑승 차량 세 칸이 같은 이름·자리·확인 — 아래 스크립트의 SHUFFLE · runShuffle) -->
       <div class="row tools2">
+        <button class="sm" id="carFill" type="button" data-shuffle="car" data-mode="fill">탑승 차량 자동 섞기 · 안 뽑은 사람만</button>
+        <button class="sm danger" id="carAuto" type="button" data-shuffle="car" data-mode="all">탑승 차량 전부 새로 섞기</button>
         <label class="check"><input type="checkbox" id="carMove" /> 직접 옮기기</label>
         <button class="sm" id="carCopy" type="button">차량별 탑승자 복사</button>
         <button class="sm" id="carEditBtn" type="button">차량 목록 고치기</button>
@@ -391,8 +410,9 @@
     <!-- 12/18(금) 아침 메뉴: 프로젝터 보기에서도 보이는 칸(그때는 늘 펼침) -->
     <details class="card" id="menuCard">
       <summary><span class="sum-t">12/18(금) 아침 메뉴</span> <small class="sum-n" id="menuCount"></small></summary>
-      <!-- 마감 안내: 아침 메뉴·점심·자유시간·탑승 차량 네 칸이 같은 틀("참가자는 …까지 …할 수 있어요. 그 뒤로는 여기서만 바꿀 수 있어요. (방법: …)")로, 제목 바로 아래에 둠 -->
-      <p class="msg hint-line admin-only" id="menuDeadline">참가자는 <span data-deadline></span>까지 고르고 바꿀 수 있어요. 그 뒤로는 여기서만 바꿀 수 있어요. (방법: 아래 명단 관리에서 그 사람의 <b>수정</b>을 눌러 아침 메뉴를 골라요.)</p>
+      <!-- 마감 안내: 아침 메뉴·점심·자유시간·탑승 차량 네 칸이 같은 틀로 제목 바로 아래에 둠.
+           마감 전 "참가자는 …까지 …할 수 있어요. 그 뒤로는 여기서만 바꿀 수 있어요. (방법: …)" → 마감 뒤 "마감됐어요(…). 지금은 여기서만 바꿀 수 있어요. (방법: …)" (아래 스크립트의 syncDeadline) -->
+      <p class="msg hint-line admin-only" id="menuDeadline"></p>
       <div id="menus"></div>
       <div class="row tools2 admin-only">
         <button type="button" id="menuCopy" class="sm push">복사</button>
@@ -404,7 +424,7 @@
     <!-- 12/18(금) 점심: 참가자가 직접 고르고, 진행자는 대신 고치고 식당에 알릴 인원을 복사할 수 있음(자유시간 칸과 같은 모양) -->
     <details class="card admin-only" id="lunchCard">
       <summary><span class="sum-t">12/18(금) 점심</span> <small class="sum-n" id="lunchCount"></small></summary>
-      <p class="msg hint-line" id="lunchDeadline">참가자는 <span data-deadline></span>까지 고르고 바꿀 수 있어요. 그 뒤로는 여기서만 바꿀 수 있어요. (방법: 아래 <b>직접 고치기</b>를 켜요.)</p>
+      <p class="msg hint-line" id="lunchDeadline"></p>
       <div id="lunches"></div>
       <div class="row tools2">
         <label class="check"><input type="checkbox" id="lunchMove" /> 직접 고치기</label>
@@ -417,23 +437,26 @@
     <!-- 자유시간: 참가자가 직접 고르고, 진행자는 대신 고칠 수 있음 -->
     <details class="card admin-only" id="actCard">
       <summary><span class="sum-t">12/18(금) 저녁 자유시간</span> <small class="sum-n" id="actCount"></small></summary>
-      <p class="msg hint-line" id="actDeadline">참가자는 <span data-deadline></span>까지 스키·휴식을 고르고 바꿀 수 있어요. 그 뒤로는 여기서만 바꿀 수 있어요. (방법: 아래 <b>직접 고치기</b>를 켜요.)</p>
+      <p class="msg hint-line" id="actDeadline"></p>
       <p class="note"><b>스키를 고른 사람은 18일 저녁 식사 때 술을 마실 수 없어요.</b> 참가자 화면에서도 이 안내를 받았어요.</p>
       <div id="acts"></div>
       <div class="row tools2">
         <label class="check"><input type="checkbox" id="actMove" /> 직접 고치기</label>
+        <button type="button" id="actCopy" class="sm push">복사</button>
       </div>
+      <p class="msg" id="actCopyMsg" role="status"></p>
+      <textarea class="copybox" id="actCopyBox" readonly hidden aria-label="복사할 자유시간 명단 글"></textarea>
     </details>
 
     <!-- 객실표: 방은 현장에서 진행자가 발표용 뽑기 화면(draw.html)으로 뽑고, 여기서는 결과를 확인하고 나누기·직접 옮기기를 할 수 있음(진행자 화면에만 있음. 모두 비우기는 맨 끝 초기화 칸의 '방 초기화') -->
     <details class="card admin-only" id="roomCard">
       <summary><span class="sum-t">객실표</span> <small class="sum-n" id="roomCount"></small></summary>
-      <p class="draw-ref" id="roomNote"><span class="msg">방은 현장에서 진행자가 발표용 뽑기 화면(draw.html)으로 뽑아요(남녀 따로·인원은 고르게·나머지는 무작위). 여기서는 결과를 확인하고 직접 고칠 수 있어요. 방이 없는 사람은 <b>방 없는 사람만 넣기</b>로 채우고, <b>자동으로 나누기</b>는 이미 정해진 방까지 전부 새로 나눠요. 방을 비우면 발표용 화면에서 다시 뽑아요.</span><a class="btn" id="drawLinkRoom" href="draw.html">발표용 뽑기 화면(팀·방)</a></p>
+      <p class="draw-ref" id="roomNote"><span class="msg">방은 현장에서 진행자가 발표용 뽑기 화면(draw.html)으로 뽑아요(남녀 따로·인원은 고르게·나머지는 무작위). 여기서는 결과를 확인하고 직접 고칠 수 있어요. 방이 없는 사람은 <b>방 자동 섞기 · 안 뽑은 사람만</b>으로 채우고, <b>방 전부 새로 섞기</b>는 이미 정해진 방까지 전부 새로 나눠요. 방을 비우면 발표용 화면에서 다시 뽑아요.</span><a class="btn" id="drawLinkRoom" href="draw.html">발표용 뽑기 화면(팀·방)</a></p>
       <div class="rooms" id="rooms"></div>
       <div id="roomless"></div>
       <div class="row tools2">
-        <button class="primary" id="roomAuto">자동으로 나누기</button>
-        <button id="roomFill" hidden>방 없는 사람만 넣기</button>
+        <button class="sm" id="roomFill" type="button" data-shuffle="room" data-mode="fill">방 자동 섞기 · 안 뽑은 사람만</button>
+        <button class="sm danger" id="roomAuto" type="button" data-shuffle="room" data-mode="all">방 전부 새로 섞기</button>
         <label class="check"><input type="checkbox" id="roomMove" /> 직접 옮기기</label>
       </div>
       <p class="msg" id="roomMsg" role="status"></p>
@@ -457,6 +480,11 @@
         </form>
         <p class="msg admin-only" id="quickMsg" role="status"></p>
       </section>
+      <div class="row tools2 admin-only">
+        <button class="sm" id="teamFill" type="button" data-shuffle="team" data-mode="fill">팀 자동 섞기 · 안 뽑은 사람만</button>
+        <button class="sm danger" id="teamAuto" type="button" data-shuffle="team" data-mode="all">팀 전부 새로 섞기</button>
+      </div>
+      <p class="msg admin-only" id="teamMsg" role="status"></p>
     </details>
 
     <details class="card admin-only" id="admin">
@@ -514,7 +542,7 @@
     <details class="card admin-only" id="resetCard">
       <summary><span class="sum-t">초기화</span> <small class="sum-n" id="resetCount"></small></summary>
       <div class="danger-zone reset-zone">
-        <p>명단·일정표·차량 목록(운전자 지정 포함)은 그대로 남아요. 누르면 지워질 인원을 한 번 확인한 뒤 바로 지워요. 되돌릴 수 없어요.</p>
+        <p>명단·일정표·차량 목록(운전자 지정 포함)은 그대로 남아요. 누르면 지워질 인원을 한 번 확인한 뒤 바로 지워요. 되돌릴 수 없어요. 팀·방·탑승 차량을 자동으로 정하는 <b>자동 섞기</b>는 각 칸(팀·객실표·탑승 차량) 아래 도구 줄에 있어요.</p>
         <div class="row">
           <button class="danger" id="resetEvery" type="button">전체 초기화</button>
         </div>
@@ -1146,7 +1174,6 @@
     }).join(''));
     // 방 없는 사람: 한 명이라도 나눈 뒤이거나 직접 옮기는 중일 때만 따로 보여줌(처음에는 전원이라 굳이 안 늘어놓음)
     put('#roomless', roomless.length && (housed || move) ? crowd('아직 방이 없는 사람', roomless, 'room', move, 'none') : '');
-    $('#roomFill').hidden = !(housed && roomless.some((p) => p.gender));
 
     // 자유시간: 고른 것마다 사람들 + 아직 안 고른 사람
     const fix = $('#actMove').checked;
@@ -1260,6 +1287,8 @@ Day 3 · 12/19(토) — 함께 만드는 내년
     $('#planEditBtn').focus();
   }));
 
+  // ⚠️ 지금은 대신 동작에만 씀: 방 자동 섞기는 DB 함수 admin_shuffle('room') 이 정하고, DB 가 예전 판이라 그 함수가 없을 때만 아래 assignRooms 가 이 계산을 씀
+  //    (tests/room-random/board_test.mjs 가 아래 shuffle ~ assignRooms 앞까지를 떼어 와 시험하므로 이 구간의 모양을 바꾸지 않는다)
   // 객실 나누기 계획 [{ id, value: 방 }]. 기준은 두 가지뿐: 남녀는 따로, 같은 성별 안에서 방 인원은 고르게(차이 1명 이내).
   // 그 밖에는 전부 무작위 — 부서·직급·임원 여부·명단 순서는 보지 않는다. 발표용 뽑기 화면(draw.html)의 방 뽑기와 같은 기준이다.
   // 성별마다: roomSeats 로 방마다 더 넣을 인원을 정하고, 넣을 사람을 무작위로 섞어 그 자리에 차례로 넣는다.
@@ -1311,22 +1340,16 @@ Day 3 · 12/19(토) — 함께 만드는 내년
     if (!onlyNew) for (const p of people) if (!p.gender && p.room) rows.push({ id: p.id, value: '' });
     return rows;
   }
+  // 예전 방식(대신 동작): DB 에 자동 섞기 함수(admin_shuffle)가 아직 없을 때만(사이트를 DB 보다 먼저 올린 경우) 씀.
+  // 화면이 roomPlan 으로 계산해 admin_assign 한 번으로 저장(한 번의 호출이라 실패하면 아무것도 안 바뀜). 확인은 부른 쪽(runShuffle)이 이미 받음.
+  // 돌려주는 값은 admin_shuffle 과 같은 꼴 + legacy: true
   async function assignRooms(onlyNew) {
-    const housed = people.filter((p) => p.room).length;
-    if (!people.length) throw new Error('명단이 비어 있어요. 아래 명단 관리에서 먼저 추가해 주세요.');
-    const unsexed = people.filter((p) => !p.gender && p.room).length; // 성별이 없어 못 나누는데 지금 방이 있는 사람
-    if (!onlyNew && housed && !confirm(`이미 방이 정해진 ${housed}명(발표용 뽑기 화면에서 뽑은 방 포함)을 포함해 전부 새로 나눌까요?\n방이 없는 사람만 채우려면 취소하고 '방 없는 사람만 넣기'를 눌러 주세요.` + (unsexed ? `\n성별이 없는 ${unsexed}명은 방이 비워져요.` : ''))) return;
     const rows = roomPlan(onlyNew);
-    const placed = rows.filter((r) => r.value).length;
-    if (!placed) throw new Error('나눌 사람이 없어요. 성별이 들어 있는 사람만 나눌 수 있어요(아래 명단 관리에서 수정).');
-    $('#roomMsg').textContent = '';
-    await rpc('admin_assign', { p_code: code, p_what: 'room', p_rows: rows });
-    await resync();
-    const unknown = people.filter((p) => !p.gender && !p.room).length;
-    $('#roomMsg').textContent = (onlyNew ? `방 없는 ${placed}명을 인원이 적은 방부터 무작위로 넣었어요(방 인원 차이는 가능한 한 1명 이내로 맞춰요).` : `${placed}명을 남녀 따로 무작위로 나눴어요(방 인원 차이는 1명 이내예요).`) + (unknown ? ` 성별이 없는 ${unknown}명은 넣지 못했어요. 직접 옮기기를 켜서 넣어 주세요.` : '');
+    const cleared = onlyNew ? 0 : people.filter((p) => p.room).length;
+    if (rows.length) await rpc('admin_assign', { p_code: code, p_what: 'room', p_rows: rows });
+    const skipped = people.filter((p) => !p.gender && !(onlyNew && p.room)).map((p) => ({ id: p.id, dept: p.dept, name: p.name, reason: 'no_gender' }));
+    return { what: 'room', mode: onlyNew ? 'fill' : 'all', cleared, assigned: rows.filter((r) => r.value).length, skipped, legacy: true };
   }
-  $('#roomAuto').addEventListener('click', hold($('#roomAuto'), () => assignRooms(false)));
-  $('#roomFill').addEventListener('click', hold($('#roomFill'), () => assignRooms(true)));
   $('#roomMove').addEventListener('change', renderExtras);
   $('#actMove').addEventListener('change', renderExtras);
   $('#lunchMove').addEventListener('change', renderExtras);
@@ -1566,9 +1589,15 @@ Day 3 · 12/19(토) — 함께 만드는 내년
   // ── 초기화(맨 아래 초기화 칸): 참가자가 뽑거나 고른 결과를 항목별로, 또는 전부 비움. 명단·일정표·차량 목록(운전자 지정 포함)은 그대로 ──
   // 확인은 한 번: 무엇이 몇 명분 지워지는지 한 줄로 보여 주고 확인을 누르면 바로 실행(백업 단계 없음 — 백업은 명단 전체 삭제에만).
   // 비우는 DB 함수는 모두 이미 빈 것은 그냥 지나가므로, 전체 초기화가 중간에 실패하면 무엇이 비워졌고 남았는지 알리고 다시 눌러 이어서 할 수 있음
-  // 아침 메뉴만 비우는 DB 함수는 따로 없어서(admin_reset_all 은 팀도 지움) 진행자 함수 admin_assign('menu')로 고른 사람 모두를 빈 값으로 넣음.
-  // 확인 상자를 열어 둔 사이 고른 사람도 빠지지 않게 보내기 직전에 명단을 새로 받음
+  // 아침 메뉴만 비우기: admin_clear('menu') 한 번(한 문장이라 읽고 지우는 사이에 고른 사람이 남지 않음. 팀은 그대로 — 팀까지 지우는 admin_reset_all 과 다름).
+  // 예전 DB(이 판의 supabase.sql 을 아직 안 넣음)는 'menu' 를 "바꿀 수 없는 항목이에요."로 거절하므로 그때만 예전 방식으로 대신 함:
+  // 명단을 새로 받아 고른 사람 모두를 admin_assign('menu')로 빈 값으로 넣음
   async function clearMenus() {
+    try {
+      return await rpc('admin_clear', { p_code: code, p_what: 'menu' });
+    } catch (e) {
+      if (!(e.code === 'P0001' && e.message.includes('바꿀 수 없는 항목'))) throw e;
+    }
     const d = await rpc('board_state', { p_code: code });
     const rows = ((d && d.people) || []).filter((p) => p.menu).map((p) => ({ id: p.id, value: '' }));
     if (rows.length) await rpc('admin_assign', { p_code: code, p_what: 'menu', p_rows: rows });
@@ -1630,7 +1659,10 @@ Day 3 · 12/19(토) — 함께 만드는 내년
     } finally {
       btns.forEach((b) => { b.disabled = false; });
       if (done.includes('team')) seen = null;
-      if (done.includes('room')) $('#roomMsg').textContent = ''; // "N명을 나눴어요"는 비운 뒤에는 맞지 않음
+      // "N명을 나눴어요/자동으로 넣었어요"는 비운 뒤에는 맞지 않음(결과 문구와 err 표시도 함께 지움)
+      for (const [k, sel] of [['team', '#teamMsg'], ['room', '#roomMsg'], ['car', '#carMsg']]) {
+        if (done.includes(k)) { $(sel).textContent = ''; $(sel).classList.remove('err'); }
+      }
       try { await reload(); } catch {} // 비밀번호가 바뀐 경우는 refresh 가 입력 화면으로 돌려 놓음
       if (done.includes('car') && window.carBoard) await window.carBoard.refresh();
     }
@@ -1647,6 +1679,132 @@ Day 3 · 12/19(토) — 함께 만드는 내년
     const k = btn.dataset.resetItem;
     btn.addEventListener('click', hold(btn, () => resetItems([k], `${RESET_ITEMS[k].label} 초기화`, [{ keys: [k], run: RESET_ITEMS[k].run }])));
   }
+
+  // ── 자동 섞기(팀·방·탑승 차량): 각 칸 아래 도구 줄의 두 단추 ──
+  //   "○○ 자동 섞기 · 안 뽑은 사람만"(fill) = 이미 정해진 사람은 그대로, 남은 사람만 정함
+  //   "○○ 전부 새로 섞기"(all)            = 그 항목을 비우고 전원을 새로 정함(운전자 지정·차량 목록은 그대로)
+  // 계산은 DB 함수 admin_shuffle 하나가 함(참가자 뽑기 pick·pick_room·pick_car 와 같은 규칙. 한 번의 호출이 한 트랜잭션이라 실패하면 아무것도 안 바뀜).
+  // 마감과 상관없이 진행자는 늘 쓸 수 있음. 확인은 confirm 한 번(백업 단계·글자 적기 없음). 고르는 항목(아침 메뉴·점심·자유시간)에는 없음 — 본인이 고르는 것이라 무작위로 채우면 실제 주문과 달라짐.
+  // DB 가 예전 판이라 admin_shuffle 이 없으면(PGRST202): 방은 예전 방식(roomPlan + admin_assign)으로 대신, 팀·차량은 안내만 하고 아무것도 안 바꿈
+  const SHUFFLE = {
+    team: { label: '팀', msg: '#teamMsg', rule: '팀 인원·임원·부서·남녀를 고르게 — 팀 뽑기와 같은 규칙' },
+    room: { label: '방', msg: '#roomMsg', rule: '남녀 따로·인원은 고르게·나머지는 무작위' },
+    car: { label: '탑승 차량', msg: '#carMsg', rule: '운전자는 빼고 차량마다 고르게·나머지는 무작위' },
+  };
+  // 건너뛴 사람의 이유(admin_shuffle 의 skipped[].reason) → 사람 말
+  const SKIP_WHY = {
+    name: '명단의 이름 꼴이 달라서 못 정했어요. 명단을 확인해 주세요',
+    no_gender: '성별이 없어서 방을 못 정했어요',
+    full: '차량 정원이 모자라요',
+    driver: '운전자라서 차량을 따로 안 정해요',
+  };
+  const OLD_DB = 'DB가 아직 새 버전이 아니에요. 진행자(개발 담당)에게 supabase.sql을 다시 적용해 달라고 해 주세요.';
+  const shuffleTitle = (what, mode) => (mode === 'all' ? `${SHUFFLE[what].label} 전부 새로 섞기` : `${SHUFFLE[what].label} 자동 섞기 · 안 뽑은 사람만`);
+  // 이름 목록: 처음 n명 + "외 ○명"(이름은 esc)
+  const someNames = (list, n = 5) => list.slice(0, n).map((p) => `${esc(p.name)}(${esc(p.dept)})`).join(', ') + (list.length > n ? ` 외 ${list.length - n}명` : '');
+  function skippedHtml(skipped) {
+    return Object.keys(SKIP_WHY).map((r) => {
+      const list = (skipped || []).filter((s) => s.reason === r);
+      return list.length ? ` ${SKIP_WHY[r]}: ${someNames(list)}.` : '';
+    }).join('') + (skipped || []).filter((s) => !SKIP_WHY[s.reason]).map((s) => ` 못 정했어요: ${esc(s.name)}(${esc(s.dept)}).`).join('');
+  }
+  // 지금 화면이 가진 최신 명단(+ 차량 자료)으로 셈: have = 지금 기록이 있는 사람, todo = 이번에 정할 사람, skip = 넣지 못할 사람(이유와 함께)
+  function shuffleCount(what, mode) {
+    const all = mode === 'all';
+    if (what === 'team') return { have: people.filter((p) => p.team).length, todo: people.filter((p) => all || !p.team).length, skip: [] };
+    if (what === 'room') {
+      const cand = people.filter((p) => all || !p.room);
+      return { have: people.filter((p) => p.room).length, todo: cand.filter((p) => p.gender).length, skip: cand.filter((p) => !p.gender).map((p) => ({ ...p, reason: 'no_gender' })) };
+    }
+    const cb = window.carBoard;
+    const drivers = people.filter((p) => cb.isDriver(p.id));
+    const guests = people.filter((p) => !cb.isDriver(p.id));
+    const seats = cb.seats ? cb.seats() : null; // { cars, total, free } 차량 목록에 있는 차량만
+    return {
+      have: guests.filter((p) => cb.carKey(p.id)).length, todo: guests.filter((p) => all || !cb.carKey(p.id)).length,
+      skip: drivers.map((p) => ({ ...p, reason: 'driver' })), cars: seats ? seats.cars : null, room: seats ? (all ? seats.total : seats.free) : null,
+    };
+  }
+  // 확인 문구. 마감 뒤 탑승 차량은 참가자가 다시 뽑을 수 없으므로 새로 정해진 결과가 최종(바꾸려면 진행자가 직접)이라는 줄을 넣음
+  function shuffleConfirm(what, mode, c, now = Date.now()) {
+    const S = SHUFFLE[what];
+    const lines = mode === 'all'
+      ? [`${shuffleTitle(what, mode)}: 지금 ${c.have}명의 ${S.label} 기록${what === 'car' ? '' : `(발표용 뽑기 화면에서 뽑은 ${S.label} 포함)`}을 지우고 전원(${c.todo}명)을 새로 정해요. 되돌릴 수 없어요.`]
+      : [`${shuffleTitle(what, mode)}: 안 뽑은 ${c.todo}명을 자동으로 넣을까요?`, ...(c.have ? [`이미 정해진 ${c.have}명은 그대로예요.`] : [])];
+    lines.push(`정하는 방법: ${S.rule}.`);
+    const noGender = c.skip.filter((p) => p.reason === 'no_gender').length;
+    if (noGender) lines.push(`성별이 없는 ${noGender}명은 방을 정할 수 없어 빼고 정해요(명단 관리에서 성별을 넣은 뒤 다시 누르면 돼요).`);
+    if (what === 'room' && mode === 'all') {
+      const dropped = c.skip.filter((p) => p.reason === 'no_gender' && p.room).length; // 성별이 없는데 방이 있는 사람: 전부 새로 하면 방이 비워짐
+      if (dropped) lines.push(`그 중 지금 방이 있는 ${dropped}명은 방이 비워져요.`);
+    }
+    const drivers = c.skip.filter((p) => p.reason === 'driver').length;
+    if (drivers) lines.push(`운전자 ${drivers}명은 차량이 정해져 있어 따로 정하지 않아요.`);
+    if (c.room != null && c.todo > c.room) lines.push(`⚠️ 빈자리가 ${c.room}개뿐이라 ${c.todo - c.room}명은 넣지 못해요(차량 목록 고치기에서 정원을 늘릴 수 있어요).`);
+    if (DEADLINE_ITEMS.includes(what) && now >= CHOICE_DEADLINE) lines.push(`⚠️ 마감(${CHOICE_DEADLINE_SHORT})이 지나 참가자가 다시 뽑을 수 없어요. 여기서 새로 정해진 결과가 최종이에요(바꾸려면 진행자가 직접 옮겨야 해요).`);
+    lines.push(`${S.label}만 바뀌고 다른 항목과 명단${what === 'car' ? '·차량 목록(운전자 지정 포함)' : ''}은 그대로예요.`);
+    return lines.join('\n');
+  }
+  const shuffleBtns = () => [...document.querySelectorAll('[data-shuffle]')];
+  let shuffling = false; // 섞는 중(세 칸의 단추 여섯 개를 모두 잠금 — 두 번 누르거나 다른 항목을 겹쳐 누르지 않게)
+  async function runShuffle(what, mode) {
+    if (shuffling) return;
+    const S = SHUFFLE[what], title = shuffleTitle(what, mode), msg = $(S.msg);
+    const say = (html, bad) => { msg.innerHTML = html; msg.classList.toggle('err', !!bad); };
+    say('');
+    shuffling = true;
+    shuffleBtns().forEach((b) => { b.disabled = true; });
+    let sent = false; // 확인을 지나 섞기 요청을 보냈는지
+    try {
+      let r;
+      try {
+        await refresh(true); // 대상 인원을 지금 것으로
+        if (!people.length) throw Object.assign(new Error('명단이 비어 있어요. 아래 명단 관리에서 먼저 추가해 주세요.'), { empty: true });
+        if (what === 'car' && !(window.carBoard && (await window.carBoard.refresh()))) throw new Error('탑승 차량 정보를 받지 못해 몇 명을 정할지 셀 수 없어요.');
+        const c = shuffleCount(what, mode);
+        if (what === 'car' && c.cars === 0) { say('차량 목록이 없어요. 아래 <b>차량 목록 고치기</b>에서 차량을 먼저 넣어 주세요.'); return; }
+        if (!c.todo) {
+          const why = c.skip.filter((p) => p.reason !== 'driver');
+          say(`넣을 사람이 없어요.${why.length ? skippedHtml(why) : mode === 'fill' ? ` 모두 ${what === 'car' ? '차량' : S.label}이 정해져 있어요.` : ''}`);
+          return;
+        }
+        if (!confirm(shuffleConfirm(what, mode, c))) return; // 취소: 아무 요청도 안 보냄
+        sent = true;
+        try {
+          r = await rpc('admin_shuffle', { p_code: code, p_what: what, p_mode: mode });
+        } catch (e) {
+          if (e.code !== 'PGRST202') throw e;
+          if (what !== 'room') throw Object.assign(new Error(OLD_DB), { code: e.code }); // DB 가 답한 것(함수 없음)이라 "안 바뀜"이 확실함
+          r = await assignRooms(mode === 'fill'); // 방만: 예전 방식으로 대신(화면이 계산)
+        }
+      } catch (e) {
+        if (e.message.includes('비밀번호')) throw e; // 비밀번호가 바뀌었으면 입력 화면으로(refresh 가 처리)
+        // 보낸 뒤 답을 못 받음(20초 시간 초과·연결 끊김 — DB 가 준 오류가 아니라 e.code 가 없음): 서버에서는 끝났을 수도 있으므로 "안 바뀜"이라고 하지 않고 화면을 새로 받아 보게 함
+        const unknown = sent && !e.code;
+        const text = unknown
+          ? `${title}의 결과를 확인하지 못했어요. 화면을 새로 받았으니 바뀌었는지 보고, 안 바뀌었으면 다시 눌러 주세요. (이유: ${e.message})`
+          : e.empty
+          ? `${title}를 하지 못했어요. 아무것도 바뀌지 않았어요. 명단을 먼저 넣어 주세요. (이유: ${e.message})`
+          : `${title}를 하지 못했어요. 아무것도 바뀌지 않았어요. 다시 눌러 주세요. (이유: ${e.message})`;
+        if (unknown) { if (what === 'car' && window.carBoard) await window.carBoard.refresh(); try { await reload(); } catch {} }
+        say(esc(text), true);
+        throw new Error(text);
+      }
+      if (what === 'team') seen = null; // 한꺼번에 정해진 팀 열이 전부 깜빡이지 않게
+      await resync();
+      if (what === 'team') { latestSeen = 0; render(); } // 섞기로 정해진 사람은 뽑은 시각이 모두 같아 전원이 "방금"이 되므로 이 화면에서는 강조하지 않음
+      if (what === 'car' && window.carBoard) await window.carBoard.refresh();
+      const done = r.mode === 'all' ? `${r.cleared}명의 기록을 지우고 ${r.assigned}명을 새로 정했어요` : r.assigned ? `안 뽑은 ${r.assigned}명을 자동으로 넣었어요` : '넣을 수 있는 사람이 없었어요';
+      const closedCar = what === 'car' && Date.now() >= CHOICE_DEADLINE && r.assigned;
+      say(`${r.legacy ? '<b>예전 방식으로 나눴어요</b>(DB가 아직 새 버전이 아니라 이 화면이 계산했어요. supabase.sql을 다시 적용하면 DB가 정해요). ' : ''}`
+        + `${esc(S.label)}: ${done}(${esc(S.rule)}).${skippedHtml(r.skipped)}`
+        + (closedCar ? ' 마감이 지나 참가자가 다시 뽑을 수 없으니 이 결과가 최종이에요. 바꾸려면 <b>직접 옮기기</b>를 켜서 고쳐 주세요.' : ''));
+    } finally {
+      shuffling = false;
+      shuffleBtns().forEach((b) => { b.disabled = false; });
+    }
+  }
+  for (const btn of shuffleBtns()) btn.addEventListener('click', guard(() => runShuffle(btn.dataset.shuffle, btn.dataset.mode)));
   $('#removeAll').addEventListener('click', hold($('#removeAll'), async () => {
     if (!typedOk(`명단 ${people.length}명을 전부 지울까요?\n뽑은 팀과 고른 아침 메뉴도 함께 사라지고 되돌릴 수 없어요.`, '삭제')) return;
     if (!(await askBackup('명단전체삭제'))) return; // 백업을 받고, 받아졌는지 확인한 뒤에만 실행
@@ -1770,8 +1928,17 @@ Day 3 · 12/19(토) — 함께 만드는 내년
   window.addEventListener('resize', () => { if (sheet) renderSheet(); });
 
   // ── 늦게 온 사람 빠른 추가: "이름, 부서" 한 줄 → admin_add (명단 관리의 추가와 같은 DB 함수) ──
+  // 실패 이유(같은 이름·부서가 이미 있음, 형식 오류 등)는 맨 위 #error 가 아니라 입력칸 바로 아래 #quickMsg 에 보임(팀 칸이 아래쪽에 있어도 보이게).
+  // 비밀번호 오류만은 입력 화면으로 돌아가며 위쪽 오류 문구가 알림
+  const quickMsg = (text, bad) => { $('#quickMsg').textContent = text; $('#quickMsg').classList.toggle('err', !!bad); };
   const quickGo = hold($('#quickBtn'), async () => {
-    $('#quickMsg').textContent = '';
+    try { await quickAdd(); } catch (e) {
+      if (e.message.includes('비밀번호')) throw e;
+      quickMsg(e.message, true);
+    }
+  });
+  async function quickAdd() {
+    quickMsg('');
     const raw = cleanCell($('#quickInput').value);
     const cells = raw.includes('\t') ? raw.split('\t') : raw.includes(',') ? raw.split(',') : (raw.match(/^(\S+)\s+(.+)$/) || []).slice(1); // 쉼표가 없으면 첫 띄어쓰기 앞이 이름
     const [name, dept] = cells.map(cleanCell);
@@ -1784,20 +1951,20 @@ Day 3 · 12/19(토) — 함께 만드는 내년
     const added = await rpc('admin_add', { p_code: code, p_rows: [{ name, dept }] });
     $('#quickInput').value = '';
     await resync();
-    $('#quickMsg').textContent = added ? `${name} 님(${dept})을 추가했어요. 직급·성별은 이름을 눌러 수정에서 넣을 수 있어요.` : `${name} 님은 이미 있어서 추가하지 않았어요.`;
-  });
+    quickMsg(added ? `${name} 님(${dept})을 추가했어요. 직급·성별은 이름을 눌러 수정에서 넣을 수 있어요.` : `${name} 님은 이미 있어서 추가하지 않았어요.`);
+  }
   $('#quickAdd').addEventListener('submit', (e) => { e.preventDefault(); quickGo(); });
 
   // ── 아침 메뉴·점심 인원 복사: 칸마다 따로 쓰는 안내줄(msg)·직접 복사 상자(box)·타이머가 있어 서로 섞이지 않음 ──
   const copyTimers = new Map();
-  async function copyOut(text, box, msg) {
+  async function copyOut(text, box, msg, echo = text) { // echo: 복사했다고 알릴 때 보여 줄 글(기본은 복사한 글 전체)
     clearTimeout(copyTimers.get(msg));
     let ok = false;
     try { await navigator.clipboard.writeText(text); ok = true; } catch {} // 막혀 있거나(http·권한) 지원하지 않으면 아래에서 직접 복사할 수 있게 보여 줌
     box.value = text;
     if (ok) {
       box.hidden = true;
-      msg.textContent = '복사했어요: ' + text;
+      msg.textContent = '복사했어요: ' + echo;
       copyTimers.set(msg, setTimeout(() => { msg.textContent = ''; }, 6000));
       return;
     }
@@ -1820,8 +1987,41 @@ Day 3 · 12/19(토) — 함께 만드는 내년
     await copyOut(text, $('#lunchCopyBox'), $('#lunchCopyMsg'));
   }));
 
-  // 마감 안내 문구(아침 메뉴·점심·자유시간·탑승 차량 칸): 날짜는 common.js 의 CHOICE_DEADLINE_SHORT 에서 가져옴
-  for (const el of document.querySelectorAll('[data-deadline]')) el.textContent = CHOICE_DEADLINE_SHORT;
+  // 자유시간 복사: 맨 윗줄은 아침 메뉴·점심 복사와 같은 인원 한 줄, 그 아래에 스키·휴식·아직 안 고름별 이름(칸에 보이는 순서 = 직급 높은 순)
+  $('#actCopy').addEventListener('click', guard(async () => {
+    if (!people.length) throw new Error('복사할 내용이 없어요. 명단이 비어 있어요.');
+    const noAct = people.filter((p) => !p.activity).sort(byRank);
+    const doing = (k) => people.filter((p) => p.activity === k).sort(byRank);
+    const names = (list) => list.map((p) => p.name).join(', ') || '없음';
+    const text = [`12/18(금) 저녁 자유시간: ${ACT_KEYS.map((k) => `${ACTS[k]} ${doing(k).length}`).join(' · ')}${noAct.length ? ` (아직 안 고름 ${noAct.length})` : ''} / 총 ${people.length}명`,
+      ...ACT_KEYS.map((k) => `${ACTS[k]}(${doing(k).length}): ${names(doing(k))}`),
+      ...(noAct.length ? [`아직 안 고름(${noAct.length}): ${names(noAct)}`] : [])].join('\n');
+    await copyOut(text, $('#actCopyBox'), $('#actCopyMsg'), text.split('\n')[0] + ' … (이름 목록 포함)');
+  }));
+
+  // 마감 안내 문구(아침 메뉴·점심·자유시간·탑승 차량 칸): 마감 시각·날짜는 common.js 의 CHOICE_DEADLINE · CHOICE_DEADLINE_SHORT 에서 가져옴.
+  // 마감 전 "참가자는 11/25(수) 15시까지 …할 수 있어요. 그 뒤로는 여기서만 바꿀 수 있어요. (방법: …)", 마감 뒤 "마감됐어요(11/25(수) 15시). 지금은 여기서만 바꿀 수 있어요. (방법: …)".
+  // 화면을 열어 둔 채 마감 시각을 넘겨도 바뀌도록 1초마다 살핌(바뀔 때만 글을 다시 넣음 — 칸의 열림 상태·입력 중인 것은 건드리지 않음)
+  const DEADLINE_TEXTS = [
+    ['#menuDeadline', '고르고 바꿀 수 있어요', '아래 명단 관리에서 그 사람의 <b>수정</b>을 눌러 아침 메뉴를 골라요.'],
+    ['#lunchDeadline', '고르고 바꿀 수 있어요', '아래 <b>직접 고치기</b>를 켜요.'],
+    ['#actDeadline', '스키·휴식을 고르고 바꿀 수 있어요', '아래 <b>직접 고치기</b>를 켜요.'],
+    ['#carDeadline', '차량을 뽑을 수 있어요', '아래 <b>직접 옮기기</b>를 켜서 인원이 적은 차량에 넣어요.'],
+  ];
+  let deadlineShown = null; // 마지막으로 그린 상태(true = 마감 뒤)
+  function syncDeadline(force) {
+    const closed = Date.now() >= CHOICE_DEADLINE;
+    if (!force && closed === deadlineShown) return;
+    deadlineShown = closed;
+    for (const [sel, what, how] of DEADLINE_TEXTS) {
+      $(sel).innerHTML = closed
+        ? `마감됐어요(<span data-deadline>${CHOICE_DEADLINE_SHORT}</span>). 지금은 여기서만 바꿀 수 있어요. (방법: ${how})`
+        : `참가자는 <span data-deadline>${CHOICE_DEADLINE_SHORT}</span>까지 ${what}. 그 뒤로는 여기서만 바꿀 수 있어요. (방법: ${how})`;
+    }
+    // 탑승 차량 칸의 마감 전 전용 문장
+    $('#carNoteTail').textContent = closed ? '마감이 지나 참가자는 다시 뽑을 수 없어서 진행자가 직접 넣어요.' : '마감 전에는 차량을 비우면 그 사람이 다시 뽑을 수 있어요.';
+  }
+  syncDeadline(true);
 
   // ── 마지막 갱신 · 갱신 실패 표시 · 프로젝터 보기 · 화면 꺼짐 막기 ──
   const two = (n) => String(n).padStart(2, '0');
@@ -1881,11 +2081,12 @@ Day 3 · 12/19(토) — 함께 만드는 내년
     sheet = null;
     if (on) keepAwake(); else if (wake) { wake.release().catch(() => {}); wake = null; }
     if (!$('#boardView').hidden) render();
+    document.dispatchEvent(new Event('tvchange')); // car-board.js: 프로젝터 보기에서는 차량 자료 받기를 쉬고, 관리자 페이지로 돌아오면 곧바로 받음
   }
   $('#tvBtn').addEventListener('click', () => setTv(!tv));
   // "방금" 60초가 지나면 데이터가 안 바뀌어도 강조를 거둠
   const tickRecent = () => { if (!$('#boardView').hidden && [...recentSet()].sort().join() !== recentKey) render(); };
-  setInterval(() => { updateStatus(); tickRecent(); }, 1000);
+  setInterval(() => { updateStatus(); tickRecent(); syncDeadline(); }, 1000);
   setTv(tv);
 
   // 시작 + 5초마다 새로고침(화면이 보일 때만, 앞선 새로고침의 답을 기다리는 중이면 건너뜀). 다른 탭에 갔다 돌아오면 바로 한 번.
@@ -1906,6 +2107,6 @@ Day 3 · 12/19(토) — 함께 만드는 내년
     autoRefresh();
   });
 </script>
-<script src="car-board.js?v=8"></script>
+<script src="car-board.js?v=10"></script>
 </body>
 </html>

@@ -7,6 +7,7 @@
 //   draw [번호...]  발표용 뽑기 화면(draw.html) 통합 시험(DB 올리기 → 시나리오 → 끄기)
 //   smoke        DB 올리기 → 명단 → 서버 → 브라우저 시험 → 정리(DB 끄기)까지 한 번에
 //   reset        관리자 페이지 초기화 칸 통합 시험(DB 올리기 → 시나리오 → 끄기)
+//   shuffle      관리자 페이지 자동 섞기(팀·방·탑승 차량 × 안 뽑은 사람만·전부 새로)와 아침 메뉴 초기화(admin_clear('menu')) 시험
 //   admin        관리자 페이지를 참가자 화면에 맞춘 것 시험(차량 열·분류 단추·엑셀 열·마감 안내·발표용 링크·프로젝터 보기·390px·칸 통일·칸 순서·열림 기억)
 import { ADMIN_CODE, dbStop, dbUp, connect, PORT, isRunning } from './db.mjs';
 import { resetRoster } from './seed.mjs';
@@ -92,6 +93,17 @@ switch (cmd) {
     console.log(ok ? '통과' : '실패');
     process.exit(ok ? 0 : 1);
   }
+  case 'shuffle': { // 관리자 페이지 자동 섞기 시험(이름·자리·확인·결과 안내·다른 항목 불변·마감 뒤·건너뜀·0명·잠금·실패·예전 DB·아침 메뉴 초기화·390px)
+    const { shuffleTests } = await import('./admin_shuffle.mjs');
+    let ok = false;
+    try {
+      console.log('[1/2] 로컬 DB 올리기'); const warn = await dbUp(); if (warn) console.log('  안내: ' + warn.split('\n').join('\n  '));
+      console.log('[2/2] 자동 섞기 시험'); const r = await shuffleTests(); ok = r.ok; console.log(`  확인 ${r.pass}개`);
+    } catch (e) { console.error('실패:', e.stack || e); }
+    finally { dbStop(); console.log('postgres 끔.'); }
+    console.log(ok ? '통과' : '실패');
+    process.exit(ok ? 0 : 1);
+  }
   default:
-    console.log('사용법: node run.mjs <db-up|db-down|seed|server|dev|smoke|draw|reset|admin> [--picked] [--no-gender]'); process.exit(cmd ? 1 : 0);
+    console.log('사용법: node run.mjs <db-up|db-down|seed|server|dev|smoke|draw|reset|admin|shuffle> [--picked] [--no-gender]'); process.exit(cmd ? 1 : 0);
 }

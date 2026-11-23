@@ -990,7 +990,8 @@ export async function drawTests(only = []) {
     s.ok(await link.isVisible(), '발표용 뽑기 화면 링크 보임');
     s.ok(/draw\.html$/.test(await link.getAttribute('href')), `링크 주소: ${await link.getAttribute('href')}`);
     await page.locator('#roomCard > summary').click();
-    s.ok(await page.locator('#roomAuto').isVisible(), '객실표를 펴면 자동으로 나누기 단추 보임');
+    s.ok(await page.locator('#roomAuto').isVisible(), '객실표를 펴면 방 전부 새로 섞기 단추 보임');
+    page.once('dialog', (d) => d.accept()); // 자동 섞기는 확인을 한 번만 받음(뒤 단계의 뜻밖의 확인 상자는 받지 않음)
     await page.locator('#roomAuto').click();
     await wait(page, () => document.getElementById('roomMsg').textContent.length > 0, null, 15000);
     s.ok(/남녀 따로/.test(await page.locator('#roomMsg').innerText()), `자동으로 나누기 안내: ${await page.locator('#roomMsg').innerText()}`);
