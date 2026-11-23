@@ -79,10 +79,8 @@ body.draw { margin: 0; overflow: hidden; display: flex; align-items: center; jus
 .choice .s { margin-top: calc(var(--u) * .6); font-size: calc(var(--u) * 1.6); }
 .choice .chips { display: flex; gap: calc(var(--u) * .5); }
 .choice .chips i { width: calc(var(--u) * 2.2); height: calc(var(--u) * 2.2); border-radius: 50%; }
-.seg { display: inline-flex; padding: calc(var(--u) * .3); border-radius: 999px; background: var(--panel); border: calc(var(--u) * .12) solid var(--line2); }
-.seg button { padding: calc(var(--u) * .5) calc(var(--u) * 1.6); border: 0; border-radius: 999px; background: none; color: var(--dim); font: inherit; font-size: calc(var(--u) * 1.5); cursor: pointer; }
-.seg button[aria-pressed="true"] { background: var(--hl); color: var(--hl-ink); font-weight: 800; }
-.unitline { display: flex; align-items: center; gap: calc(var(--u) * 1); font-size: calc(var(--u) * 1.5); color: var(--dim); }
+.unitline { display: flex; align-items: center; gap: calc(var(--u) * 1); margin: 0; font-size: calc(var(--u) * 1.5); color: var(--dim); } /* 기본(전체 한 번에)이 아닐 때만 보임 */
+.unitline b { color: var(--gold); }
 
 /* 뽑는 화면: 왼쪽 공개 자리 | 오른쪽 지금까지 결과, 아래 진행 단추 */
 #playView { display: grid; grid-template-columns: 54fr 46fr; grid-template-rows: minmax(0, 1fr) auto; }
@@ -120,6 +118,26 @@ body.draw { margin: 0; overflow: hidden; display: flex; align-items: center; jus
 .flash.go { animation: flash .9s ease-out; }
 @keyframes flash { 0% { opacity: 0; } 15% { opacity: .75; } 100% { opacity: 0; } }
 .msg { margin: 0; min-height: 1.35em; font-size: calc(var(--u) * 1.8); color: var(--dim); }
+
+/* 전체 한 번에(기본): 뽑는 화면을 가운데 한 줄로(옆 결과판 없음 — 결과는 끝나면 전체 결과 화면에 한꺼번에) */
+.stage[data-unit="all"] #playView { grid-template-columns: minmax(0, 1fr); }
+.stage[data-unit="all"] #playView .board { display: none; }
+.stage[data-unit="all"] .reveal { gap: calc(var(--u) * 2); padding: calc(var(--u) * 2) calc(var(--u) * 6); }
+.stage[data-unit="all"] .slot { max-width: calc(var(--u) * 64); height: calc(var(--u) * 16); }
+.stage[data-unit="all"] .flash { background: radial-gradient(circle at 50% 42%, var(--flash, #fff), transparent 70%); }
+/* 룰렛: 모든 팀(방) 칸에 불이 돌다가, 멈추면 한꺼번에 켜짐 */
+.wheel.roulette { gap: calc(var(--u) * 1.8); padding: calc(var(--u) * 1) calc(var(--u) * 1.4); }
+.wheel.roulette .opt { min-width: calc(var(--u) * 10); height: calc(var(--u) * 6.4); font-size: calc(var(--u) * 2.6); transition: opacity .06s, transform .06s, box-shadow .06s; }
+.wheel.all-on .opt { opacity: 1; transform: scale(1.1); box-shadow: 0 0 0 calc(var(--u) * .35) var(--gold), 0 0 calc(var(--u) * 3) var(--gold); animation: allon .7s ease-out both; }
+@keyframes allon { 0% { transform: scale(.92); filter: brightness(2.2); } 40% { transform: scale(1.22); } 100% { transform: scale(1.1); filter: none; } }
+/* 저장 진행 막대(정한 인원 / 전체) */
+.savebar { position: relative; width: 100%; max-width: calc(var(--u) * 64); height: calc(var(--u) * 2.8); border-radius: 999px; overflow: hidden;
+           background: rgb(255 255 255 / .08); border: calc(var(--u) * .12) solid var(--line2); }
+.savebar i { position: absolute; inset: 0; transform-origin: left center; transform: scaleX(var(--p, 0)); transition: transform .25s ease-out;
+             background: linear-gradient(90deg, #dc2626, #2563eb, #facc15, #15803d); }
+.stage[data-kind="room"] .savebar i { background: linear-gradient(90deg, var(--room-m), var(--room-f)); }
+.savebar span { position: relative; display: flex; align-items: center; justify-content: center; height: 100%; font-size: calc(var(--u) * 1.7); font-weight: 800;
+                color: #fff; text-shadow: 0 0 calc(var(--u) * .4) rgb(0 0 0 / .9); font-variant-numeric: tabular-nums; }
 
 /* 한 팀·한 방씩 공개할 때의 공개 상자 */
 .group-box { display: flex; flex-direction: column; align-items: center; gap: calc(var(--u) * 1.4); width: 100%; }
@@ -177,19 +195,24 @@ body.draw { margin: 0; overflow: hidden; display: flex; align-items: center; jus
 .finale-board .grp-h { font-size: calc(var(--u) * 2.6); padding: calc(var(--u) * .7) calc(var(--u) * 1.4); }
 .finale-board .grp-h b { font-size: calc(var(--u) * 3); }
 .finale-board .grp ol { padding: calc(var(--u) * .6) calc(var(--u) * .9); }
-.finale-board .grp li { font-size: calc(var(--u) * 2.1); padding: calc(var(--u) * .15) calc(var(--u) * .5); }
-.finale-board.dense .grp li { font-size: calc(var(--u) * 1.6); }
+.finale-board .grp li { font-size: calc(var(--u) * var(--nm, 2.1)); padding: calc(var(--u) * .15) calc(var(--u) * .5); } /* --nm: draw.js fitBoard 가 칸 높이에 맞춰 정함 */
 .finale-board.board-room { grid-template-columns: 1fr; gap: calc(var(--u) * 1); }
 .finale-board .rrow { display: grid; gap: calc(var(--u) * 1); }
 .finale-board .rrow.men { grid-template-columns: repeat(5, minmax(0, 1fr)); }
 .finale-board .rrow.women { grid-template-columns: repeat(2, minmax(0, 1fr)); width: 60%; justify-self: center; }
 .finale-board.board-room .grp-h { font-size: calc(var(--u) * 2); padding: calc(var(--u) * .45) calc(var(--u) * 1.2); }
 .finale-board.board-room .grp-h b { font-size: calc(var(--u) * 2.4); }
-.finale-board.board-room .grp li { font-size: calc(var(--u) * 1.7); }
+.finale-board.board-room .grp li { font-size: calc(var(--u) * var(--nm, 1.7)); }
 .finale-board .rrow.women .grp ol { columns: 2; column-gap: calc(var(--u) * 1); } /* 여자 방은 칸이 넓어 이름을 두 줄로 흘림(한 방에 5~6명이어도 한 화면에) */
 .finale-board .rrow.women .grp li { break-inside: avoid; }
-.finale-board.board-room.dense .grp li { font-size: calc(var(--u) * 1.4); }
 .finale-board .grp { animation: rise .5s ease-out both; animation-delay: calc(var(--i, 0) * 120ms); }
+/* 전체 한 번에: 룰렛이 멈추면 팀(방) 색이 한꺼번에 켜지고, 이름이 모든 칸에 같은 줄부터 함께 채워짐(약 2초) */
+.finale-board.enter .grp { animation: none; }
+.finale-board.enter .grp-h { animation: lightup .9s ease-out both; animation-delay: calc(var(--i, 0) * 50ms); }
+@keyframes lightup { 0% { filter: grayscale(1) brightness(.45); } 45% { filter: grayscale(0) brightness(1.7); } 100% { filter: none; } }
+.finale-board.enter li { transform-origin: left center; animation: fillin .55s cubic-bezier(.2, 1.3, .4, 1) both; animation-delay: calc(450ms + var(--r, 0) * 110ms + var(--i, 0) * 30ms); }
+@keyframes fillin { 0% { opacity: 0; transform: scale(.4); } 40% { opacity: 1; transform: scale(1.06); background: rgb(251 191 36 / .5); } 100% { opacity: 1; transform: none; background: rgb(251 191 36 / 0); } }
+.finale-board.fit .grp, .finale-board.fit .grp * { animation: none !important; } /* 글자 크기를 재는 순간에만 */
 #finaleView .note { flex: none; }
 
 /* 팀·방 색 (팀 색은 style.css 의 .team-* 를 그대로 씀) */

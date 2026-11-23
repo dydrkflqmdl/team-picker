@@ -9,7 +9,14 @@
 
 // ── 바꾸기 쉬운 설정 ─────────────────────────────────────
 const DRAW_CONFIG = {
-  unit: 'group',           // 공개 단위 기본값: 'group' 한 팀·한 방씩(누를 때마다 팀 하나·방 하나) | 'person' 한 명씩. 첫 화면에서도 바꿀 수 있고 주소 ?unit=person 도 됨
+  // 공개 방법 기본값. 'all' 전체 한 번에(기본: 한 번 누르면 룰렛이 돌며 남은 사람 전원을 저장하고, 끝나면 저절로 전체 결과)
+  //   | 'group' 한 팀·한 방씩(누를 때마다 팀 하나·방 하나) | 'person' 한 명씩.  주소 ?unit=all · ?unit=group · ?unit=person 으로도 고름
+  unit: 'all',
+  // ── 전체 한 번에(룰렛) ──
+  rouletteMinMs: 3500,     // 룰렛이 도는 최소 시간. 저장이 이보다 빨리 끝나도 이만큼은 돌아 기대감을 줌(29명 저장: 로컬 약 1초, 실제 약 3~9초)
+  rouletteTickMs: 90,      // 룰렛이 도는 동안 이름·칸이 바뀌는 간격. 저장이 길어지면 진행 막대(n / 전체 명)가 차오르며 계속 돎(최대 시간은 저장이 끝날 때까지)
+  rouletteLandMs: 1400,    // 저장이 끝난 뒤 룰렛이 점점 느려지다 멈추는 시간
+  allHoldMs: 700,          // 멈춘 뒤 모든 팀(방) 칸이 한꺼번에 켜진 채 머무는 시간 → 그다음 저절로 전체 결과 화면
   nameSpinMs: 1800,        // 한 명씩: 이름이 섞이다 멈추기까지 걸리는 시간
   resultSpinMs: 1500,      // 한 명씩: 팀·방 돌림판이 도는 최소 시간(답이 늦으면 답이 올 때까지 계속 돎)
   pauseAfterName: false,   // true 면 이름이 멈춘 뒤 한 번 더 눌러야 팀·방이 돌아감(긴장감을 한 번 더)
@@ -21,7 +28,8 @@ const DRAW_CONFIG = {
   reducedSpinMs: 200,      // '움직임 줄이기'가 켜진 기기에서 섞는 시간(연출은 거의 없이 바로 결과)
   // 화면이 바뀐 직후 그 화면의 단추가 누름(클릭·Enter·Space)을 받지 않는 시간(ms). 앞 화면에서 두 번 누른 것이
   // 같은 자리에 새로 나타난 단추를 눌러 버리는 일을 막는다(예: '마지막 장면 보기'를 두 번 → '방 배정 뽑기로'가 눌림)
-  screenGuardMs: { menu: 700, intro: 700, finale: 1500 },
+  // finaleAuto: 룰렛이 끝나 저절로 전체 결과로 넘어간 직후(이름이 칸에 채워지는 연출 약 2초 + 여유). 룰렛 중에 누르던 키·클릭이 '방 배정 뽑기로' 등을 누르지 않게
+  screenGuardMs: { menu: 700, intro: 700, finale: 1500, finaleAuto: 2800 },
 };
 
 (() => {
@@ -31,6 +39,9 @@ const DRAW_CONFIG = {
   const C = DRAW_CONFIG;
   const params = new URLSearchParams(location.search);
   const PRACTICE = params.get('practice') === '1';
+  const UNITS = ['all', 'group', 'person'];
+  const UNIT_LABEL = { all: '전체 한 번에', group: '한 팀·한 방씩', person: '한 명씩' };
+  const FINALE_KEY = 'draw-finale'; // 전체 한 번에: 전체 결과를 띄운 탭이면(sessionStorage) 새로 고쳐도 전체 결과로 다시 엶
   const CODE_KEY = 'team-picker-admin'; // board.html 과 같은 저장 키: 같은 기기에서 관리자 페이지에 들어갔으면 다시 묻지 않음
   const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -55,7 +66,7 @@ const DRAW_CONFIG = {
     view: '',            // 보이는 화면: login · loading · menu · intro · play · finale
     phase: 'loading',    // 진행 단계(window.__draw.phase): login · loading · menu · intro · ready · spinning · named · reveal · saving · bulk · error · finale
     kind: null,          // 'team' | 'room'
-    unit: params.get('unit') === 'group' || params.get('unit') === 'person' ? params.get('unit') : C.unit,
+    unit: UNITS.includes(params.get('unit')) ? params.get('unit') : UNITS.includes(C.unit) ? C.unit : 'all', // 'all' | 'group' | 'person'
     people: [],          // board_state 의 명단(연습 모드는 견본 명단의 복사본)
     shown: new Set(),    // 화면 결과판에 나온 사람 id
     order: [],           // 결과판에 나온 순서
@@ -73,6 +84,8 @@ const DRAW_CONFIG = {
     retry: null,         // 오류 때 '다시 시도'가 할 일(같은 사람으로)
     afterSkip: null,     // 오류 때 '건너뛰기' 뒤 할 일
     guardUntil: 0,       // 이 시각(performance.now)까지 지금 화면의 단추는 누름을 받지 않음(screenGuardMs)
+    saveDone: 0,         // 전체 한 번에: 저장(팀·방이 정해진) 인원 — 진행 막대
+    saveTotal: 0,        // 전체 한 번에: 뽑을 수 있는 전체 인원
   };
   const byId = (id) => S.people.find((p) => p.id === id);
   const lock = () => { S.busy = true; updateControls(); };
@@ -119,7 +132,7 @@ const DRAW_CONFIG = {
     people: makePracticePeople(),
     async state() { await sleep(120); return practice.people.map((p) => ({ ...p })); },
     async pick(kind, p) {
-      await sleep(250 + Math.random() * 450); // 실제 요청처럼 잠깐 기다림
+      await sleep(60 + Math.random() * 140); // 실제 요청처럼 잠깐 기다림(전체 한 번에서 30명 저장이 3~4초쯤 걸리게)
       const me = practice.people.find((x) => x.id === p.id);
       if (!me) throw new Error('명단에 없는 부서·이름이에요.');
       if (me[kind]) return me[kind];
@@ -269,12 +282,14 @@ const DRAW_CONFIG = {
 
   // ── 화면 전환 · 공통 그리기 ───────────────────────────
   const VIEWS = ['login', 'loading', 'menu', 'intro', 'play', 'finale'];
-  function show(view) {
+  function show(view, guardMs) {
     S.view = view;
     $('#stage').dataset.view = view; // 마지막 장면에서는 꽃가루를 결과판 뒤로(draw.css)
+    $('#stage').dataset.kind = S.kind || '';
     if (view !== 'loading') { $('#stuck').hidden = true; $('#loadingMsg').textContent = '불러오는 중…'; }
+    if (['menu', 'intro', 'play'].includes(view)) finaleMark(null); // 전체 결과를 떠났으면 새로 고칠 때 다시 열지 않음
     for (const v of VIEWS) { $(`#${v}View`).hidden = v !== view; $(`#${v}View`).removeAttribute('aria-disabled'); }
-    guardScreen(view);
+    guardScreen(view, guardMs);
     $('#homeBtn').hidden = !['intro', 'play', 'finale'].includes(view);
     $('#progress').hidden = view !== 'play';
     if (view !== 'finale') confetti.stop();
@@ -283,9 +298,9 @@ const DRAW_CONFIG = {
   }
   // 화면이 바뀐 직후 잠깐 그 화면의 단추를 막음(아래 click 가로채기). aria-disabled 는 보조 기기·자동 시험도 '아직 못 누름'을 알게 함
   let guardTimer = 0;
-  function guardScreen(view) {
+  function guardScreen(view, override) {
     clearTimeout(guardTimer);
-    const ms = (C.screenGuardMs && C.screenGuardMs[view]) || 0;
+    const ms = override != null ? override : (C.screenGuardMs && C.screenGuardMs[view]) || 0;
     S.guardUntil = ms ? performance.now() + ms : 0;
     if (!ms) return;
     const el = $(`#${view}View`);
@@ -293,10 +308,25 @@ const DRAW_CONFIG = {
     guardTimer = setTimeout(() => { el.removeAttribute('aria-disabled'); S.guardUntil = 0; }, ms);
   }
   const screenGuarded = () => performance.now() < S.guardUntil;
+  // 전체 한 번에: 전체 결과를 띄운 탭이면 새로 고쳐도 전체 결과로 다시 엶(이 탭에만 기억, 연습 모드는 기억 안 함)
+  function finaleMark(kind) {
+    if (PRACTICE) return;
+    try { if (kind) sessionStorage.setItem(FINALE_KEY, JSON.stringify({ kind, at: Date.now() })); else sessionStorage.removeItem(FINALE_KEY); } catch {}
+  }
+  function finaleMarked() {
+    if (PRACTICE || S.unit !== 'all') return null;
+    try { const r = JSON.parse(sessionStorage.getItem(FINALE_KEY) || 'null'); return r && KINDS[r.kind] ? r.kind : null; } catch { return null; }
+  }
   document.addEventListener('click', (e) => { // 키보드로 누른 것도 click 으로 오므로 여기서 함께 막힘
     if (!screenGuarded()) return;
     const b = e.target && e.target.closest && e.target.closest('button, a');
-    if (b && b.closest(`#${S.view}View`)) { e.preventDefault(); e.stopImmediatePropagation(); }
+    if (b && b.closest(`#${S.view}View`)) { e.preventDefault(); e.stopImmediatePropagation(); if (b.blur) b.blur(); }
+  }, true);
+  // 막힌 클릭으로 그 단추에 초점이 남으면, 보호가 끝난 뒤 스페이스·Enter 가 그 단추를 누름 → 보호 중에는 마우스로 초점도 못 옮기게
+  document.addEventListener('mousedown', (e) => {
+    if (!screenGuarded()) return;
+    const b = e.target && e.target.closest && e.target.closest('button, a');
+    if (b && b.closest(`#${S.view}View`)) e.preventDefault();
   }, true);
 
   function setPhase(ph) {
@@ -319,10 +349,12 @@ const DRAW_CONFIG = {
     const next = $('#nextBtn');
     const all = $('#allBtn');
     const grp = S.unit === 'group';
+    const allMode = S.unit === 'all';
     const w = S.kind ? KINDS[S.kind].unitWord : '';
     let text = '다음 ▶';
     if (S.phase === 'ready') {
-      if (grp) {
+      if (allMode) text = S.queue.length ? '뽑기 시작 ▶' : '전체 결과 보기 ▶';
+      else if (grp) {
         if (S.queue.length) text = '뽑기 시작 ▶';
         else if (S.groupIdx + 1 < S.groupList.length) text = `${S.groupIdx < 0 ? '첫' : '다음'} ${w} 공개 ▶`;
         else text = '마지막 장면 보기 ▶';
@@ -336,11 +368,13 @@ const DRAW_CONFIG = {
     next.setAttribute('aria-disabled', String(locked));
     // '모두 공개'는 기다리는 동안에만. 한 팀·한 방씩에서 이미 다 저장했으면 '남은 팀 모두 공개'
     const unrevealed = grp && !S.queue.length && S.groupIdx + 1 < S.groupList.length;
-    all.hidden = !(S.phase === 'ready' || S.phase === 'named') || !(S.queue.length || unrevealed);
+    all.hidden = allMode || !(S.phase === 'ready' || S.phase === 'named') || !(S.queue.length || unrevealed); // 전체 한 번에는 한 번 누르면 다 되므로 없음
     all.textContent = S.queue.length ? `남은 ${S.queue.length}명 모두 공개` : `남은 ${w} 모두 공개`;
     $('#homeBtn').disabled = S.busy;
     // 진행 숫자: 공개한 사람 / 뽑을 수 있는 사람
-    if (S.kind && S.view === 'play') $('#progress').innerHTML = `공개 <b>${shownEligible().length}</b> / ${eligiblePeople().length}명`;
+    if (S.kind && S.view === 'play') {
+      $('#progress').innerHTML = allMode ? `정함 <b>${S.saveDone}</b> / ${S.saveTotal || eligiblePeople().length}명` : `공개 <b>${shownEligible().length}</b> / ${eligiblePeople().length}명`;
+    }
     const sb = $('#soundBtn');
     sb.textContent = sound.on ? '🔊 소리 켜짐' : '🔇 소리 꺼짐';
     sb.setAttribute('aria-pressed', String(sound.on));
@@ -355,10 +389,11 @@ const DRAW_CONFIG = {
     for (const id of ids) { const p = byId(id); if (p && by[p[kind]]) by[p[kind]].push(p); }
     const max = Math.max(0, ...groups.map((g) => by[g].length));
     const roomy = kind === 'team' ? (opt.finale ? 10 : 9) : (opt.finale ? 6 : 5); // 한 칸에 이보다 많으면 글자를 줄여 한 화면에
-    target.className = `board${opt.finale ? ' finale-board' : ''} board-${kind}${max > roomy ? ' dense' : ''}`;
+    target.className = `board${opt.finale ? ' finale-board' : ''} board-${kind}${max > roomy && !opt.finale ? ' dense' : ''}`;
+    // --i: 칸 순번, --r: 칸 안 줄 순번(전체 결과 연출에서 모든 칸이 같은 줄부터 함께 채워짐)
     const card = (g, i) => `<section class="grp${by[g].length ? '' : ' empty-g'}" style="--i:${i}" data-testid="draw-group-${g}" data-count="${by[g].length}">`
       + `<h3 class="grp-h ${groupClass(g)}"><span>${esc(groupLabel(g))}</span><b>${by[g].length}</b></h3>`
-      + `<ol>${by[g].map((p) => `<li${!opt.finale && S.fresh.has(p.id) ? ' class="new"' : ''} data-id="${p.id}"><span class="nm">${esc(p.name)}</span><small>${esc(p.dept)}</small></li>`).join('')}</ol></section>`;
+      + `<ol>${by[g].map((p, r) => `<li${!opt.finale && S.fresh.has(p.id) ? ' class="new"' : ''} style="--r:${r}" data-id="${p.id}"><span class="nm">${esc(p.name)}</span><small>${esc(p.dept)}</small></li>`).join('')}</ol></section>`;
     if (opt.finale && kind === 'room') {
       const men = groups.filter((g) => roomGender(g) === '남');
       const women = groups.filter((g) => roomGender(g) === '여');
@@ -369,6 +404,7 @@ const DRAW_CONFIG = {
 
   // 칸보다 긴 이름은 글자를 줄여 칸 안에 다 보이게(줄임표보다 축소 우선). 부서는 남는 자리만큼만 보이고 넘치면 줄임표
   function fitNames(root) {
+    let tooLong = 0; // 가장 작게(0.5배) 줄여도 칸에 안 들어가는 이름 수
     for (const li of root.querySelectorAll('.grp li, .group-box li')) {
       const nm = li.querySelector('.nm, b');
       if (!nm) continue;
@@ -376,16 +412,38 @@ const DRAW_CONFIG = {
       const cs = getComputedStyle(li);
       const room = li.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
       const w = nm.scrollWidth;
-      if (room > 0 && w > room) nm.style.fontSize = `${Math.max(0.5, (room / w) * 0.97).toFixed(3)}em`;
+      if (room > 0 && w > room) { nm.style.fontSize = `${Math.max(0.5, (room / w) * 0.97).toFixed(3)}em`; if ((room / w) * 0.97 < 0.5) tooLong++; }
+      // 전체 결과: 부서가 남은 자리에 다 안 들어가면 줄임표 대신 숨김(이름이 주인공. 잘린 부서는 읽기 어려움)
+      const sm = li.querySelector('small');
+      if (sm && li.closest('.finale-board')) { sm.hidden = false; if (sm.scrollWidth > sm.clientWidth + 1) sm.hidden = true; }
     }
+    return tooLong;
+  }
+  // 전체 결과 판: 이름 글자를 칸 높이에 맞춰 가장 크게(뒷자리에서도 읽히게). 넘치면 조금씩 줄임
+  const FINALE_FONT = { team: 3.2, room: 3.2, min: 1.2 }; // 이름 글자 크기(무대 너비 %)의 시작값. 칸에 넘치면 0.1씩 줄임(견본 29~30명: 팀 약 2.6, 방 약 2.6)
+  function fitBoard(board) {
+    let u = board.classList.contains('board-team') ? FINALE_FONT.team : FINALE_FONT.room;
+    // 칸(grp)은 판 높이까지 늘어나고 넘치는 것은 칸 안에서 잘리므로, 판과 칸 모두 넘치지 않는지 봄
+    const over = () => board.scrollHeight > board.clientHeight + 1 || [...board.querySelectorAll('.grp')].some((g) => g.scrollHeight > g.clientHeight + 1);
+    board.classList.add('fit'); // 재는 동안 칸이 들어오는 연출(움직인 위치)을 멈춤 — 움직인 위치가 넘침으로 잡히지 않게
+    board.style.setProperty('--nm', u);
+    // 높이에 넘치거나, 아주 긴 이름이 반으로 줄여도 칸 너비에 안 들어가면 판 전체 글자를 0.1씩 줄임
+    for (let i = 0; i < 40 && u > FINALE_FONT.min && (over() || fitNames(board) > 0); i++) {
+      u = Math.round((u - 0.1) * 100) / 100;
+      board.style.setProperty('--nm', u);
+    }
+    fitNames(board);
+    board.classList.remove('fit');
   }
 
   // 공개 자리(왼쪽)에 무엇을 보일지
   function setReveal(mode) {
     $('#reveal').dataset.mode = mode;
     $('#idleBox').hidden = mode !== 'idle';
-    $('#slot').hidden = !['person', 'saving', 'bulk', 'error'].includes(mode);
-    $('#wheel').hidden = !['person', 'error'].includes(mode) || S.unit === 'group';
+    $('#slot').hidden = !['person', 'saving', 'bulk', 'error', 'roulette'].includes(mode);
+    $('#wheel').hidden = !((S.unit === 'person' && ['person', 'error'].includes(mode)) || mode === 'roulette');
+    $('#wheel').classList.toggle('roulette', mode === 'roulette');
+    $('#saveBar').hidden = !(S.unit === 'all' && (mode === 'roulette' || mode === 'error'));
     $('#groupBox').hidden = mode !== 'group';
     $('#errBox').hidden = mode !== 'error';
     if (mode !== 'person' && mode !== 'bulk') $('#result').hidden = true;
@@ -422,6 +480,7 @@ const DRAW_CONFIG = {
   }
   function readyMsg() {
     const w = KINDS[S.kind].unitWord;
+    if (S.unit === 'all') return S.queue.length ? '' : '누르면 전체 결과를 보여 줘요';
     if (S.unit === 'group') {
       if (S.queue.length) return '';
       return S.groupIdx + 1 < S.groupList.length ? `누르면 다음 ${w}을 공개해요` : '모두 공개했어요! 누르면 마지막 장면으로 넘어가요';
@@ -630,6 +689,116 @@ const DRAW_CONFIG = {
     unlock();
   }
 
+  // ── 전체 한 번에(기본) ────────────────────────────────
+  // 한 번 누르면 룰렛이 돌며 남은 사람을 한 명씩 DB 로 정해 저장한다(이름이 섞이고 팀·방 칸에 불이 돎, 진행 막대가 참).
+  // 저장이 끝나고 최소 시간(rouletteMinMs)이 지나면 점점 느려지다 멈추고, 모든 칸이 한꺼번에 켜진 뒤 저절로 전체 결과 화면으로 넘어간다.
+  async function stepAll() {
+    if (S.queue.length) return rouletteAll();
+    return finale({ enter: true });
+  }
+  const chipLabel = (key) => (TEAMS[key] ? TEAMS[key] : `${roomGender(key)} ${key.slice(1)}호`);
+  function saveProgress() {
+    const el = eligiblePeople();
+    S.saveTotal = el.length;
+    S.saveDone = el.filter((p) => p[S.kind]).length;
+    $('#saveBar').style.setProperty('--p', S.saveTotal ? (S.saveDone / S.saveTotal).toFixed(4) : 0);
+    $('#saveBar').setAttribute('aria-valuenow', String(S.saveDone));
+    $('#saveBar').setAttribute('aria-valuemax', String(S.saveTotal));
+    $('#saveCount').textContent = `${S.saveDone} / ${S.saveTotal}명`;
+    updateControls();
+  }
+  async function rouletteAll() {
+    lock();
+    setPhase('saving');
+    setReveal('roulette');
+    const k = S.kind;
+    const w = KINDS[k].unitWord;
+    const rm = reduced();
+    const wheel = $('#wheel');
+    wheel.classList.remove('all-on');
+    wheel.innerHTML = KINDS[k].groups.map((g) => `<span class="opt ${groupClass(g)}" data-key="${g}" data-testid="draw-wheel-${g}">${esc(chipLabel(g))}</span>`).join('');
+    const chips = [...wheel.children];
+    // 이름과 함께 그 사람의 칸에 불: 이미 정해진 사람은 진짜 팀(방), 아직이면 그 사람이 갈 수 있는 칸 중 아무 데나(방은 같은 성별만).
+    // 느려질 때(모두 저장된 뒤) 보이는 이름·칸 짝은 모두 진짜 결과라, 화면이 틀린 짝을 보여 주지 않음
+    const showPair = (p) => {
+      showName(p, false);
+      const opts = optionsFor(p, k);
+      const key = p[k] || opts[Math.floor(Math.random() * opts.length)];
+      chips.forEach((c) => c.classList.toggle('on', c.dataset.key === key));
+    };
+    let prev = null;
+    const nextPerson = () => { // 지난번과 다른 사람
+      let x = pool[Math.floor(Math.random() * pool.length)];
+      if (x === prev && pool.length > 1) x = pool[(pool.indexOf(x) + 1) % pool.length];
+      prev = x;
+      return x;
+    };
+    const pool = (S.queue.length > 1 ? S.queue : eligiblePeople().map((p) => p.id)).map(byId).filter(Boolean);
+    saveProgress();
+    setMsg(`${w}을 정하고 있어요…`);
+    if (rm) { $('#slotDept').textContent = ''; $('#slotName').textContent = `${w}을 정하는 중`; $('#slot').classList.remove('land'); }
+    const start = performance.now();
+    let spinning = !rm;
+    const spin = (async () => { // 저장하는 동안 이름·칸이 계속 바뀜(연출). 움직임 줄이기면 돌지 않음
+      while (spinning) {
+        if (pool.length) showPair(nextPerson());
+        sound.tick();
+        await sleep(C.rouletteTickMs);
+      }
+    })();
+    try {
+      while (S.queue.length) {
+        const p = byId(S.queue[0]);
+        S.current = p;
+        let v;
+        try { v = await api.pick(k, p, (n) => setMsg(`연결이 느려 다시 보내고 있어요… (${n})`)); } catch (e) {
+          spinning = false;
+          await spin;
+          chips.forEach((c) => c.classList.remove('on'));
+          showName(p, true);
+          return fail(e, { retry: rouletteAll, afterSkip: rouletteAll });
+        }
+        p[k] = v; // 화면에는 아직 안 보임(전체 결과에서 한꺼번에)
+        S.queue = S.queue.filter((id) => id !== p.id);
+        saveProgress();
+      }
+      S.current = null;
+      setMsg(`${w}을 모두 정했어요!`);
+      while (performance.now() - start < (rm ? C.reducedSpinMs : C.rouletteMinMs)) await sleep(30); // 최소 시간까지는 계속 돎
+    } finally { spinning = false; }
+    await spin;
+    const fresh = api.state().catch(() => null); // 전체 결과에 쓸 최신 명단을 멈추는 동안 미리 받아 둠
+    if (!rm) { // 점점 느려지다 멈춤
+      setPhase('landing');
+      let t = 0;
+      while (t < C.rouletteLandMs) {
+        const q = t / C.rouletteLandMs;
+        const gap = C.rouletteTickMs + 300 * q * q;
+        if (pool.length) showPair(nextPerson());
+        sound.tick();
+        await sleep(gap);
+        t += gap;
+      }
+    }
+    // 모든 칸이 한꺼번에 켜짐 → 전체 결과로
+    chips.forEach((c) => c.classList.remove('on'));
+    wheel.classList.add('all-on');
+    $('#slotDept').textContent = `${S.saveDone}명 모두 정했어요`;
+    const n = $('#slotName');
+    n.textContent = '결과 공개!';
+    n.classList.remove('long', 'tick');
+    $('#slot').classList.add('land');
+    restart(n, 'land');
+    flash('#ffffff');
+    const sr = $('#slot').getBoundingClientRect();
+    const cr = $('#confetti').getBoundingClientRect();
+    confetti.burst([...KINDS[k].groups.map(colorOf), '#ffffff', '#fbbf24'], 140, { x: sr.left - cr.left + sr.width / 2, y: sr.top - cr.top + sr.height / 2 });
+    sound.reveal();
+    announce(`${KINDS[k].label}: 모두 정했어요. 전체 결과를 보여 줘요.`);
+    await sleep(rm ? 0 : C.allHoldMs);
+    return finale({ enter: true, fresh });
+  }
+
   // ── 남은 사람 모두 공개 ───────────────────────────────
   // 남은 사람을 차례로 DB 로 정해 저장하며 빠르게 보여 준 뒤 마지막 장면으로
   async function runBulk() {
@@ -694,7 +863,7 @@ const DRAW_CONFIG = {
   // 연출 중이거나 요청 중(busy)이면 무시한다. 확인 상자가 열려 있어도 무시.
   function advance() {
     if (S.dialog || S.busy || S.view !== 'play') return;
-    if (S.phase === 'ready') return go(S.unit === 'group' ? stepGroup : stepPerson);
+    if (S.phase === 'ready') return go(S.unit === 'all' ? stepAll : S.unit === 'group' ? stepGroup : stepPerson);
     if (S.phase === 'named') return go(() => spinAndReveal(S.current, S.pending));
     if (S.phase === 'error') return retryNow();
   }
@@ -752,10 +921,14 @@ const DRAW_CONFIG = {
       ? `성별이 없어 뽑을 수 없는 <b>${noGender.length}명</b>은 이번에 건너뛰어요: ${noGender.map((p) => `${esc(p.name)}(${esc(p.dept)})`).join(', ')}<br>관리자 페이지 명단에서 성별을 넣으면 같이 뽑을 수 있고, 객실표에서 방을 직접 넣어도 돼요.`
       : '';
     const acts = [];
+    let hint = '';
     if (left.length && !done.length) acts.push(`<button class="btn big primary" type="button" data-act="keep" data-testid="draw-start">시작하기 ▶</button>`);
     if (left.length && done.length) acts.push(`<button class="btn big primary" type="button" data-act="keep" data-testid="draw-keep">그대로 두고 남은 ${left.length}명만 뽑기 ▶</button>`);
     if (!left.length && done.length) {
-      if (S.unit === 'group') { // 모두 정해졌으면 팀(방) 하나씩 공개. 이 기기에서 하다 끊겼으면 이어서
+      if (S.unit === 'all') { // 모두 정해졌으면 룰렛 없이 전체 결과. 다시 뽑으려면 '모두 비우고 처음부터'
+        acts.push(`<button class="btn big primary" type="button" data-act="keep" data-testid="draw-show-result">전체 결과 보기 ▶</button>`);
+        hint = `룰렛 없이 전체 결과를 바로 보여 줘요. 다시 뽑으려면 <b>모두 비우고 처음부터</b>를 눌러요(한 번 더 물어봐요).`;
+      } else if (S.unit === 'group') { // 모두 정해졌으면 팀(방) 하나씩 공개. 이 기기에서 하다 끊겼으면 이어서
         const gl = groupsFor(k);
         const r = savedReveal(k);
         if (r >= 0 && r < gl.length - 1) {
@@ -768,6 +941,8 @@ const DRAW_CONFIG = {
     if (done.length) acts.push(`<button class="btn danger" type="button" data-act="clear" data-testid="draw-clear">모두 비우고 처음부터</button>`);
     acts.push(`<button class="btn ghost" type="button" data-act="back" data-testid="draw-back">← 처음 화면</button>`);
     $('#introActs').innerHTML = acts.join('');
+    $('#introHint').hidden = !hint;
+    $('#introHint').innerHTML = hint;
     setPhase('intro');
     show('intro');
     const first = $('#introActs .primary');
@@ -829,8 +1004,9 @@ const DRAW_CONFIG = {
   function begin(opt = {}) {
     const k = S.kind;
     const grp = S.unit === 'group';
+    const allMode = S.unit === 'all';
     const el = eligiblePeople();
-    const done = grp ? [] : el.filter((p) => p[k]).sort(byName);
+    const done = grp || allMode ? [] : el.filter((p) => p[k]).sort(byName);
     S.shown = new Set(done.map((p) => p.id));
     S.order = done.map((p) => p.id);
     S.fresh = new Set();
@@ -844,8 +1020,11 @@ const DRAW_CONFIG = {
     S.error = '';
     showError('');
     const w = KINDS[k].unitWord;
+    S.saveDone = el.length - S.queue.length;
+    S.saveTotal = el.length;
     let sub = `누르면 첫 사람을 뽑아요 (남은 ${S.queue.length}명)`;
     if (!S.queue.length) { // 모두 정해져 있음
+      if (allMode) return go(() => finale({ enter: true })); // 룰렛 없이 바로 전체 결과
       if (!grp || opt.finale) return go(finale);
       S.groupList = groupsFor(k);
       S.groupIdx = Math.max(-1, Math.min(opt.resumeIdx == null ? -1 : opt.resumeIdx, S.groupList.length - 1));
@@ -855,6 +1034,9 @@ const DRAW_CONFIG = {
       }
       sub = S.groupIdx < 0 ? `누르면 ${groupLabel(S.groupList[0])}부터 하나씩 공개해요`
         : `${groupLabel(S.groupList[S.groupIdx])}까지 공개했어요. 누르면 ${groupLabel(S.groupList[S.groupIdx + 1])}을 공개해요`;
+    } else if (allMode) {
+      sub = `누르면 남은 ${S.queue.length}명의 ${w}을 한꺼번에 정하고, 끝나면 전체 결과를 보여 줘요`;
+      if (S.saveDone) sub += ` (이미 뽑은 ${S.saveDone}명도 함께 나와요)`;
     } else if (grp) sub = `누르면 남은 ${S.queue.length}명의 ${w}을 정해 저장하고, ${w} 하나씩 공개해요`;
     show('play');
     clearSlot();
@@ -867,16 +1049,24 @@ const DRAW_CONFIG = {
   }
 
   // ── 마지막 장면 ───────────────────────────────────────
-  async function finale() {
+  // opt.enter: 전체 한 번에 — 칸 색이 켜지고 이름이 칸에 채워지는 연출 + 넘어간 직후 단추를 더 오래 막음(screenGuardMs.finaleAuto)
+  // opt.fresh: 미리 받아 둔 명단(Promise). opt.quiet: 새로 고친 뒤 다시 여는 것 — 꽃가루·소리 없이
+  async function finale(opt = {}) {
     lock();
     setPhase('finale');
     let stale = false;
-    try { await loadPeople(); } catch (e) { stale = true; } // 못 받으면 지금 가진 결과로 보여 줌
+    const pre = opt.fresh ? await opt.fresh : null;
+    if (pre && Array.isArray(pre)) S.people = pre;
+    else { try { await loadPeople(); } catch (e) { stale = true; } } // 못 받으면 지금 가진 결과로 보여 줌
     const k = S.kind;
     const el = eligiblePeople();
     const left = el.filter((p) => !p[k]);
     const skippedLeft = left.filter((p) => S.skipped.has(p.id));
     const noGender = k === 'room' ? S.people.filter((p) => !eligible(p, k)) : [];
+    if (S.unit === 'all') { // 전체 결과에 나온 사람 = 공개한 사람(__draw.revealed)
+      S.shown = new Set(el.filter((p) => p[k]).map((p) => p.id));
+      S.order = [...S.shown];
+    }
     $('#finaleTitle').textContent = `🎉 ${PRACTICE ? '(연습) ' : ''}${KINDS[k].done}`;
     renderBoard($('#finaleBoard'), { finale: true });
     const notes = [];
@@ -891,10 +1081,16 @@ const DRAW_CONFIG = {
     else acts.push(`<button class="btn" type="button" data-act="team" data-testid="draw-next-kind">① 팀 뽑기로 →</button>`);
     acts.push(`<button class="btn ghost" type="button" data-act="home" data-testid="draw-finale-home">처음 화면으로</button>`);
     $('#finaleActs').innerHTML = acts.join('');
-    show('finale');
-    fitNames($('#finaleBoard'));
-    confetti.rain([...KINDS[k].groups.map(colorOf), '#ffffff', '#fbbf24'], C.confettiMs);
-    sound.fanfare();
+    show('finale', opt.enter ? C.screenGuardMs.finaleAuto : undefined);
+    fitBoard($('#finaleBoard')); // 연출(처음에 커졌다 줄어드는 이름) 전에 크기를 잼
+    if (opt.enter && !reduced()) $('#finaleBoard').classList.add('enter');
+    if (S.unit === 'all') finaleMark(k);
+    if (!opt.quiet) {
+      const colors = [...KINDS[k].groups.map(colorOf), '#ffffff', '#fbbf24'];
+      if (opt.enter) { const r = $('#confetti').getBoundingClientRect(); confetti.burst(colors, 160, { x: r.width / 2, y: r.height * 0.12 }); }
+      confetti.rain(colors, C.confettiMs);
+      sound.fanfare();
+    }
     announce(KINDS[k].done);
     unlock();
   }
@@ -916,7 +1112,6 @@ const DRAW_CONFIG = {
     };
     $('#teamStatus').textContent = st('team');
     $('#roomStatus').textContent = st('room');
-    for (const b of document.querySelectorAll('[data-unit]')) b.setAttribute('aria-pressed', String(b.dataset.unit === S.unit));
     S.kind = null;
     setPhase('menu');
     show('menu');
@@ -932,12 +1127,21 @@ const DRAW_CONFIG = {
   }
   $('#pickTeam').addEventListener('click', () => go(() => openKind('team')));
   $('#pickRoom').addEventListener('click', () => go(() => openKind('room')));
-  for (const b of document.querySelectorAll('[data-unit]')) {
-    b.addEventListener('click', () => {
-      S.unit = b.dataset.unit;
-      for (const x of document.querySelectorAll('[data-unit]')) x.setAttribute('aria-pressed', String(x === b));
-    });
+  // 공개 방법: 첫 화면은 단순하게(기본 '전체 한 번에'는 따로 표시하지 않음). 다른 방법은 DRAW_CONFIG.unit 이나 주소 ?unit=group · ?unit=person 으로 고르고,
+  // 그때만 첫 화면에 지금 방법과 '기본으로 되돌리기' 링크가 보임(모르고 다른 방법으로 진행하지 않게)
+  function setupUnitLine() {
+    const keep = (u) => { const q = new URLSearchParams(location.search); if (u) q.set('unit', u); else q.delete('unit'); const s = q.toString(); return `draw.html${s ? `?${s}` : ''}`; };
+    $('#stage').dataset.unit = S.unit; // 전체 한 번에는 뽑는 화면을 가운데 한 줄로(draw.css)
+    const line = $('#unitLine');
+    line.hidden = S.unit === 'all';
+    $('#unitName').textContent = UNIT_LABEL[S.unit];
+    $('#unitReset').href = keep('all');
+    // 연습 ↔ 실제 링크도 지금 공개 방법을 그대로 가져감
+    const u = params.get('unit');
+    $('#toPractice').href = `draw.html?practice=1${u ? `&unit=${encodeURIComponent(u)}` : ''}`;
+    $('#toLive').href = `draw.html${u ? `?unit=${encodeURIComponent(u)}` : ''}`;
   }
+  setupUnitLine();
 
   // ── 진행자 확인 ───────────────────────────────────────
   function toLogin(msg, wrongCode) {
@@ -961,7 +1165,18 @@ const DRAW_CONFIG = {
     store.set(CODE_KEY, code);
     $('#code').value = '';
     showError('');
+    const back = finaleMarked();
+    if (back) return reopenFinale(back);
     showMenu();
+  }
+  // 전체 결과를 띄운 채 새로 고쳤으면 전체 결과로 다시(결과는 DB 에 있어 그대로). 꽃가루·소리 없이
+  function reopenFinale(kind) {
+    S.kind = kind;
+    S.queue = [];
+    S.skipped = new Set();
+    S.current = null;
+    S.last = null;
+    return finale({ quiet: true });
   }
   $('#codeForm').addEventListener('submit', (e) => {
     e.preventDefault();
@@ -1016,6 +1231,12 @@ const DRAW_CONFIG = {
   $('#dlgCancel').addEventListener('click', (e) => { if (e.detail === 0 && dlgGuarded()) return; closeDialog(false); });
   // 스페이스는 키를 뗄 때 단추가 눌리므로 떼는 것도 막음
   document.addEventListener('keyup', (e) => { if (S.dialog && (e.key === ' ' || e.key === 'Enter') && dlgGuarded()) e.preventDefault(); }, true);
+  // 화면이 막 바뀐 동안(예: 룰렛이 끝나 저절로 전체 결과로 넘어간 직후)은 그 화면 단추 위에서 뗀 스페이스도 누름이 되지 않게
+  document.addEventListener('keyup', (e) => {
+    if (S.dialog || !screenGuarded() || !(e.key === ' ' || e.key === 'Enter')) return;
+    const b = e.target && e.target.closest && e.target.closest('button, a');
+    if (b && b.closest(`#${S.view}View`)) e.preventDefault();
+  }, true);
   $('#dlg').addEventListener('click', (e) => { if (e.target === $('#dlg')) closeDialog(false); });
   $('#dlg').addEventListener('keydown', (e) => { // Tab 은 취소 ↔ 확인 사이만 오감
     if (e.key !== 'Tab') return;
@@ -1071,7 +1292,8 @@ const DRAW_CONFIG = {
     if (!NEXT_KEYS.has(e.key)) return;
     const onControl = t && t.closest && t.closest('button, a, summary, select');
     if ((e.key === ' ' || e.key === 'Spacebar' || e.key === 'Enter') && onControl) { // 단추에 초점이 있으면 브라우저가 그 단추를 한 번 누름
-      if (e.repeat) e.preventDefault(); // 누르고 있어 반복되는 Enter 로 단추가 계속 눌리지 않게
+      // 누르고 있어 반복되는 Enter 로 단추가 계속 눌리지 않게. 화면이 막 바뀐 동안(screenGuardMs)은 그 화면 단추를 키로 누르지 못하게
+      if (e.repeat || (screenGuarded() && onControl.closest(`#${S.view}View`))) e.preventDefault();
       return;
     }
     if (S.view !== 'play') return;
@@ -1124,6 +1346,8 @@ const DRAW_CONFIG = {
         noGender: k === 'room' ? S.people.filter((p) => !eligible(p, k)).length : 0,
         current: pick(S.current),
         last: S.last ? Object.freeze({ ...S.last }) : null,
+        saveDone: S.saveDone,
+        saveTotal: S.saveTotal,
         groupIndex: S.groupIdx,
         groupCount: S.groupList.length,
         savedRevealIndex: k ? savedReveal(k) : -1,
