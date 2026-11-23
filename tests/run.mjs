@@ -6,6 +6,8 @@
 //   dev          db-up + seed(+옵션) + server 를 한 번에 띄워 두고 Ctrl-C 로 전부 정리
 //   draw [번호...]  발표용 뽑기 화면(draw.html) 통합 시험(DB 올리기 → 시나리오 → 끄기)
 //   smoke        DB 올리기 → 명단 → 서버 → 브라우저 시험 → 정리(DB 끄기)까지 한 번에
+//   reset        관리자 페이지 초기화 칸 통합 시험(DB 올리기 → 시나리오 → 끄기)
+//   admin        관리자 페이지를 참가자 화면에 맞춘 것 시험(차량 열·분류 단추·엑셀 열·마감 안내·발표용 링크·프로젝터 보기·390px·칸 통일·칸 순서·열림 기억)
 import { ADMIN_CODE, dbStop, dbUp, connect, PORT, isRunning } from './db.mjs';
 import { resetRoster } from './seed.mjs';
 import { startServer } from './server.mjs';
@@ -68,6 +70,28 @@ switch (cmd) {
     console.log(ok ? '통과' : '실패');
     process.exit(ok ? 0 : 1);
   }
+  case 'reset': { // 관리자 페이지 초기화 칸 시험(전체·항목별 초기화, 확인 한 번, 마감 문구, 참가자 화면, 중간 실패 뒤 이어서)
+    const { resetTests } = await import('./reset.mjs');
+    let ok = false;
+    try {
+      console.log('[1/2] 로컬 DB 올리기'); const warn = await dbUp(); if (warn) console.log('  안내: ' + warn.split('\n').join('\n  '));
+      console.log('[2/2] 초기화 시험'); const r = await resetTests(); ok = r.ok; console.log(`  확인 ${r.pass}개`);
+    } catch (e) { console.error('실패:', e.stack || e); }
+    finally { dbStop(); console.log('postgres 끔.'); }
+    console.log(ok ? '통과' : '실패');
+    process.exit(ok ? 0 : 1);
+  }
+  case 'admin': { // 관리자 페이지 정렬 시험(한눈에 보기 차량·분류 단추·엑셀 열·마감 안내 네 칸·방/팀 안내와 링크·프로젝터 보기·390px)
+    const { adminAlignTests } = await import('./admin_align.mjs');
+    let ok = false;
+    try {
+      console.log('[1/2] 로컬 DB 올리기'); const warn = await dbUp(); if (warn) console.log('  안내: ' + warn.split('\n').join('\n  '));
+      console.log('[2/2] 관리자 페이지 정렬 시험'); const r = await adminAlignTests(); ok = r.ok; console.log(`  확인 ${r.pass}개`);
+    } catch (e) { console.error('실패:', e.stack || e); }
+    finally { dbStop(); console.log('postgres 끔.'); }
+    console.log(ok ? '통과' : '실패');
+    process.exit(ok ? 0 : 1);
+  }
   default:
-    console.log('사용법: node run.mjs <db-up|db-down|seed|server|dev|smoke|draw> [--picked] [--no-gender]'); process.exit(cmd ? 1 : 0);
+    console.log('사용법: node run.mjs <db-up|db-down|seed|server|dev|smoke|draw|reset|admin> [--picked] [--no-gender]'); process.exit(cmd ? 1 : 0);
 }
