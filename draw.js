@@ -55,7 +55,8 @@ const DRAW_CONFIG = {
   const groupClass = (key) => (TEAMS[key] ? `team-${key}` : `room-${key[0]}`);
   const groupLabel = (key) => (TEAMS[key] ? `${TEAMS[key]} 팀` : ROOMS[key]);
   const shortLabel = (key) => (TEAMS[key] ? TEAMS[key] : ROOMS[key].replace(/^(남자|여자)\s*/, ''));
-  const byName = (a, b) => a.dept.localeCompare(b.dept, 'ko') || a.name.localeCompare(b.name, 'ko');
+  // 공개 화면에는 부서를 보이지 않는다(이름만). 정렬도 눈에 보이는 이름순(이름이 같으면 부서순).
+  const byName = (a, b) => a.name.localeCompare(b.name, 'ko') || a.dept.localeCompare(b.dept, 'ko');
   const shuffle = (arr) => { for (let i = arr.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [arr[i], arr[j]] = [arr[j], arr[i]]; } return arr; };
   const restart = (el, cls) => { el.classList.remove(cls); void el.offsetWidth; el.classList.add(cls); }; // 같은 애니메이션을 다시 틀기
   // 방 뽑기는 성별이 있는 사람만 뽑을 수 있다(pick_room 이 거절). 성별이 없어도 진행자가 이미 방을 넣었으면 결과에는 나옴
@@ -89,6 +90,19 @@ const DRAW_CONFIG = {
     saveTotal: 0,        // 전체 한 번에: 뽑을 수 있는 전체 인원
   };
   const byId = (id) => S.people.find((p) => p.id === id);
+  // 같은 이름인 사람(이 화면 명단 안에서 name 이 같음)에게만 부서를 붙여 구분한다. 그 밖의 사람은 어디서도 부서가 안 보인다.
+  let dupMemo = { ref: null, names: new Set() };
+  const dupNames = () => {
+    if (dupMemo.ref !== S.people) {
+      const n = new Map();
+      for (const p of S.people) n.set(p.name, (n.get(p.name) || 0) + 1);
+      dupMemo = { ref: S.people, names: new Set([...n].filter(([, c]) => c > 1).map(([k]) => k)) };
+    }
+    return dupMemo.names;
+  };
+  const isDup = (p) => dupNames().has(p.name);
+  const who = (p) => (isDup(p) ? `${p.name}(${p.dept})` : p.name); // 글·안내용: 같은 이름이면 이름(부서)
+  const dupTag = (p) => (isDup(p) ? `<small class="dup">(${esc(p.dept)})</small>` : ''); // 칸 안: 이름 뒤 작은 글씨
   const lock = () => { S.busy = true; updateControls(); };
   const unlock = () => { S.busy = false; updateControls(); };
 
@@ -381,7 +395,7 @@ const DRAW_CONFIG = {
     sb.setAttribute('aria-pressed', String(sound.on));
   }
 
-  // 결과판: 팀 4열 또는 방 7칸. opt.finale 이면 마지막 장면(부서·이름순, 방은 남자 줄·여자 줄)
+  // 결과판: 팀 4열 또는 방 7칸. opt.finale 이면 마지막 장면(이름순, 방은 남자 줄·여자 줄)
   function renderBoard(target, opt = {}) {
     const kind = S.kind;
     const groups = KINDS[kind].groups;
@@ -394,7 +408,7 @@ const DRAW_CONFIG = {
     // --i: 칸 순번, --r: 칸 안 줄 순번(전체 결과 연출에서 모든 칸이 같은 줄부터 함께 채워짐)
     const card = (g, i) => `<section class="grp${by[g].length ? '' : ' empty-g'}" style="--i:${i}" data-testid="draw-group-${g}" data-count="${by[g].length}">`
       + `<h3 class="grp-h ${groupClass(g)}"><span>${esc(groupLabel(g))}</span><b>${by[g].length}</b></h3>`
-      + `<ol>${by[g].map((p, r) => `<li${!opt.finale && S.fresh.has(p.id) ? ' class="new"' : ''} style="--r:${r}" data-id="${p.id}"><span class="nm">${esc(p.name)}</span><small>${esc(p.dept)}</small></li>`).join('')}</ol></section>`;
+      + `<ol>${by[g].map((p, r) => `<li${!opt.finale && S.fresh.has(p.id) ? ' class="new"' : ''} style="--r:${r}" data-id="${p.id}"><span class="nm">${esc(p.name)}</span>${dupTag(p)}</li>`).join('')}</ol></section>`;
     if (opt.finale && kind === 'room') {
       const men = groups.filter((g) => roomGender(g) === '남');
       const women = groups.filter((g) => roomGender(g) === '여');
@@ -403,36 +417,35 @@ const DRAW_CONFIG = {
     fitNames(target);
   }
 
-  // 칸보다 긴 이름은 글자를 줄여 칸 안에 다 보이게(줄임표보다 축소 우선). 부서는 남는 자리만큼만 보이고 넘치면 줄임표
+  // 이름 글자 크기 맞춤. 같은 칸(.grp·.group-box) 안의 이름은 글자 크기가 모두 같다(이름마다 따로 줄이지 않음).
+  // 칸 안 어느 이름이든 칸 너비를 넘으면 그 칸의 글자 배율 --k 를 이름 전체가 같이 줄어들게 낮춘다(줄임표보다 축소 우선).
+  // 같은 이름 구분용 부서(small.dup)는 이름 뒤 남는 자리에 들어가고, 자리가 모자라면 배율을 조금(0.85배까지)만 더 줄이고 그래도 모자라면 줄임표.
+  const hardOver = (li) => li.scrollWidth > li.clientWidth + 1; // 이름이 칸 너비를 넘음
+  const softOver = (li) => { const d = li.querySelector('small.dup'); return !!d && d.scrollWidth > d.clientWidth + 1; }; // 부서 표시가 잘림
   function fitNames(root) {
-    let tooLong = 0; // 가장 작게(0.5배) 줄여도 칸에 안 들어가는 이름 수
-    for (const li of root.querySelectorAll('.grp li, .group-box li')) {
-      const nm = li.querySelector('.nm, b');
-      if (!nm) continue;
-      nm.style.fontSize = '';
-      const cs = getComputedStyle(li);
-      const room = li.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
-      const w = nm.scrollWidth;
-      if (room > 0 && w > room) { nm.style.fontSize = `${Math.max(0.5, (room / w) * 0.97).toFixed(3)}em`; if ((room / w) * 0.97 < 0.5) tooLong++; }
-      // 전체 결과: 부서가 남은 자리에 다 안 들어가면 줄임표 대신 숨김(이름이 주인공. 잘린 부서는 읽기 어려움)
-      const sm = li.querySelector('small');
-      if (sm && li.closest('.finale-board')) { sm.hidden = false; if (sm.scrollWidth > sm.clientWidth + 1) sm.hidden = true; }
+    let tooLong = 0; // 가장 작게(0.5배) 줄여도 칸에 안 들어가는 칸 수
+    const cards = root.matches('.grp, .group-box') ? [root] : [...root.querySelectorAll('.grp, .group-box')];
+    for (const card of cards) {
+      const lis = [...card.querySelectorAll('li')];
+      let k = 1;
+      const set = (v) => { k = Math.round(v * 1000) / 1000; card.style.setProperty('--k', k); };
+      set(1);
+      while (k > 0.5 && lis.some(hardOver)) set(k - 0.02);
+      while (k > 0.85 && lis.some(softOver) && !lis.some(hardOver)) set(k - 0.02);
+      if (lis.some(hardOver)) tooLong++;
     }
     return tooLong;
   }
-  // 전체 결과 판: 이름 글자를 칸 높이에 맞춰 가장 크게(뒷자리에서도 읽히게). 넘치면 조금씩 줄임
-  const FINALE_FONT = { team: 3.2, room: 3.2, min: 1.2 }; // 이름 글자 크기(무대 너비 %)의 시작값. 칸에 넘치면 0.1씩 줄임(견본 29~30명: 팀 약 2.6, 방 약 2.6)
+  // 전체 결과 판: 이름 글자를 칸 높이에 맞춰 가장 크게(뒷자리에서도 읽히게). 판 전체가 같은 크기이고, 넘치면 0.1씩 줄임.
+  // 칸 너비를 넘는 긴 이름은 그 칸만 따로 줄임(fitNames)
+  const FINALE_FONT = { team: 4.2, room: 4.2, min: 1.2 }; // 이름 글자 크기(무대 너비 %)의 시작값. 칸에 넘치면 0.1씩 줄임(견본 29~30명은 칸 높이가 정함)
   function fitBoard(board) {
     let u = board.classList.contains('board-team') ? FINALE_FONT.team : FINALE_FONT.room;
     // 칸(grp)은 판 높이까지 늘어나고 넘치는 것은 칸 안에서 잘리므로, 판과 칸 모두 넘치지 않는지 봄
     const over = () => board.scrollHeight > board.clientHeight + 1 || [...board.querySelectorAll('.grp')].some((g) => g.scrollHeight > g.clientHeight + 1);
     board.classList.add('fit'); // 재는 동안 칸이 들어오는 연출(움직인 위치)을 멈춤 — 움직인 위치가 넘침으로 잡히지 않게
     board.style.setProperty('--nm', u);
-    // 높이에 넘치거나, 아주 긴 이름이 반으로 줄여도 칸 너비에 안 들어가면 판 전체 글자를 0.1씩 줄임
-    for (let i = 0; i < 40 && u > FINALE_FONT.min && (over() || fitNames(board) > 0); i++) {
-      u = Math.round((u - 0.1) * 100) / 100;
-      board.style.setProperty('--nm', u);
-    }
+    for (let i = 0; i < 60 && u > FINALE_FONT.min && over(); i++) { u = Math.round((u - 0.1) * 100) / 100; board.style.setProperty('--nm', u); }
     fitNames(board);
     board.classList.remove('fit');
   }
@@ -451,18 +464,27 @@ const DRAW_CONFIG = {
   }
   function showName(p, final) {
     const n = $('#slotName');
-    const d = $('#slotDept');
+    const t = $('#slotTag'); // 이름 아래 작은 줄: 같은 이름인 사람에게만 부서를 붙임(그 밖에는 비어 있고 안 보임)
     n.textContent = p.name;
-    d.textContent = p.dept;
-    n.classList.toggle('long', [...p.name].length > 4);
+    t.textContent = isDup(p) ? `(${p.dept})` : '';
     n.classList.remove('land');
     $('#slot').classList.toggle('land', !!final);
+    fitSlotName(n);
     restart(n, final ? 'land' : 'tick');
-    if (!final) restart(d, 'tick');
+    if (!final && isDup(p)) restart(t, 'tick');
+  }
+  // 이름이 길어도 칸 안에 들어가게 글자 배율(--k)을 줄임(착지 때 1.12배로 커지는 것까지 생각해 여유를 둠)
+  function fitSlotName(n) {
+    n.style.setProperty('--k', 1);
+    const slot = $('#slot');
+    const cs = getComputedStyle(slot);
+    const room = slot.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+    const w = n.scrollWidth * 1.14;
+    if (room > 0 && w > room) n.style.setProperty('--k', Math.max(0.4, room / w).toFixed(3));
   }
   function clearSlot() {
     $('#slotName').textContent = '';
-    $('#slotDept').textContent = '';
+    $('#slotTag').textContent = '';
     $('#slot').classList.remove('land');
   }
   function renderWheel(p) {
@@ -512,7 +534,7 @@ const DRAW_CONFIG = {
     if (C.pauseAfterName) {
       S.pending = req;
       setPhase('named');
-      setMsg(`${p.name} 님! 누르면 ${KINDS[S.kind].unitWord}을 공개해요`);
+      setMsg(`${who(p)} 님! 누르면 ${KINDS[S.kind].unitWord}을 공개해요`);
       unlock();
       return;
     }
@@ -537,7 +559,7 @@ const DRAW_CONFIG = {
     }
     showName(p, true);
     sound.land();
-    announce(`${p.dept} ${p.name}`);
+    announce(who(p));
     await sleep(reduced() ? 0 : 350);
   }
   // 돌림판: 답이 오고 최소 시간이 지날 때까지 일정하게 돌다가, 답에서 멈추도록 점점 느려짐. 요청이 실패하면 바로 멈추고 던짐
@@ -573,7 +595,7 @@ const DRAW_CONFIG = {
   async function spinAndReveal(p, req) {
     lock();
     setPhase('spinning');
-    setMsg(`${p.name} 님의 ${KINDS[S.kind].unitWord}은…`);
+    setMsg(`${who(p)} 님의 ${KINDS[S.kind].unitWord}은…`);
     let v;
     try { v = await spinWheel(p, req); } catch (e) {
       return fail(e, { retry: () => retryPerson(p), afterSkip: afterPersonSkip });
@@ -618,7 +640,7 @@ const DRAW_CONFIG = {
       sound.reveal();
     } else sound.land();
     renderBoard($('#board'));
-    announce(`${p.name} 님은 ${groupLabel(v)}`);
+    announce(`${who(p)} 님은 ${groupLabel(v)}`);
   }
 
   // ── 한 팀·한 방씩 ─────────────────────────────────────
@@ -676,13 +698,13 @@ const DRAW_CONFIG = {
     setReveal('group');
     const step = reduced() ? 0 : C.groupMemberDelayMs;
     $('#groupBox').innerHTML = `<h3 class="pop ${groupClass(g)}" data-testid="draw-group-title">${esc(groupLabel(g))}</h3>`
-      + `<ol class="${members.length > 8 ? 'many' : ''}" style="--step:${step}ms">${members.map((p, i) => `<li style="--i:${i}" class="${S.fresh.has(p.id) ? 'new' : ''}"><b>${esc(p.name)}</b><small>${esc(p.dept)}</small></li>`).join('')}</ol>`;
+      + `<ol class="${members.length > 8 ? 'many' : ''}" style="--step:${step}ms">${members.map((p, i) => `<li style="--i:${i}" class="${S.fresh.has(p.id) ? 'new' : ''}"><span class="nm">${esc(p.name)}</span>${dupTag(p)}</li>`).join('')}</ol>`;
     fitNames($('#groupBox'));
     flash(colorOf(g));
     confetti.burst([colorOf(g), '#ffffff', '#fbbf24'], 120);
     sound.reveal();
     renderBoard($('#board'));
-    announce(`${groupLabel(g)}: ${members.map((p) => p.name).join(', ')}`);
+    announce(`${groupLabel(g)}: ${members.map((p) => who(p)).join(', ')}`);
     setMsg('');
     await sleep(reduced() ? 300 : C.revealHoldMs + members.length * step);
     setMsg(readyMsg());
@@ -741,7 +763,7 @@ const DRAW_CONFIG = {
     const pool = (S.queue.length > 1 ? S.queue : eligiblePeople().map((p) => p.id)).map(byId).filter(Boolean);
     saveProgress();
     setMsg(`${w}을 정하고 있어요…`);
-    if (rm) { $('#slotDept').textContent = ''; $('#slotName').textContent = `${w}을 정하는 중`; $('#slot').classList.remove('land'); }
+    if (rm) { $('#slotTag').textContent = ''; $('#slotName').textContent = `${w}을 정하는 중`; fitSlotName($('#slotName')); $('#slot').classList.remove('land'); }
     const start = performance.now();
     let spinning = !rm;
     const spin = (async () => { // 저장하는 동안 이름·칸이 계속 바뀜(연출). 움직임 줄이기면 돌지 않음
@@ -788,10 +810,11 @@ const DRAW_CONFIG = {
     // 모든 칸이 한꺼번에 켜짐 → 전체 결과로
     chips.forEach((c) => c.classList.remove('on', 'maybe'));
     wheel.classList.add('all-on');
-    $('#slotDept').textContent = S.saveDone >= S.saveTotal ? `${S.saveDone}명 모두 정했어요` : `${S.saveDone} / ${S.saveTotal}명 정했어요`;
+    $('#slotTag').textContent = S.saveDone >= S.saveTotal ? `${S.saveDone}명 모두 정했어요` : `${S.saveDone} / ${S.saveTotal}명 정했어요`;
     const n = $('#slotName');
     n.textContent = '결과 공개!';
-    n.classList.remove('long', 'tick');
+    fitSlotName(n);
+    n.classList.remove('tick');
     $('#slot').classList.add('land');
     restart(n, 'land');
     flash('#ffffff');
@@ -838,7 +861,7 @@ const DRAW_CONFIG = {
     if (isAuthErr(e)) { toLogin(S.error, true); unlock(); return; }
     setReveal('error');
     $('#errMsg').textContent = S.error;
-    setMsg(S.current ? `${S.current.name} 님 차례에서 멈췄어요. 다시 시도하면 같은 사람으로 이어서 해요(이미 정해졌으면 그 결과가 그대로 나와요).` : '');
+    setMsg(S.current ? `${who(S.current)} 님 차례에서 멈췄어요. 다시 시도하면 같은 사람으로 이어서 해요(이미 정해졌으면 그 결과가 그대로 나와요).` : '');
     sound.oops();
     setPhase('error');
     unlock();
@@ -924,7 +947,7 @@ const DRAW_CONFIG = {
     const ng = $('#introNoGender');
     ng.hidden = !noGender.length;
     ng.innerHTML = noGender.length
-      ? `성별이 없어 뽑을 수 없는 <b>${noGender.length}명</b>은 이번에 건너뛰어요: ${noGender.map((p) => `${esc(p.name)}(${esc(p.dept)})`).join(', ')}<br>관리자 페이지 명단에서 성별을 넣으면 같이 뽑을 수 있고, 객실표에서 방을 직접 넣어도 돼요.`
+      ? `성별이 없어 뽑을 수 없는 <b>${noGender.length}명</b>은 이번에 건너뛰어요: ${noGender.map((p) => esc(who(p))).join(', ')}<br>관리자 페이지 명단에서 성별을 넣으면 같이 뽑을 수 있고, 객실표에서 방을 직접 넣어도 돼요.`
       : '';
     const acts = [];
     let hint = '';
@@ -1077,8 +1100,8 @@ const DRAW_CONFIG = {
     $('#finaleTitle').textContent = left.length ? `${PRACTICE ? '(연습) ' : ''}아직 안 뽑은 사람이 있어요` : `🎉 ${PRACTICE ? '(연습) ' : ''}${KINDS[k].done}`;
     renderBoard($('#finaleBoard'), { finale: true });
     const notes = [];
-    if (left.length) notes.push(`아직 안 뽑은 사람 <b>${left.length}명</b>: ${left.map((p) => esc(p.name)).join(', ')}${skippedLeft.length ? ' (오류로 건너뛴 사람 포함)' : ''}`);
-    if (noGender.length) notes.push(`성별이 없어 못 뽑은 사람 <b>${noGender.length}명</b>: ${noGender.map((p) => esc(p.name)).join(', ')}`);
+    if (left.length) notes.push(`아직 안 뽑은 사람 <b>${left.length}명</b>: ${left.map((p) => esc(who(p))).join(', ')}${skippedLeft.length ? ' (오류로 건너뛴 사람 포함)' : ''}`);
+    if (noGender.length) notes.push(`성별이 없어 못 뽑은 사람 <b>${noGender.length}명</b>: ${noGender.map((p) => esc(who(p))).join(', ')}`);
     if (stale) notes.push('최신 결과를 받지 못해 이 화면에서 본 결과로 보여 줘요.');
     $('#finaleNote').hidden = !notes.length;
     $('#finaleNote').innerHTML = notes.join('<br>');
