@@ -206,6 +206,16 @@
     .acts button:disabled { opacity: .6; }
     .acts button[aria-pressed="true"]:disabled { opacity: 1; } /* 마감 뒤에도 고른 것은 또렷하게 */
     .act-note { margin: 10px 0 0; }
+    /* 점심 고르기: 조식 카드(.dish-box)와 같은 모양의 단추. 사진 줄은 .dish-pics 를 그대로 씀(왼쪽 정사각 사진 + 오른쪽 4:3 사진) */
+    .lunch-dishes { display: block; margin: 0 0 12px; }
+    .lunch-dishes button { display: block; width: 100%; margin: 0 0 12px; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+    .lunch-dishes button:last-child { margin-bottom: 0; }
+    .lunch-dishes button[aria-pressed="true"] .dish-box { border-color: var(--accent); box-shadow: 0 0 0 3px rgb(99 102 241 / .3); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent); }
+    .lunch-dishes button[aria-pressed="true"] .dish-name::before { border-color: var(--accent); background: radial-gradient(var(--accent) 45%, transparent 50%); }
+    .lunch-dishes button:focus-visible { outline: none; }
+    .lunch-dishes button:focus-visible .dish-box { outline: 2px solid var(--accent); outline-offset: 3px; }
+    .lunch-dishes button:disabled { opacity: .6; cursor: default; }
+    .lunch-dishes button[aria-pressed="true"]:disabled { opacity: 1; } /* 마감 뒤에도 고른 것은 또렷하게 */
     .act-state { margin: 0 0 12px; font-size: 15px; }
     .act-state b { font-size: 17px; }
     /* 방 뽑기: 문 두 짝이 닫혀 있고 가운데 열쇠. 뽑는 중에는 열쇠가 흔들리고, 답이 오면 문이 양옆으로 열리며 방 이름이 나타남 */
@@ -444,12 +454,10 @@
     <div class="me">
       <button class="link back">메인으로 돌아가기</button>
     </div>
-    <div class="card">
-      <p class="act-state" id="lunchState" aria-live="polite"></p>
-      <div class="acts" id="lunchChoices" role="group" aria-label="18일 점심 메뉴 (하나만 고를 수 있어요)">
-        <button type="button" data-lunch="plain" aria-pressed="false">🍲 일반 설렁탕</button>
-        <button type="button" data-lunch="spicy" aria-pressed="false">🌶️ 얼큰 설렁탕</button>
-      </div>
+    <p class="act-state" id="lunchState" aria-live="polite"></p>
+    <div id="lunchPick"><!-- 조식(#menuPick)처럼 카드 밖 전체 폭 -->
+      <div class="lunch-dishes" id="lunchChoices" role="group" aria-label="18일 점심 메뉴 (하나만 고를 수 있어요)"></div><!-- 단추(사진 + 이름)는 이 화면이 처음 필요할 때 그림(showLunch) -->
+      <p class="hint fine">상기 이미지는 실제와 다를 수 있습니다.</p>
       <p class="hint act-note" id="lunchNote"></p>
     </div>
     <button class="block back">메인으로 돌아가기</button>
@@ -737,6 +745,18 @@
   }
   function showLunch() {
     who();
+    if (!$('#lunchChoices').children.length) { // 점심 사진은 이 화면이 처음 필요할 때 받음(사진이 늦거나 안 떠도 이름은 보임)
+      $('#lunchChoices').innerHTML = LUNCH_KEYS.map((key) => `
+        <button type="button" data-lunch="${key}" aria-pressed="false">
+          <span class="dish-box"><!-- 사진은 장식(alt 없음). 단추 이름은 아래 메뉴 이름 -->
+            <span class="dish-pics" aria-hidden="true">
+              <img src="lunch_${key}_square.jpg" alt="" />
+              <img src="lunch_${key}_photo.jpg" alt="" />
+            </span>
+            <span class="dish-name">${LUNCHES[key]}</span>
+          </span>
+        </button>`).join('');
+    }
     paintLunch();
     screen('lunch');
   }
@@ -763,11 +783,13 @@
       if (me === mine) paintLunch(); // 단추를 다시 켠 뒤, 마감이면 다시 잠금
     }
   }
-  all('#lunchCard [data-lunch]').forEach((el) => el.addEventListener('click', guard(async () => {
-    if (busy || !me || me.lunch === el.dataset.lunch) return;
+  const onLunchClick = guard(async (e) => {
+    const el = e.target.closest('[data-lunch]');
+    if (!el || busy || !me || me.lunch === el.dataset.lunch) return;
     if (choicesClosed()) return paintLunch(); // 시계가 마감을 넘긴 직후: 잠긴 모습으로
     await saveLunch(el.dataset.lunch);
-  })));
+  });
+  $('#lunchChoices').addEventListener('click', onLunchClick); // 단추는 showLunch 가 나중에 그리므로 위임
 
   // ── 17~19일 지낼 방 뽑기 ──
   // 같은 방 사람들. 방이 있는 사람에게만 받아 옴(우리 팀 사람들과 같은 방식: 못 받으면 받아 둔 것을 그대로, 방이 바뀌면 다시 받음)
@@ -908,7 +930,7 @@
     set('Team', '팀 뽑기', hasTeam(), hasTeam() ? `<span class="mb-team team-${me.team}">${esc(TEAMS[me.team])} 팀</span>` : todo('뽑았어요'),
       peopleHtml(`우리 팀 · 지금까지 뽑은 ${team.length}명`, team, '아직 안 뽑은 사람은 뽑으면 나타나요.'));
     set('Menu', '아침 메뉴', hasMenu(), hasMenu() ? `<img class="mb-thumb" src="menu_${me.menu}_art.jpg" alt="" width="46" height="46" /><b class="mb-big">${esc(MENUS[me.menu])}</b>${editPill}` : todo('골랐어요', true));
-    set('Lunch', '점심 메뉴', hasLunch(), hasLunch() ? `<b class="mb-big">${esc(LUNCHES[me.lunch])}</b>${editPill}` : todo('골랐어요', true));
+    set('Lunch', '점심 메뉴', hasLunch(), hasLunch() ? `<img class="mb-thumb" src="lunch_${me.lunch}_square.jpg" alt="" width="46" height="46" /><b class="mb-big">${esc(LUNCHES[me.lunch])}</b>${editPill}` : todo('골랐어요', true));
     set('Act', '자유시간', hasAct(), !hasAct() ? todo('골랐어요', true)
       : (me.activity === 'ski' ? '<b class="mb-big">스키</b><span class="sr-only"> · </span><span class="mb-warn">🙅 저녁 술 금지!</span>' : `<b class="mb-big">${esc(ACTS[me.activity])}</b>`)
         + editPill);
