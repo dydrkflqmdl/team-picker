@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>발표용 뽑기</title>
+  <meta name="robots" content="noindex" />
+  <meta name="color-scheme" content="dark" />
+  <!-- 진행자가 프로젝터에 띄워 레크리에이션 팀 뽑기·방 배정 뽑기를 함께 보는 화면. 관리자 비밀번호가 있어야 열림(연습 모드 ?practice=1 은 비밀번호 없이, DB 를 전혀 부르지 않음).
+       style.css·common.js·draw.css·draw.js 를 고치면 아래 v 숫자를 올린다(style.css·common.js 는 board.html·index.html 과 같은 숫자로) -->
+  <link rel="stylesheet" href="style.css?v=5" />
+  <link rel="stylesheet" href="draw.css?v=6" />
+  <script src="supabase.js?v=2.117.3" integrity="sha384-BWcjm9OdFth9TbhCxZPdm+gAOUMAzQy9nmTs12ioXdCcbVnJaPMn+fMUoQCLt60R"></script>
+  <script src="common.js?v=13"></script>
+</head>
+<body class="draw">
+<div class="stage" id="stage" data-testid="draw-stage">
+  <div class="watermark" id="watermark" aria-hidden="true" hidden>연습</div>
+
+  <!-- 맨 위 줄 -->
+  <header class="top">
+    <div class="top-l">
+      <span class="badge" id="practiceBadge" data-testid="draw-practice-badge" hidden>연습</span>
+      <h1 id="title">발표용 뽑기</h1>
+    </div>
+    <div class="top-r">
+      <span class="progress" id="progress" data-testid="draw-progress" hidden></span>
+      <button class="btn ghost" id="soundBtn" type="button" data-testid="draw-sound" aria-pressed="false" title="소리 켜고 끄기 (M)">🔇 소리 꺼짐</button>
+      <button class="btn ghost" id="fsBtn" type="button" data-testid="draw-fullscreen" title="전체 화면 (F)">⛶ 전체 화면</button>
+      <button class="btn ghost" id="homeBtn" type="button" data-testid="draw-home" hidden>처음 화면</button>
+    </div>
+  </header>
+  <p class="error" id="error" role="alert" data-testid="draw-page-error"></p>
+
+  <!-- 진행자 확인(관리자 비밀번호) -->
+  <section class="view center" id="loginView" data-testid="draw-login" hidden>
+    <form class="panel" id="codeForm" data-testid="draw-login-form">
+      <h2>진행자 확인</h2>
+      <p class="dim">관리자 비밀번호를 넣어야 뽑기 화면이 열려요. 이 기기에서 관리자 페이지에 들어간 적이 있으면 묻지 않아요.</p>
+      <input id="code" type="password" required autocomplete="current-password" placeholder="관리자 비밀번호" aria-label="관리자 비밀번호" data-testid="draw-code" />
+      <button class="btn primary" type="submit" data-testid="draw-login-submit">확인</button>
+      <button class="btn" id="reconnectBtn" type="button" data-testid="draw-reconnect" hidden>저장된 비밀번호로 다시 연결</button>
+      <p class="err" id="loginErr" role="alert" data-testid="draw-login-error"></p>
+    </form>
+    <a class="btn ghost" href="draw.html?practice=1" data-testid="draw-practice-link">연습 모드로 들어가기 (비밀번호 없이, 견본 명단)</a>
+  </section>
+
+  <section class="view center" id="loadingView" data-testid="draw-loading" hidden>
+    <p class="loading" id="loadingMsg">불러오는 중…</p>
+    <div class="errbox" id="stuck" data-testid="draw-stuck" role="alert" hidden>
+      <p id="stuckMsg" data-testid="draw-stuck-message"></p>
+      <button class="btn primary" id="stuckHome" type="button" data-testid="draw-stuck-home">처음 화면</button>
+    </div>
+  </section>
+
+  <!-- 첫 화면: 무엇을 뽑을지 -->
+  <section class="view center" id="menuView" data-testid="draw-menu" hidden>
+    <h2 class="big">무엇을 뽑을까요?</h2>
+    <div class="choices">
+      <button class="choice" id="pickTeam" type="button" data-testid="draw-menu-team">
+        <span class="no">① 먼저</span>
+        <span class="t">레크리에이션 팀 뽑기</span>
+        <span class="chips" aria-hidden="true"><i class="team-red"></i><i class="team-blue"></i><i class="team-yellow"></i><i class="team-green"></i></span>
+        <span class="d">빨강 · 파랑 · 노랑 · 초록 4팀</span>
+        <span class="s" id="teamStatus" data-testid="draw-menu-team-status"></span>
+      </button>
+      <button class="choice" id="pickRoom" type="button" data-testid="draw-menu-room">
+        <span class="no">② 그다음</span>
+        <span class="t">방 배정 뽑기</span>
+        <span class="chips" aria-hidden="true"><i class="room-m"></i><i class="room-m"></i><i class="room-f"></i></span>
+        <span class="d">남자 1~5호실 · 여자 1~2호실</span>
+        <span class="s" id="roomStatus" data-testid="draw-menu-room-status"></span>
+      </button>
+    </div>
+    <div class="unitline">공개 방법
+      <span class="seg" role="group" aria-label="공개 방법">
+        <button type="button" data-unit="group" data-testid="draw-unit-group" aria-pressed="true">한 팀·한 방씩</button>
+        <button type="button" data-unit="person" data-testid="draw-unit-person" aria-pressed="false">한 명씩</button>
+      </span>
+    </div>
+    <div class="acts">
+      <a class="btn ghost" id="toPractice" href="draw.html?practice=1" data-testid="draw-to-practice">연습 모드로 바꾸기</a>
+      <a class="btn ghost" id="toLive" href="draw.html" data-testid="draw-to-live" hidden>연습 끝내고 실제 뽑기로</a>
+      <a class="btn ghost" id="toBoard" href="board.html" data-testid="draw-to-board">관리자 페이지로</a>
+    </div>
+  </section>
+
+  <!-- 시작 화면: 이미 뽑은 사람 · 성별이 없어 못 뽑는 사람 안내, 이어서/처음부터 -->
+  <section class="view center" id="introView" data-testid="draw-intro" hidden>
+    <h2 class="big" id="introTitle"></h2>
+    <p class="lead" id="introSummary" data-testid="draw-intro-summary"></p>
+    <p class="note" id="introNoGender" data-testid="draw-nogender" hidden></p>
+    <div class="acts" id="introActs"></div>
+  </section>
+
+  <!-- 뽑는 화면 -->
+  <section class="view" id="playView" data-testid="draw-play" hidden>
+    <div class="reveal" id="reveal" data-testid="draw-reveal" data-mode="idle">
+      <div class="idle" id="idleBox" data-testid="draw-idle"><b id="idleTitle">준비됐어요</b><span id="idleSub"></span></div>
+      <div class="slot" id="slot" data-testid="draw-slot" hidden>
+        <div class="slot-dept" id="slotDept" data-testid="draw-slot-dept"></div>
+        <div class="slot-name" id="slotName" data-testid="draw-slot-name"></div>
+      </div>
+      <div class="wheel" id="wheel" data-testid="draw-wheel" aria-hidden="true" hidden></div>
+      <div class="result" id="result" data-testid="draw-result" hidden></div>
+      <div class="group-box" id="groupBox" data-testid="draw-group-reveal" hidden></div>
+      <div class="errbox" id="errBox" data-testid="draw-error" role="alert" hidden>
+        <p id="errMsg" data-testid="draw-error-message"></p>
+        <div class="acts">
+          <button class="btn primary" id="retryBtn" type="button" data-testid="draw-retry">같은 사람으로 다시 시도 (스페이스)</button>
+          <button class="btn" id="skipBtn" type="button" data-testid="draw-skip">이 사람 건너뛰기</button>
+        </div>
+      </div>
+      <p class="msg" id="stageMsg" data-testid="draw-msg"></p>
+    </div>
+    <aside class="board" id="board" data-testid="draw-board" aria-label="지금까지 결과"></aside>
+    <footer class="controls">
+      <button class="btn big primary" id="nextBtn" type="button" data-testid="draw-next">다음 ▶</button>
+      <span class="keys">스페이스 · → · Enter 로도 넘어가요</span>
+      <button class="btn" id="allBtn" type="button" data-testid="draw-all">남은 사람 모두 공개</button>
+    </footer>
+  </section>
+
+  <!-- 마지막 장면 -->
+  <section class="view" id="finaleView" data-testid="draw-finale" hidden>
+    <h2 class="finale-title" id="finaleTitle" data-testid="draw-finale-title"></h2>
+    <div class="board finale-board" id="finaleBoard" data-testid="draw-finale-board"></div>
+    <p class="note" id="finaleNote" data-testid="draw-finale-note" hidden></p>
+    <div class="acts" id="finaleActs"></div>
+  </section>
+
+  <div class="flash" id="flash" aria-hidden="true"></div>
+  <canvas id="confetti" aria-hidden="true"></canvas>
+
+  <!-- 확인 상자 -->
+  <div class="dlg" id="dlg" data-testid="draw-dialog" hidden>
+    <div class="dlg-box" role="dialog" aria-modal="true" aria-labelledby="dlgTitle" aria-describedby="dlgBody">
+      <h2 id="dlgTitle" data-testid="draw-dialog-title"></h2>
+      <p id="dlgBody"></p>
+      <div class="acts">
+        <button class="btn" id="dlgCancel" type="button" data-testid="draw-dialog-cancel">취소</button>
+        <button class="btn primary" id="dlgOk" type="button" data-testid="draw-dialog-ok"></button>
+      </div>
+    </div>
+  </div>
+
+  <div class="sr-only" id="live" aria-live="polite"></div>
+</div>
+<script src="draw.js?v=5"></script>
+</body>
+</html>

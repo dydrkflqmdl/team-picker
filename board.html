@@ -262,6 +262,7 @@
     <div class="head-main">
       <h1><span class="admin-only">관리자 페이지</span><span class="tv-only">팀 현황</span></h1>
       <span class="stats" id="stats"></span>
+      <a class="admin-only" id="drawLink" href="draw.html" style="font-size: 13px; color: var(--muted)">발표용 뽑기 화면(팀·방)</a><!-- 프로젝터로 함께 뽑는 화면(draw.html) -->
     </div>
     <!-- 마지막 갱신 · 프로젝터 보기 · 이 기기에서 비밀번호 지우기(로그인한 뒤에만 보임) -->
     <span class="bar" id="bar" hidden><span id="updated"></span><button class="link" id="tvBtn" type="button">프로젝터 보기</button><button class="link admin-only" id="forget" type="button" title="이 기기에 저장된 관리자 비밀번호를 지워요"><span class="wide">이 기기에서 </span>비밀번호 지우기</button></span>
@@ -366,7 +367,7 @@
     <!-- 객실표: 참가자가 방 뽑기로 직접 뽑고, 진행자는 나누기·비우기·직접 옮기기를 할 수 있음(진행자 화면에만 있음) -->
     <details class="card admin-only" id="roomCard">
       <summary>객실표 <small id="roomCount"></small></summary>
-      <p class="msg hint-line">참가자가 <b>방 뽑기</b>로 직접 뽑아요(남녀 따로·같은 부서끼리). 안 뽑은 사람은 <b>방 없는 사람만 넣기</b>로 채우고, <b>자동으로 나누기</b>는 이미 뽑은 방까지 전부 새로 나눠요. 방을 비우면 그 사람이 다시 뽑을 수 있어요.</p>
+      <p class="msg hint-line">참가자가 <b>방 뽑기</b>로 직접 뽑아요(남녀 따로·인원은 고르게, 나머지는 무작위). 안 뽑은 사람은 <b>방 없는 사람만 넣기</b>로 채우고, <b>자동으로 나누기</b>는 이미 뽑은 방까지 전부 새로 나눠요. 방을 비우면 그 사람이 다시 뽑을 수 있어요.</p>
       <div class="rooms" id="rooms"></div>
       <div id="roomless"></div>
       <div class="row tools2">
@@ -1155,58 +1156,52 @@ Day 3 · 12/19(토) — 함께 만드는 내년
     $('#planEditBtn').focus();
   }));
 
-  // 객실 나누기 계획 [{ id, value: 방 }]. 규칙은 한 가지: 남녀는 따로, 같은 부서 사람은 가능한 한 같은 방, 방 인원 차이는 1명 이내, 직급은 보지 않고, 같은 조건이면 무작위.
-  // 성별마다: 부서 순서를 섞고 부서 안 사람도 섞어 줄을 세운 뒤 앞에서부터 방마다 잘라 넣는다. 이걸 ROOM_TRIES 번 해 보고
-  // "(방, 부서) 짝의 수"(부서가 여러 방으로 쪼개진 정도)가 가장 적은 안을 고른다. 같은 안이 여럿이면 그중 무작위.
-  // onlyNew 면 이미 방이 있는 사람은 그대로 두고, 방 없는 사람을 한 명씩 넣는다. 인원 차이가 1명 이내로 유지되도록 "지금 인원이 가장 적은 방들" 가운데서만 고르고,
-  // 그 안에서는 같은 부서 사람이 많은 방, 같으면 무작위.
+  // 객실 나누기 계획 [{ id, value: 방 }]. 기준은 두 가지뿐: 남녀는 따로, 같은 성별 안에서 방 인원은 고르게(차이 1명 이내).
+  // 그 밖에는 전부 무작위 — 부서·직급·임원 여부·명단 순서는 보지 않는다. 참가자의 방 뽑기(DB 의 pick_room)와 같은 방법이다.
+  // 성별마다: roomSeats 로 방마다 더 넣을 인원을 정하고, 넣을 사람을 무작위로 섞어 그 자리에 차례로 넣는다.
+  // onlyNew 면 이미 방이 있는 사람은 그대로 두고 방 없는 사람만 넣는다(지금 인원이 적은 방부터 채움). 아니면 전원을 새로 나눈다.
   const shuffle = (list) => {
     const a = [...list];
     for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; }
     return a;
   };
-  const ROOM_TRIES = 500;
-  // 줄 세운 사람들을 방 크기대로 앞에서부터 자른 안과, 그 안의 (방, 부서) 짝의 수
-  function roomCut(list, sizes) {
-    let from = 0, pairs = 0;
-    const cut = sizes.map((n) => {
-      const part = list.slice(from, from + n);
-      from += n;
-      pairs += new Set(part.map((p) => p.dept || '')).size;
-      return part;
-    });
-    return { cut, pairs };
+  // 방마다 더 넣을 인원. have = 방별 지금 인원, free = 넣을 사람 수.
+  // 방 없는 사람을 '지금 인원이 가장 적은 방'부터 채운 모양으로 정한다: lv = 모든 방을 적어도 lv 명(이미 더 많으면 지금 인원)으로
+  // 채울 수 있는 가장 큰 수, 남는 r 명은 인원이 lv 이하인 방(open) 가운데 서로 다른 방에 한 명씩 더.
+  // 한 명 더 들어갈 방 묶음은 '그렇게 나누는 경우의 수'에 비례하는 확률(묶음의 방마다 1 / (lv + 1 - 지금 인원))로 고른다.
+  // 그래야 이미 방이 있는 사람이 있을 때도 '인원 기준을 지키는 모든 나눔이 같은 확률'이 된다. 방이 많아야 5개라 묶음은 32개 이하.
+  function roomSeats(have, free) {
+    const total = have.reduce((s, c) => s + c, 0) + free;
+    let lv = 0;
+    while (have.reduce((s, c) => s + Math.max(c, lv + 1), 0) <= total) lv++;
+    const add = have.map((c) => Math.max(c, lv) - c);
+    const open = have.map((_, i) => i).filter((i) => have[i] <= lv);
+    const r = free - add.reduce((s, x) => s + x, 0);
+    let pick = [], wsum = 0;
+    for (let mask = 0; mask < 1 << open.length; mask++) {
+      const set = open.filter((_, j) => (mask >> j) & 1);
+      if (set.length !== r) continue;
+      const w = set.reduce((x, i) => x / (lv + 1 - have[i]), 1);
+      wsum += w;
+      if (Math.random() * wsum < w) pick = set; // 하나씩 보며 무게에 비례해 바꿔 들기(끝나면 무게 비례로 하나가 남음)
+    }
+    for (const i of pick) add[i]++;
+    return add;
   }
   function roomPlan(onlyNew) {
     const rows = [];
     for (const g of ['남', '여']) {
       const keys = ROOM_KEYS.filter((k) => roomGender(k) === g);
       const list = people.filter((p) => p.gender === g && !(onlyNew && p.room));
-      if (onlyNew) {
-        const mem = keys.map((k) => people.filter((p) => p.room === k));
-        for (const p of shuffle(list)) {
-          const least = Math.min(...mem.map((m) => m.length));
-          const open = mem.map((m, i) => i).filter((i) => mem[i].length === least); // 인원이 가장 적은 방들(여기에만 넣어야 방 인원 차이가 1명 이내로 유지됨)
-          const same = open.map((i) => mem[i].filter((x) => x.dept === p.dept).length);
-          const best = open.filter((_, n) => same[n] === Math.max(...same)); // 같은 부서 사람이 가장 많은 방
-          const i = best[Math.floor(Math.random() * best.length)]; // 같으면 무작위
-          mem[i].push(p);
-          rows.push({ id: p.id, value: keys[i] });
-        }
-      } else {
-        // 예: 20명 ÷ 5실 = 4명씩, 9명 ÷ 2실 = 5명·4명(남는 사람은 앞쪽 방부터 한 명씩)
-        const sizes = keys.map((_, n) => Math.floor(list.length / keys.length) + (n < list.length % keys.length ? 1 : 0));
-        const depts = [...new Set(list.map((p) => p.dept || ''))];
-        let best = [], bestPairs = Infinity;
-        for (let t = 0; t < ROOM_TRIES; t++) {
-          const order = shuffle(depts);
-          const line = [];
-          for (const d of order) line.push(...shuffle(list.filter((p) => (p.dept || '') === d)));
-          const { cut, pairs } = roomCut(line, sizes);
-          if (pairs < bestPairs) { best = cut; bestPairs = pairs; }
-        }
-        best.forEach((part, n) => { for (const p of part) rows.push({ id: p.id, value: keys[n] }); });
-      }
+      // 지금 방 인원: 방 없는 사람만 넣을 때는 이미 그 방에 있는 사람 수, 전부 새로 나눌 때는 0
+      // (예: 20명 ÷ 5실 = 4명씩, 9명 ÷ 2실 = 5명·4명 — 5명이 되는 방은 무작위)
+      const add = roomSeats(keys.map((k) => (onlyNew ? people.filter((p) => p.room === k).length : 0)), list.length);
+      const line = shuffle(list);
+      let from = 0;
+      add.forEach((n, i) => {
+        for (const p of line.slice(from, from + n)) rows.push({ id: p.id, value: keys[i] });
+        from += n;
+      });
     }
     // 성별을 몰라 못 나눈 사람: 전부 새로 나눌 때는 예전 방도 비워 둠(방 인원이 어긋나지 않게)
     if (!onlyNew) for (const p of people) if (!p.gender && p.room) rows.push({ id: p.id, value: '' });
@@ -1224,7 +1219,7 @@ Day 3 · 12/19(토) — 함께 만드는 내년
     await rpc('admin_assign', { p_code: code, p_what: 'room', p_rows: rows });
     await resync();
     const unknown = people.filter((p) => !p.gender && !p.room).length;
-    $('#roomMsg').textContent = (onlyNew ? `방 없는 ${placed}명을 같은 부서 사람이 많은 방에 넣었어요(방 인원 차이는 1명 이내로 맞춰요).` : `${placed}명을 남녀 따로, 같은 부서끼리 되도록 한 방에 나눴어요(방 인원 차이는 1명 이내예요).`) + (unknown ? ` 성별이 없는 ${unknown}명은 넣지 못했어요. 직접 옮기기를 켜서 넣어 주세요.` : '');
+    $('#roomMsg').textContent = (onlyNew ? `방 없는 ${placed}명을 인원이 적은 방부터 무작위로 넣었어요(방 인원 차이는 가능한 한 1명 이내로 맞춰요).` : `${placed}명을 남녀 따로 무작위로 나눴어요(방 인원 차이는 1명 이내예요).`) + (unknown ? ` 성별이 없는 ${unknown}명은 넣지 못했어요. 직접 옮기기를 켜서 넣어 주세요.` : '');
   }
   $('#roomAuto').addEventListener('click', hold($('#roomAuto'), () => assignRooms(false)));
   $('#roomFill').addEventListener('click', hold($('#roomFill'), () => assignRooms(true)));
