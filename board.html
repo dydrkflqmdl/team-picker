@@ -9,7 +9,7 @@
   <link rel="stylesheet" href="style.css?v=5" /><!-- style.css 를 고치면 v 숫자를 올린다 -->
   <script src="supabase.js?v=2.117.3" integrity="sha384-BWcjm9OdFth9TbhCxZPdm+gAOUMAzQy9nmTs12ioXdCcbVnJaPMn+fMUoQCLt60R"></script>
   <!-- common.js 를 고치면 v 숫자를 올린다(브라우저에 남아 있는 예전 common.js 를 새 화면이 쓰지 않게) -->
-  <script src="common.js?v=10"></script>
+  <script src="common.js?v=12"></script>
   <style>
     /* ── 공통 모양 ──
        글자 크기 단계: 칸 제목 16 · 칸 안 작은 제목 14 · 본문 15 · 안내 13 · 꼬리표 12
@@ -135,9 +135,10 @@
     #planInput { min-height: 220px; }
     @media (prefers-reduced-motion: reduce) { .col li.new { animation: none; } }
 
-    /* 한눈에 보기: 맨 위 카드. 사람마다 한 줄(부서·이름·방·팀·아침·자유시간). 좁은 화면에서는 카드 안에서 옆으로 밀림 */
-    /* 진행 숫자: 방·팀·아침·자유시간 네 칸(휴대폰은 두 줄). 칸마다 "N/전체"와 얼마나 찼는지 막대 — 다 차면 초록 */
-    .glance-sum { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin: 0 0 14px; }
+    /* 한눈에 보기: 맨 위 카드. 사람마다 한 줄(부서·이름·방·팀·아침·점심·자유시간). 좁은 화면에서는 카드 안에서 옆으로 밀림 */
+    /* 진행 숫자: 방·팀·아침·점심·자유시간 다섯 칸(좁은 화면은 3칸·2칸씩 여러 줄). 칸마다 "N/전체"와 얼마나 찼는지 막대 — 다 차면 초록 */
+    .glance-sum { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; margin: 0 0 14px; }
+    @media (max-width: 820px) { .glance-sum { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
     @media (max-width: 560px) { .glance-sum { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
     .gs { display: block; padding: 8px 12px 10px; border: 1px solid var(--line); border-radius: 12px; font-size: 13px; color: var(--muted); }
     .gs b { font-size: 20px; color: var(--text); font-variant-numeric: tabular-nums; }
@@ -277,9 +278,9 @@
   </section>
 
   <div id="boardView" hidden>
-    <!-- 칸 순서: 한눈에 보기(맨 위) → 팀(인원 경고·팀 열·아직 안 뽑은 사람) → 조식 → 객실표 → 자유시간 — 행사 중에 계속 보는 것
+    <!-- 칸 순서: 한눈에 보기(맨 위) → 팀(인원 경고·팀 열·아직 안 뽑은 사람) → 12/18 조식 → 12/18 점심 → 탑승 차량 → 객실표 → 자유시간 — 행사 중에 계속 보는 것
          → 일정표 → 명단 관리(되돌릴 수 없는 단추는 그 맨 아래 한곳) — 미리 준비하거나 가끔 고치는 것 -->
-    <!-- 한눈에 보기: 한 사람의 방·팀·아침·자유시간을 한 줄로(진행자 화면에만 있음). 내용은 아래 스크립트의 renderGlance 가 채움 -->
+    <!-- 한눈에 보기: 한 사람의 방·팀·아침·점심·자유시간을 한 줄로(진행자 화면에만 있음). 내용은 아래 스크립트의 renderGlance 가 채움 -->
     <details class="card admin-only" id="glanceCard" open>
       <summary>한눈에 보기 <small>· 머리글을 누르면 줄 세우기</small></summary>
       <div class="glance-sum" id="glanceSum" aria-live="polite"></div>
@@ -291,6 +292,7 @@
             <th><button class="link" data-gsort="room">방</button></th>
             <th><button class="link" data-gsort="team">팀</button></th>
             <th><button class="link" data-gsort="menu">아침</button></th>
+            <th><button class="link" data-gsort="lunch">점심</button></th>
             <th><button class="link" data-gsort="act">자유시간</button></th>
           </tr></thead>
           <tbody id="glanceBody"></tbody>
@@ -317,9 +319,23 @@
       <h2><span>12/18(금) 조식</span> <small id="menuCount"></small>
         <button type="button" id="menuCopy" class="sm end admin-only">복사</button></h2>
       <div id="menus"></div>
+      <p class="msg hint-line admin-only">참가자는 <span data-deadline></span>까지 고르고 바꿀 수 있어요. 그 뒤로는 여기서만 바꿀 수 있어요.</p>
       <p class="msg admin-only" id="copyMsg" role="status"></p>
       <textarea class="copybox admin-only" id="copyBox" readonly hidden aria-label="복사할 조식 인원 글"></textarea>
     </section>
+
+    <!-- 12/18(금) 점심: 참가자가 직접 고르고, 진행자는 대신 고치고 식당에 알릴 인원을 복사할 수 있음(자유시간 칸과 같은 모양) -->
+    <details class="card admin-only" id="lunchCard">
+      <summary>12/18(금) 점심 <small id="lunchCount"></small></summary>
+      <p class="msg hint-line">참가자는 <span data-deadline></span>까지 고르고 바꿀 수 있어요. 그 뒤로는 여기서만 바꿀 수 있어요. 대신 고치려면 <b>직접 고치기</b>를 켜세요.</p>
+      <div id="lunches"></div>
+      <div class="row tools2">
+        <label class="check"><input type="checkbox" id="lunchMove" /> 직접 고치기</label>
+        <button type="button" id="lunchCopy" class="sm push">복사</button>
+      </div>
+      <p class="msg" id="lunchCopyMsg" role="status"></p>
+      <textarea class="copybox" id="lunchCopyBox" readonly hidden aria-label="복사할 점심 인원 글"></textarea>
+    </details>
 
     <!-- 탑승 차량: 참가자가 차량 뽑기로 직접 뽑고, 진행자는 직접 옮기기·모두 비우기·차량 목록 고치기를 할 수 있음(진행자 화면에만 있음). 기능은 car-board.js -->
     <details class="card admin-only" id="carCard">
@@ -364,7 +380,7 @@
     <details class="card admin-only" id="actCard">
       <summary>12/18(금) 저녁 자유시간 <small id="actCount"></small></summary>
       <p class="note"><b>스키를 고른 사람은 18일 저녁 식사 때 술을 마실 수 없어요.</b> 참가자 화면에서도 이 안내를 받았어요.</p>
-      <p class="msg hint-line">참가자가 직접 스키·휴식 중에 고르고 언제든 바꿀 수 있어요. 대신 고치려면 <b>직접 고치기</b>를 켜세요.</p>
+      <p class="msg hint-line">참가자는 스키·휴식 중에 <span data-deadline></span>까지 고르고 바꿀 수 있어요. 그 뒤로는 여기서만 바꿀 수 있어요. 대신 고치려면 <b>직접 고치기</b>를 켜세요.</p>
       <div id="acts"></div>
       <div class="row tools2">
         <label class="check"><input type="checkbox" id="actMove" /> 직접 고치기</label>
@@ -444,7 +460,7 @@
         <p>누르면 확인 글자를 적고, 지금 명단을 백업 파일로 받은 뒤에 실행돼요.</p>
         <div class="row">
           <button class="danger" id="resetAll">전체 다시 뽑기(팀·조식 초기화)</button>
-          <button class="danger" id="resetEvery">모두 초기화(팀·조식·방·자유시간)</button>
+          <button class="danger" id="resetEvery">모두 초기화(팀·점심·조식·방·자유시간)</button>
         </div>
         <div class="row">
           <button class="danger" id="removeAll">명단 전체 삭제</button>
@@ -573,7 +589,8 @@
     renderSheet();
   }
 
-  // ── 한눈에 보기: 한 사람의 방·팀·아침·자유시간을 한 줄로. 정렬은 이 표만의 것(명단 관리 표와 따로) ──
+  // ── 한눈에 보기: 한 사람의 방·팀·아침·점심·자유시간을 한 줄로. 정렬은 이 표만의 것(명단 관리 표와 따로) ──
+  const lunchOf = (p) => LUNCH_KEYS.includes(p.lunch) ? p.lunch : ''; // 점심 칸이 없는 예전 DB 응답(undefined)이나 모르는 값은 '안 고름'
   let gsort = { key: 'dept', dir: 1 };
   let glanceSig = '';
   const GSORTS = {
@@ -581,6 +598,7 @@
     name: (a, b) => byKo(a.name, b.name),
     room: (a, b) => place(ROOM_KEYS, a.room) - place(ROOM_KEYS, b.room),
     team: (a, b) => place(TEAM_KEYS, a.team) - place(TEAM_KEYS, b.team),
+    lunch: (a, b) => place(LUNCH_KEYS, a.lunch) - place(LUNCH_KEYS, b.lunch),
     menu: (a, b) => place(MENU_KEYS, a.menu) - place(MENU_KEYS, b.menu),
     act: (a, b) => place(ACT_KEYS, a.activity) - place(ACT_KEYS, b.activity),
   };
@@ -592,7 +610,10 @@
     // 숫자 칸 하나: "방 16/29" + 얼마나 찼는지 막대(다 차면 초록) + 덧붙일 말
     const tile = (label, k, extra = '') => `<span class="gs${n && k === n ? ' full' : ''}">${label} <b>${k}</b>/${n}`
       + `<span class="gs-bar"><span style="width:${n ? Math.round((k * 100) / n) : 0}%"></span></span>${extra}</span>`;
-    const sum = tile('방', cnt((p) => p.room)) + tile('팀', cnt((p) => p.team)) + tile('아침', cnt((p) => p.menu))
+    const short = (name) => name.replace(/ 설렁탕$/, ''); // 칸이 좁아 "일반 N · 얼큰 M"로 줄임
+    const plain = cnt((p) => p.lunch === 'plain'), spicy = cnt((p) => p.lunch === 'spicy');
+    const sum = tile('방', cnt((p) => p.room)) + tile('팀', cnt((p) => p.team))
+      + tile('아침', cnt((p) => p.menu)) + tile('점심', cnt((p) => lunchOf(p)), `<span class="gs-x">${short(LUNCHES.plain)} ${plain} · ${short(LUNCHES.spicy)} ${spicy}</span>`)
       + tile('자유시간', cnt((p) => p.activity), `<span class="gs-x">${ACTS.ski} ${ski} · ${ACTS.rest} ${rest}</span>`);
     const yet = '<span class="yet">아직</span>';
     const rows = [...people].sort((a, b) => gsort.dir * GSORTS[gsort.key](a, b) || byKo(a.dept, b.dept) || byKo(a.name, b.name)).map((p) => `
@@ -602,8 +623,9 @@
         <td>${ROOMS[p.room] ? esc(ROOMS[p.room]) : yet}</td>
         <td>${p.team ? `<span class="dot team-${p.team}">${TEAMS[p.team]}</span>` : yet}</td>
         <td>${MENUS[p.menu] ? esc(MENUS[p.menu]) : yet}</td>
+        <td>${lunchOf(p) ? esc(LUNCHES[p.lunch]) : yet}</td>
         <td>${ACTS[p.activity] ? esc(ACTS[p.activity]) + (p.activity === 'ski' ? ' <span class="nodrink">술 금지</span>' : '') : yet}</td>
-      </tr>`).join('') || `<tr><td colspan="6" class="empty">명단이 비어 있어요.</td></tr>`;
+      </tr>`).join('') || `<tr><td colspan="7" class="empty">명단이 비어 있어요.</td></tr>`;
     const sig = sum + '|' + rows;
     if (sig !== glanceSig) { // 내용이 같으면 다시 그리지 않음
       glanceSig = sig;
@@ -805,12 +827,12 @@
     sort = { key, dir: sort.key === key ? -sort.dir : 1 };
     renderTable();
   });
-  // 사람들을 엑셀에서 열리는 CSV 글로 만듦. all 이면 객실·자유시간 칸까지(되돌릴 수 없는 단추를 누르기 전의 백업)
+  // 사람들을 엑셀에서 열리는 CSV 글로 만듦. all 이면 객실·자유시간·점심 칸까지(되돌릴 수 없는 단추를 누르기 전의 백업)
   function csvText(list, all = false) {
     // 칸마다 따옴표로 감싸고, 엑셀이 수식으로 읽는 글자(= + - @)로 시작하면 앞에 ' 를 붙여 글자로만 읽히게 함
     const cell = (v) => `"${String(v ?? '').replace(/^[=+\-@\t\r]/, "'$&").replace(/"/g, '""')}"`;
-    const lines = [['부서', '이름', '직급', '성별', '구분', '팀', '조식', ...(all ? ['객실', '자유시간'] : [])],
-      ...list.map((p) => [p.dept, p.name, p.title, p.gender, p.is_exec ? '임원' : '직원', TEAMS[p.team], MENUS[p.menu], ...(all ? [ROOMS[p.room], ACTS[p.activity]] : [])])];
+    const lines = [['부서', '이름', '직급', '성별', '구분', '팀', '조식', ...(all ? ['객실', '자유시간', '점심'] : [])],
+      ...list.map((p) => [p.dept, p.name, p.title, p.gender, p.is_exec ? '임원' : '직원', TEAMS[p.team], MENUS[p.menu], ...(all ? [ROOMS[p.room], ACTS[p.activity], LUNCHES[lunchOf(p)]] : [])])];
     return String.fromCharCode(0xFEFF) + lines.map((r) => r.map(cell).join(',')).join('\r\n'); // 맨 앞의 U+FEFF(BOM): 엑셀이 한글을 깨뜨리지 않게
   }
   // 글을 파일로 내려받으려고 시도함. 인앱 브라우저·다운로드 차단에서는 받아지지 않아도 오류가 나지 않을 수 있으므로 호출한 쪽이 사람에게 확인을 받아야 함
@@ -842,7 +864,7 @@
       snap = JSON.stringify(people);
       text = csvText(ordered(people), true);
       ta.value = text;
-      $('#bkWhat').innerHTML = `명단 <b>${people.length}명</b>(팀·조식·객실·자유시간 포함)을 <b>${esc(name)}</b> 파일로 받으려고 했어요. 다운로드 폴더나 브라우저의 다운로드 목록에 이 이름의 파일이 있는지 확인해 주세요(같은 이름이 있으면 (1)이 붙어요).`;
+      $('#bkWhat').innerHTML = `명단 <b>${people.length}명</b>(팀·점심·조식·객실·자유시간 포함)을 <b>${esc(name)}</b> 파일로 받으려고 했어요. 다운로드 폴더나 브라우저의 다운로드 목록에 이 이름의 파일이 있는지 확인해 주세요(같은 이름이 있으면 (1)이 붙어요).`;
       return saveFile(text, name);
     };
     const opener = document.activeElement;
@@ -978,6 +1000,7 @@
   const SEATS = {
     room: { title: '객실', none: '방 없음', names: ROOMS, keys: (p) => ROOM_KEYS.filter((k) => !p.gender || roomGender(k) === p.gender || k === p.room) },
     activity: { title: '자유시간', none: '안 고름', names: ACTS, keys: () => ACT_KEYS },
+    lunch: { title: '점심', none: '안 고름', names: LUNCHES, keys: () => LUNCH_KEYS },
   };
   const seat = (what, p) => `<select class="seat" data-seat="${what}" data-id="${p.id}" aria-label="${esc(p.name)} 님 ${SEATS[what].title}">${
     ['', ...SEATS[what].keys(p)].map((k) => `<option value="${k}"${(p[what] || '') === k ? ' selected' : ''}>${k ? SEATS[what].names[k] : SEATS[what].none}</option>`).join('')}</select>`;
@@ -1022,6 +1045,14 @@
     put('#acts', ACT_KEYS.map((k) => crowd(ACTS[k], doing(k), 'activity', fix)).join('')
       + (idle.length ? crowd('아직 안 고른 사람', idle, 'activity', fix, 'none') : ''));
     $('#actClear').hidden = idle.length === people.length;
+
+    // 12/18(금) 점심: 메뉴마다 고른 사람들 + 아직 안 고른 사람(자유시간과 같은 모양)
+    const fixL = $('#lunchMove').checked;
+    const noLunch = people.filter((p) => !lunchOf(p)).sort(byRank);
+    const eating = (k) => people.filter((p) => lunchOf(p) === k).sort(byRank);
+    $('#lunchCount').textContent = `${LUNCH_KEYS.map((k) => `${LUNCHES[k]} ${eating(k).length}명`).join(' · ')} · 안 고름 ${noLunch.length}명`;
+    put('#lunches', LUNCH_KEYS.map((k) => crowd(LUNCHES[k], eating(k), 'lunch', fixL)).join('')
+      + (noLunch.length ? crowd('아직 안 고른 사람', noLunch, 'lunch', fixL, 'none') : ''));
 
     // 고르는 칸에 있던 초점은 다시 그린 뒤에도 같은 사람의 칸으로
     if (on) { const el = document.querySelector(`select.seat[data-seat="${on.seat}"][data-id="${on.id}"]`); if (el && el !== document.activeElement) el.focus(); }
@@ -1205,6 +1236,7 @@ Day 3 · 12/19(토) — 함께 만드는 내년
   }));
   $('#roomMove').addEventListener('change', renderExtras);
   $('#actMove').addEventListener('change', renderExtras);
+  $('#lunchMove').addEventListener('change', renderExtras);
 
   // 이름 옆 고르는 칸을 바꾸면 바로 저장. 실패하면 칸을 저장된 값으로 되돌림
   const onSeat = guard(async (el) => {
@@ -1439,21 +1471,22 @@ Day 3 · 12/19(토) — 함께 만드는 내년
 
   $('#resetAll').addEventListener('click', hold($('#resetAll'), async () => {
     const teams = people.filter((p) => p.team).length, menus = people.filter((p) => p.menu).length;
-    const kept = people.some((p) => p.room || p.activity) ? '\n객실과 자유시간은 지워지지 않고 그대로 남아요.' : ''; // 준비해 둔 기능을 쓰고 있을 때만 덧붙임
+    const kept = people.some((p) => p.room || p.activity || lunchOf(p)) ? '\n객실·점심·자유시간은 지워지지 않고 그대로 남아요.' : ''; // 준비해 둔 기능을 쓰고 있을 때만 덧붙임
     if (!typedOk(`모든 사람의 팀과 조식 메뉴를 지우고 처음부터 다시 하게 할까요?\n지금 팀을 뽑은 ${teams}명, 조식을 고른 ${menus}명의 기록이 지워지고 되돌릴 수 없어요.${kept}`, '초기화')) return;
     if (!(await askBackup('전체다시뽑기'))) return; // 백업을 받고, 받아졌는지 확인한 뒤에만 실행
     await rpc('admin_reset_all', { p_code: code }); // 팀 + 조식. (admin_reset 은 팀만 지움)
     seen = null;
     await reload();
   }));
-  // 모두 초기화: 팀·조식(admin_reset_all) + 방·자유시간(admin_clear) — 명단과 일정표는 그대로. 세 번 나눠 부르므로 중간에 실패하면 다시 누르면 됨
+  // 모두 초기화: 팀·조식(admin_reset_all) + 방·자유시간·점심(admin_clear) — 명단과 일정표는 그대로. 네 번 나눠 부르므로 중간에 실패하면 다시 누르면 됨
   $('#resetEvery').addEventListener('click', hold($('#resetEvery'), async () => {
     const n = (k) => people.filter((p) => p[k]).length;
-    if (!typedOk(`모든 사람의 팀·조식·방·자유시간을 전부 지우고 처음부터 다시 하게 할까요?\n지금 팀 ${n('team')}명, 조식 ${n('menu')}명, 방 ${n('room')}명, 자유시간 ${n('activity')}명의 기록이 지워지고 되돌릴 수 없어요.\n명단과 일정표는 그대로 남아요.`, '초기화')) return;
+    if (!typedOk(`모든 사람의 팀·점심·조식·방·자유시간을 전부 지우고 처음부터 다시 하게 할까요?\n지금 팀 ${n('team')}명, 점심 ${people.filter(lunchOf).length}명, 조식 ${n('menu')}명, 방 ${n('room')}명, 자유시간 ${n('activity')}명의 기록이 지워지고 되돌릴 수 없어요.\n명단과 일정표는 그대로 남아요.`, '초기화')) return;
     if (!(await askBackup('모두초기화'))) return; // 백업을 받고, 받아졌는지 확인한 뒤에만 실행
     await rpc('admin_reset_all', { p_code: code });
     await rpc('admin_clear', { p_code: code, p_what: 'room' });
     await rpc('admin_clear', { p_code: code, p_what: 'activity' });
+    await rpc('admin_clear', { p_code: code, p_what: 'lunch' });
     seen = null;
     await reload();
   }));
@@ -1524,7 +1557,8 @@ Day 3 · 12/19(토) — 함께 만드는 내년
     el.style.left = `${Math.max(8, Math.min(a.left, innerWidth - w - 8))}px`;
     el.style.top = `${top}px`;
   }
-  // 대신 뽑기: 팀 뽑기(pick)는 조식 메뉴 없이도 됨. 메뉴를 골랐을 때만 pick 뒤에 choose_menu 로 넣음(admin_update 는 직급·성별까지 덮어써서 쓰지 않음)
+  // 대신 뽑기: 팀 뽑기(pick)는 조식 메뉴 없이도 됨. 메뉴를 골랐을 때만 pick 뒤에 admin_assign('menu') 로 넣음
+  // (참가자용 choose_menu 는 마감 뒤에 거절하지만 진행자는 마감 뒤에도 넣을 수 있음. admin_update 는 직급·성별까지 덮어써서 쓰지 않음)
   async function sheetPick() {
     const s = sheet;
     const p = s && people.find((x) => x.id === s.id);
@@ -1536,7 +1570,7 @@ Day 3 · 12/19(토) — 함께 만드는 내년
     try {
       const team = await rpc('pick', { p_dept: p.dept, p_name: p.name });
       let menu = '', menuErr = '';
-      if (wantMenu) { try { menu = await rpc('choose_menu', { p_dept: p.dept, p_name: p.name, p_menu: s.menu }); } catch (e) { menuErr = e.message; } }
+      if (wantMenu) { try { await rpc('admin_assign', { p_code: code, p_what: 'menu', p_rows: [{ id: p.id, value: s.menu }] }); menu = s.menu; } catch (e) { menuErr = e.message; } } // 반환값은 바뀐 사람 수라 결과에는 고른 메뉴를 그대로 씀
       s.step = 'done';
       s.result = { name: p.name, dept: p.dept, team, menu, menuErr };
     } catch (e) {
@@ -1597,21 +1631,17 @@ Day 3 · 12/19(토) — 함께 만드는 내년
   });
   $('#quickAdd').addEventListener('submit', (e) => { e.preventDefault(); quickGo(); });
 
-  // ── 조식 인원 복사 ──
-  let copyTimer;
-  $('#menuCopy').addEventListener('click', guard(async () => {
-    if (!people.length) throw new Error('복사할 내용이 없어요. 명단이 비어 있어요.');
-    const noMenu = people.filter((p) => !p.menu).length;
-    const text = `12/18(금) 조식: ${MENU_KEYS.map((m) => `${MENUS[m]} ${people.filter((p) => p.menu === m).length}`).join(' · ')}${noMenu ? ` (아직 안 고름 ${noMenu})` : ''} / 총 ${people.length}명`;
-    const box = $('#copyBox'), msg = $('#copyMsg');
-    clearTimeout(copyTimer);
+  // ── 조식·점심 인원 복사: 칸마다 따로 쓰는 안내줄(msg)·직접 복사 상자(box)·타이머가 있어 서로 섞이지 않음 ──
+  const copyTimers = new Map();
+  async function copyOut(text, box, msg) {
+    clearTimeout(copyTimers.get(msg));
     let ok = false;
     try { await navigator.clipboard.writeText(text); ok = true; } catch {} // 막혀 있거나(http·권한) 지원하지 않으면 아래에서 직접 복사할 수 있게 보여 줌
     box.value = text;
     if (ok) {
       box.hidden = true;
       msg.textContent = '복사했어요: ' + text;
-      copyTimer = setTimeout(() => { msg.textContent = ''; }, 6000);
+      copyTimers.set(msg, setTimeout(() => { msg.textContent = ''; }, 6000));
       return;
     }
     box.hidden = false;
@@ -1619,7 +1649,22 @@ Day 3 · 12/19(토) — 함께 만드는 내년
     box.select();
     try { ok = document.execCommand('copy'); } catch {}
     msg.textContent = ok ? '복사했어요.' : '복사가 막혀 있어요. 아래 글을 눌러 선택한 뒤 직접 복사해 주세요.';
+  }
+  $('#menuCopy').addEventListener('click', guard(async () => {
+    if (!people.length) throw new Error('복사할 내용이 없어요. 명단이 비어 있어요.');
+    const noMenu = people.filter((p) => !p.menu).length;
+    const text = `12/18(금) 조식: ${MENU_KEYS.map((m) => `${MENUS[m]} ${people.filter((p) => p.menu === m).length}`).join(' · ')}${noMenu ? ` (아직 안 고름 ${noMenu})` : ''} / 총 ${people.length}명`;
+    await copyOut(text, $('#copyBox'), $('#copyMsg'));
   }));
+  $('#lunchCopy').addEventListener('click', guard(async () => {
+    if (!people.length) throw new Error('복사할 내용이 없어요. 명단이 비어 있어요.');
+    const noLunch = people.filter((p) => !lunchOf(p)).length;
+    const text = `12/18(금) 점심: ${LUNCH_KEYS.map((k) => `${LUNCHES[k]} ${people.filter((p) => lunchOf(p) === k).length}`).join(' · ')}${noLunch ? ` (아직 안 고름 ${noLunch})` : ''} / 총 ${people.length}명`;
+    await copyOut(text, $('#lunchCopyBox'), $('#lunchCopyMsg'));
+  }));
+
+  // 마감 안내 문구(조식·점심·자유시간 칸): 날짜는 common.js 의 CHOICE_DEADLINE_SHORT 에서 가져옴
+  for (const el of document.querySelectorAll('[data-deadline]')) el.textContent = CHOICE_DEADLINE_SHORT;
 
   // ── 마지막 갱신 · 갱신 실패 표시 · 프로젝터 보기 · 화면 꺼짐 막기 ──
   const two = (n) => String(n).padStart(2, '0');
