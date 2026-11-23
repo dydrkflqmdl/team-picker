@@ -296,12 +296,15 @@
   });
 
   // 새로 받기: 기존 5초 새로고침에 맞춰 5초마다. 칸을 접어 두어도 똑같이(접힌 제목 줄의 "N/M명 정해짐"과 맨 위 차량 타일이 늘 맞게)
+  // 프로젝터 보기(board.html 의 tv)에서는 차량을 보여 주지 않으므로 받지 않음. 관리자 페이지로 돌아오면(board.html 이 'tvchange' 를 보냄) 곧바로 한 번 받음
+  const inTv = () => typeof tv !== 'undefined' && tv;
   const auto = () => {
-    if (document.hidden || $('#boardView').hidden || typeof code === 'undefined' || !code) return;
+    if (document.hidden || inTv() || $('#boardView').hidden || typeof code === 'undefined' || !code) return;
     load(false);
   };
   setInterval(auto, 5000);
-  card.addEventListener('toggle', () => { if (card.open) load(true); });
+  card.addEventListener('toggle', () => { if (card.open && !inTv()) load(true); });
+  document.addEventListener('tvchange', () => { if (!inTv() && !document.hidden) load(true); });
   document.addEventListener('visibilitychange', () => { if (!document.hidden) auto(); });
   setTimeout(auto, 800); // 처음 한 번(board.html 의 첫 새로고침 뒤)
 
@@ -310,6 +313,7 @@
   //   carText(id)    백업 CSV 의 탑승 차량 칸: 손님이면 차량 이름, 운전자면 "1호차(운전)", 없으면 ''
   //   removeNote(id) 명단에서 지울 때 확인 문구에 덧붙일 말(운전자·손님이면)
   //   riders()       초기화 확인 문구에 넣을 탑승 차량이 정해진 손님 수(운전자 제외). 새로 받아서 세고, 못 받으면 null
+  //   seats()        자동 섞기 확인 문구용 { cars, total, free }(받아 둔 자료만 읽음)
   //   ready() · carKey(id) · carKeys() · carName(key) · isDriver(id)   한눈에 보기·분류 단추용(받아 둔 자료만 읽음, 새로 받지 않음).
   //                  자료를 아직 못 받았으면 ready() 는 false, carKey 는 '', carKeys 는 []. 차량 자료가 바뀌면 document 에 'carboard' 이벤트
   const drivingCar = (id) => (data ? data.cars.find((c) => c.driver === id) : null);
@@ -336,6 +340,12 @@
     carName(key) { const c = data && data.cars.find((x) => x.id === key); return c ? c.name : key; },
     isDriver(id) { return !!drivingCar(id); },
     async riders() { return (await load(true)) && data ? data.people.filter((p) => p.car).length : null; },
+    // 자동 섞기 확인 문구용(받아 둔 자료만 읽음): 목록에 있는 차량 수 · 정원 합 · 지금 빈자리 합. 자료가 없으면 null
+    seats() {
+      if (!data) return null;
+      const { list } = groups();
+      return { cars: list.length, total: list.reduce((s, c) => s + (c.seats || 0), 0), free: list.reduce((s, c) => s + Math.max(0, (c.seats || 0) - c.riders.length), 0) };
+    },
     carText(id) {
       if (!data || !backupFresh) return '';
       const d = drivingCar(id);

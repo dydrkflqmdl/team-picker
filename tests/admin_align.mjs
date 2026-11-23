@@ -12,7 +12,13 @@ import { startServer } from './server.mjs';
 import { openTestBrowser, guardNetwork } from './helpers.mjs';
 
 const CARS = [{ id: 'car1', name: '1호차', label: '견본 문구', driver: 29 }, { id: 'car2', name: '2호차', label: '' }]; // 운전자: 견본고(id 29)
-const DEADLINE_RE = /^참가자는 11\/25\(수\) 15시까지 .+ 수 있어요\. 그 뒤로는 여기서만 바꿀 수 있어요\. \(방법: .+\)$/;
+const DEADLINE_RE = /^참가자는 11\/25\(수\) 15시까지 .+ 수 있어요\. 그 뒤로는 여기서만 바꿀 수 있어요\. \(방법: .+\)$/; // 마감 전
+const CLOSED_RE = /^마감됐어요\(11\/25\(수\) 15시\)\. 지금은 여기서만 바꿀 수 있어요\. \(방법: .+\)$/; // 마감 뒤
+const T_BEFORE = Date.parse('2026-11-25T14:00:00+09:00'); // 마감(11/25 15시) 한 시간 전 — 화면 시계를 이 시각으로
+const T_AFTER = Date.parse('2026-11-25T15:00:01+09:00');  // 마감 1초 뒤
+const DEADLINE_SPEC = [ // [칸 이름, 안내 id, 방법에 들어 있어야 할 말]
+  ['아침 메뉴', '#menuDeadline', '수정'], ['점심', '#lunchDeadline', '직접 고치기'], ['자유시간', '#actDeadline', '직접 고치기'], ['탑승 차량', '#carDeadline', '직접 옮기기'],
+];
 const OPEN_KEY = 'team-picker-board-open'; // 관리자 페이지 칸 열림 기억
 // 칸(모두 details.card) 순서: 한눈에 보기 → 참가자 메인 순서(일정·차량·아침·점심·자유시간) → 현장 뽑기(객실표·팀) → 관리용(명단 관리·초기화)
 const CARD_ORDER = ['glanceCard', 'planCard', 'carCard', 'menuCard', 'lunchCard', 'actCard', 'roomCard', 'teamCard', 'admin', 'resetCard'];
@@ -27,6 +33,12 @@ function dialogs(page, answer = () => false) {
     if (a) await d.accept(typeof a === 'string' ? a : undefined); else await d.dismiss();
   });
   return seen;
+}
+// 확인 상자가 n개 뜰 때까지 기다림(고정 대기 대신 — 확인 전에 새로 받기 왕복이 들어가 느린 환경에서도 안 흔들리게). 취소가 끝난 뒤 잠깐 더 둠
+async function waitDialogs(page, seen, n = 1, ms = 15000) {
+  const end = Date.now() + ms;
+  while (seen.length < n && Date.now() < end) await page.waitForTimeout(50);
+  await page.waitForTimeout(100);
 }
 // CSV 글 → 칸 배열(따옴표로 감싼 칸만 씀)
 const parseCsv = (text) => text.replace(/^﻿/, '').split(/\r?\n/).map((l) => [...l.matchAll(/"((?:[^"]|"")*)"/g)].map((m) => m[1].replace(/""/g, '"')));
@@ -48,8 +60,9 @@ export async function adminAlignTests() {
   }
   const people = async () => (await db.query('select id, name, team, menu, lunch, activity, room, car from public.people order by id')).rows;
 
-  // 관리자 화면 열기(비밀번호는 저장된 것으로). opt.width: 화면 너비, opt.url: 주소 끝, opt.noCars: 차량 자료 받기를 막음
-  async function openBoard({ width = 1280, url = '', noCars = false, answer } = {}) {
+  // 관리자 화면 열기(비밀번호는 저장된 것으로). opt.width: 화면 너비, opt.url: 주소 끝, opt.noCars: 차량 자료 받기를 막음,
+  // opt.fixed: 화면 시계를 그 시각(ms)으로 고정(마감 전·후 문구 시험), opt.install: 화면 시계를 그 시각부터 흐르게 하고 page.clock.fastForward 로 건너뜀(열어 둔 채 마감 넘기기)
+  async function openBoard({ width = 1280, url = '', noCars = false, answer, fixed, install } = {}) {
     const page = await env.newPage();
     await page.setViewportSize({ width, height: 900 });
     page.on('pageerror', (e) => errors.push(e.message));
@@ -57,6 +70,8 @@ export async function adminAlignTests() {
     await page.addInitScript(([c, k]) => { try { localStorage.setItem('team-picker-admin', JSON.stringify(c)); if (!sessionStorage.getItem('fresh')) { localStorage.removeItem(k); sessionStorage.setItem('fresh', '1'); } } catch {} }, [ADMIN_CODE, OPEN_KEY]);
     if (noCars) await page.route('**/rest/v1/rpc/board_cars', (route) => route.abort());
     const seen = dialogs(page, answer);
+    if (fixed) await page.clock.setFixedTime(new Date(fixed));
+    if (install) await page.clock.install({ time: new Date(install) });
     await page.goto(`${server.url}/board.html${url}`);
     if (!/tv=1/.test(url)) await page.locator('#glanceBody tr').nth(28).waitFor({ timeout: 10000 });
     return { page, seen };
@@ -217,9 +232,9 @@ export async function adminAlignTests() {
       await page.close();
     }
 
-    // ── 5. 마감 안내 네 칸: 같은 틀 · 제목 바로 아래 ──
+    // ── 5. 마감 안내 네 칸: 같은 틀 · 제목 바로 아래(화면 시계는 마감 전으로 고정 — 시험을 언제 돌려도 같게) ──
     {
-      const { page } = await openBoard();
+      const { page } = await openBoard({ fixed: T_BEFORE });
       const spec = [
         ['아침 메뉴', '#menuDeadline', '#menuCard > summary'],
         ['점심', '#lunchDeadline', '#lunchCard > summary'],
@@ -288,7 +303,7 @@ export async function adminAlignTests() {
       ok(!/참가자가 .*방 뽑기|방 뽑기로 직접/.test(room), '[객실표 안내] 참가자가 직접 방을 뽑는다는 말이 없음');
       seen.length = 0;
       await page.locator('#roomAuto').click(); // 이미 방이 정해진 사람이 있어 확인 상자가 뜸 → 취소
-      await page.waitForTimeout(300);
+      await waitDialogs(page, seen);
       ok(seen.length === 1 && seen[0].msg.includes('발표용 뽑기 화면에서 뽑은 방 포함') && !seen[0].msg.includes('참가자가 직접'), `[객실표 확인 문구] ${seen[0] && seen[0].msg.split('\n')[0]}`);
       eq((await people()).filter((p) => p.room).length, 10, '[객실표 확인 문구] 취소하면 방 그대로');
       // 프로젝터 보기 경고
@@ -493,8 +508,8 @@ export async function adminAlignTests() {
       await page.locator('#roomMove').uncheck();
       seen.length = 0;
       await page.locator('#roomAuto').click();
-      await page.waitForTimeout(300);
-      ok(seen.length === 1 && /전부 새로 나눌까요/.test(seen[0].msg), '[접고 편 뒤·객실표] 자동으로 나누기 → 확인(취소)');
+      await waitDialogs(page, seen);
+      ok(seen.length === 1 && /^방 전부 새로 섞기: 지금 \d+명의 방 기록/.test(seen[0].msg), '[접고 편 뒤·객실표] 방 전부 새로 섞기 → 확인(취소)');
       await reopen('teamCard');
       await clickWho(page);
       ok(await page.locator('#sheet').isVisible() && /팀 대신 정하기/.test(await page.locator('#sheet').innerText()), '[접고 편 뒤·팀] 이름 누르기 메뉴');
@@ -542,6 +557,198 @@ export async function adminAlignTests() {
       ok(await page.locator('#carView .room').count() >= 2, '[저장소 막힘] 탑승 차량 칸 내용도 그려짐');
       g.assertClean();
       await ctx.close();
+    }
+
+    // ── 11. 마감 안내: 마감 전(지금 문구) · 마감 뒤(마감됐어요) · 화면을 열어 둔 채 마감을 넘기면 저절로 바뀜 ──
+    {
+      await fill();
+      const textOf = async (page, sel) => (await page.locator(sel).textContent()).replace(/\s+/g, ' ').trim();
+      const how = (t) => t.match(/\(방법: (.+)\)$/)[1];
+      // 마감 전: 지금과 같은 모양, 탑승 차량 칸의 마감 전 문장
+      const before = await openBoard({ fixed: T_BEFORE });
+      let hows = {};
+      for (const [name, sel, key] of DEADLINE_SPEC) {
+        const t = await textOf(before.page, sel);
+        ok(DEADLINE_RE.test(t) && !t.includes('마감됐어요'), `[마감 전·${name}] ${t}`);
+        hows[sel] = how(t);
+        ok(how(t).includes(key), `[마감 전·${name}] 방법에 "${key}"`);
+      }
+      const noteBefore = await textOf(before.page, '#carNote');
+      ok(/마감 전에는 차량을 비우면 그 사람이 다시 뽑을 수 있어요\.$/.test(noteBefore) && !/마감이 지나/.test(noteBefore), `[마감 전·탑승 차량] 안내: ${noteBefore}`);
+      await before.page.close();
+
+      // 마감 뒤: 네 칸 모두 "마감됐어요(11/25(수) 15시). 지금은 여기서만 바꿀 수 있어요. (방법: …)" — 방법은 마감 전과 같고, "참가자는 …까지"는 없음
+      const after = await openBoard({ fixed: T_AFTER });
+      for (const [name, sel, key] of DEADLINE_SPEC) {
+        const t = await textOf(after.page, sel);
+        ok(CLOSED_RE.test(t) && !t.includes('참가자는') && !t.includes('까지'), `[마감 뒤·${name}] ${t}`);
+        eq(how(t), hows[sel], `[마감 뒤·${name}] 방법은 마감 전과 같음`);
+        ok(await after.page.evaluate(([s, h]) => document.querySelector(h).nextElementSibling === document.querySelector(s), [sel, sel.replace('Deadline', 'Card') + ' > summary']), `[마감 뒤·${name}] 제목 바로 아래(같은 틀)`);
+      }
+      const noteAfter = await textOf(after.page, '#carNote');
+      ok(/참가자는 다시 뽑을 수 없어서 진행자가 직접 넣어요\.$/.test(noteAfter) && !/마감 전에는|다시 뽑을 수 있어요/.test(noteAfter), `[마감 뒤·탑승 차량] 마감 전 전용 문장이 바뀜: ${noteAfter}`);
+      ok(/운전자는 뽑지 않고/.test(noteAfter) && /반씩/.test(noteAfter), '[마감 뒤·탑승 차량] 앞의 핵심 안내(운전자 고정·반씩)는 그대로');
+      eq(await after.page.locator('#carCard > p.hint-line').count(), 2, '[마감 뒤·탑승 차량] 안내는 여전히 두 문단');
+      await after.page.close();
+
+      // 열어 둔 채 마감을 넘김: 칸을 펴고 입력하던 값을 둔 채 시계를 마감 뒤로 건너뛰면 저절로 바뀌고, 칸·입력은 그대로
+      const live = await openBoard({ install: T_BEFORE });
+      const p = live.page;
+      for (const [, sel] of DEADLINE_SPEC) ok(DEADLINE_RE.test(await textOf(p, sel)), `[마감 넘김] 넘기기 전 ${sel}은 마감 전 문구`);
+      await openCard(p, 'carCard');
+      await openCard(p, 'lunchCard');
+      await openCard(p, 'teamCard');
+      await p.locator('#quickInput').fill('적던 이름, 시험영업부');
+      await p.locator('#lunchMove').check();
+      const openBefore = await p.evaluate(() => [...document.querySelectorAll('#boardView > details.card')].filter((d) => d.open).map((d) => d.id));
+      await p.clock.fastForward(61 * 60 * 1000); // 14:00 → 15:01
+      await p.waitForFunction(() => /^마감됐어요/.test(document.querySelector('#menuDeadline').textContent.trim()), null, { timeout: 5000 });
+      for (const [name, sel] of DEADLINE_SPEC) ok(CLOSED_RE.test(await textOf(p, sel)), `[마감 넘김] 화면을 연 채 마감을 넘기면 ${name} 안내가 바뀜: ${await textOf(p, sel)}`);
+      ok(/참가자는 다시 뽑을 수 없어서 진행자가 직접 넣어요\.$/.test(await textOf(p, '#carNote')), '[마감 넘김] 탑승 차량의 마감 전 전용 문장도 바뀜');
+      eq(await p.evaluate(() => [...document.querySelectorAll('#boardView > details.card')].filter((d) => d.open).map((d) => d.id)), openBefore, '[마감 넘김] 열어 둔 칸이 그대로(열림 상태가 풀리지 않음)');
+      eq(await p.evaluate(() => [document.querySelector('#quickInput').value, document.querySelector('#lunchMove').checked]), ['적던 이름, 시험영업부', true], '[마감 넘김] 입력하던 값·체크도 그대로');
+      await p.close();
+    }
+
+    // ── 12. 자유시간 복사 단추: 칸 안 아래 도구 줄, 복사 글에 스키·휴식 명단과 안 고른 사람 ──
+    {
+      await fill();
+      const { page } = await openBoard();
+      await openCard(page, 'actCard');
+      eq(await page.locator('#actCard > summary button, #actCard > summary a').count(), 0, '[자유시간 복사] 제목 줄 안에는 단추가 없음');
+      ok(await page.evaluate(() => { const b = document.querySelector('#actCopy'); const row = b.closest('.tools2'); return !!row && row.parentNode.id === 'actCard' && b.textContent.trim() === '복사' && getComputedStyle(b).marginLeft !== '0px' && row.contains(document.querySelector('#actMove')) && row.compareDocumentPosition(document.querySelector('#acts')) & Node.DOCUMENT_POSITION_PRECEDING; }), '[자유시간 복사] 복사 단추가 점심 칸처럼 칸 안 아래 도구 줄(직접 고치기 옆, 오른쪽 끝)에 있음');
+      const acts = (await db.query('select name, activity from public.people order by id')).rows;
+      const nameSet = (f) => acts.filter(f).map((r) => r.name).sort();
+      await page.locator('#actCopy').click();
+      await page.waitForFunction(() => document.querySelector('#actCopyBox').value, null, { timeout: 5000 });
+      const text = await page.locator('#actCopyBox').inputValue();
+      const lines = text.split('\n');
+      eq(lines[0], '12/18(금) 저녁 자유시간: 스키 3 · 휴식 3 (아직 안 고름 23) / 총 29명', '[자유시간 복사] 첫 줄은 아침 메뉴·점심 복사와 같은 인원 한 줄');
+      eq(lines.length, 4, '[자유시간 복사] 줄 수: 인원 한 줄 + 스키 + 휴식 + 아직 안 고름');
+      const listOf = (line, head) => { assert.ok(line.startsWith(head), `${head} 줄: ${line}`); return line.slice(head.length).split(', ').sort(); };
+      eq(listOf(lines[1], '스키(3): '), nameSet((r) => r.activity === 'ski'), '[자유시간 복사] 스키 명단(이름 그대로)');
+      eq(listOf(lines[2], '휴식(3): '), nameSet((r) => r.activity === 'rest'), '[자유시간 복사] 휴식 명단');
+      eq(listOf(lines[3], '아직 안 고름(23): '), nameSet((r) => !r.activity), '[자유시간 복사] 안 고른 사람 명단');
+      ok(await page.locator('#actCopyBox').isVisible() || /복사했어요/.test(await page.locator('#actCopyMsg').innerText()), '[자유시간 복사] 복사됐다고 알리거나(클립보드) 직접 복사할 상자를 보임');
+      // 클립보드 허용: 복사된 글이 위 글 그대로, 안내줄에는 첫 줄만
+      await env.context.grantPermissions(['clipboard-read', 'clipboard-write']);
+      await page.locator('#actCopy').click();
+      await page.waitForFunction(() => /^복사했어요/.test(document.querySelector('#actCopyMsg').textContent), null, { timeout: 5000 });
+      eq(await page.evaluate(() => navigator.clipboard.readText()), text, '[자유시간 복사] 클립보드에 복사된 글이 같음');
+      ok(/^복사했어요: 12\/18\(금\) 저녁 자유시간: .+ 총 29명 …/.test(await page.locator('#actCopyMsg').innerText()) && !(await page.locator('#actCopyBox').isVisible()), '[자유시간 복사] 안내줄은 첫 줄만 보임·상자는 숨김');
+      // 클립보드가 막히면 직접 복사할 상자(다른 칸의 복사와 같은 방식)
+      await page.evaluate(() => { Object.defineProperty(navigator.clipboard, 'writeText', { configurable: true, value: () => Promise.reject(new Error('시험: 막힘')) }); });
+      await page.locator('#actCopy').click();
+      await page.waitForFunction(() => !document.querySelector('#actCopyBox').hidden, null, { timeout: 5000 });
+      eq(await page.locator('#actCopyBox').inputValue(), text, '[자유시간 복사] 클립보드가 막히면 같은 글을 직접 복사할 상자로 보여 줌');
+      // 다른 칸의 복사와 섞이지 않음
+      eq([await page.locator('#copyBox').inputValue(), await page.locator('#lunchCopyBox').inputValue()].some((v) => v.includes('자유시간')), false, '[자유시간 복사] 아침 메뉴·점심 복사 상자와 섞이지 않음');
+      await page.close();
+    }
+
+    // ── 13. 휴대폰(390px) 정리: 누르는 자리 40px 이상 · 한눈에 보기 표가 옆으로 안 밀림(모든 열) · 넓은 화면 모양은 그대로 ──
+    {
+      await fill();
+      const { page } = await openBoard({ width: 390, answer: (d) => (d.type() === 'prompt' ? '삭제' : false) });
+      await page.waitForFunction(() => document.querySelector('#facets .facet[aria-label="차량"]'), null, { timeout: 15000 });
+      for (const id of ['glanceCard', 'carCard', 'menuCard', 'lunchCard', 'actCard', 'teamCard', 'admin', 'resetCard']) await openCard(page, id);
+      await page.waitForTimeout(300);
+      // 한눈에 보기 표: 8열이 모두 화면 안에 보이고, 표 칸 안에서도 옆으로 밀 필요가 없음(페이지 전체도 안 넘침)
+      const g = await page.evaluate(() => {
+        const w = document.querySelector('.glance-wrap'), ths = [...document.querySelectorAll('.glance thead th')].map((t) => t.getBoundingClientRect());
+        return { sw: w.scrollWidth, cw: w.clientWidth, cols: ths.length, minL: Math.min(...ths.map((r) => r.left)), maxR: Math.max(...ths.map((r) => r.right)), doc: [document.documentElement.scrollWidth, document.documentElement.clientWidth], names: [...document.querySelectorAll('.glance thead th')].map((t) => t.textContent.trim()), tds: document.querySelectorAll('#glanceBody tr:first-child td').length };
+      });
+      ok(g.sw <= g.cw, `[390px·한눈에 보기] 표가 옆으로 밀리지 않음(${g.sw} ≤ ${g.cw})`);
+      ok(g.cols === 8 && g.tds === 8 && g.minL >= 0 && g.maxR <= 390, `[390px·한눈에 보기] 열 8개가 모두 화면 안(${Math.round(g.minL)}~${Math.round(g.maxR)}px)`);
+      eq(g.names, ['부서', '이름', '차량', '아침 메뉴', '점심', '자유시간', '방', '팀'], '[390px·한눈에 보기] 열 머리글은 그대로(없앤 열 없음)');
+      ok(g.doc[0] <= g.doc[1], `[390px] 페이지 전체도 가로로 안 넘침(${g.doc[0]} ≤ ${g.doc[1]})`);
+      const row = await page.locator('#glanceBody tr').filter({ hasText: '견본마' }).locator('td').allInnerTexts();
+      eq(row.map((x) => x.replace(/\s+/g, ' ').trim()), ['시험관리부', '견본마', '2호차', '버섯 황태 해장국', '얼큰 설렁탕', '휴식', '남자 1호실', '빨강'], '[390px·한눈에 보기] 줄바꿈이 돼도 칸의 글은 그대로');
+      // 누르는 자리: 분류 단추·작은 단추·링크 단추·머리글 단추 높이 40px 이상
+      const h = (sel) => page.locator(sel).evaluateAll((els) => els.filter((e) => e.getBoundingClientRect().height > 0).map((e) => Math.round(e.getBoundingClientRect().height * 10) / 10));
+      for (const [name, sel] of [['분류 단추', '#facets .chip.pick'], ['작은 단추(복사·고치기)', '#carCopy, #carEditBtn, #lunchCopy, #actCopy, #menuCopy, #planEditBtn'], ['초기화 단추', '#resetCard button.sm'], ['발표용 링크', '#drawLink, #drawLinkTeam'], ['한눈에 보기 머리글', '.glance th button'], ['명단 표 머리글', '.people th button'], ['프로젝터 보기 단추', '#tvBtn'], ['표 안 수정·삭제', '#peopleBody tr:first-child button']]) {
+        const hs = await h(sel);
+        ok(hs.length > 0 && hs.every((x) => x >= 39.5), `[390px·누르는 자리] ${name} 높이 40px 이상: ${[...new Set(hs)].join(', ')}`);
+      }
+      // 칸 안 도구 줄·확인 상자: 화면 안에서 깨지지 않음
+      const rowsOk = await page.evaluate(() => [...document.querySelectorAll('.tools2, .tools, .quick, .draw-ref')].filter((e) => e.getBoundingClientRect().height > 0).map((e) => { const r = e.getBoundingClientRect(), kids = [...e.children].filter((c) => c.getBoundingClientRect().height > 0).map((c) => c.getBoundingClientRect()); return kids.some((k) => k.left < r.left - 1 || k.right > innerWidth + 1) ? (e.id || e.className) : ''; }).filter(Boolean));
+      eq(rowsOk, [], '[390px] 칸 안 도구 단추 줄의 단추가 화면 밖으로 나가지 않음');
+      await page.locator('#removeAll').scrollIntoViewIfNeeded();
+      await page.locator('#removeAll').click();
+      await page.locator('#backupBox').waitFor({ state: 'visible' });
+      const bx = await page.evaluate(() => { const b = document.querySelector('#backupBox .box').getBoundingClientRect(); return { l: b.left, r: b.right, t: b.top, b: b.bottom, btn: [...document.querySelectorAll('#backupBox .acts button')].map((x) => [Math.round(x.getBoundingClientRect().height), x.getBoundingClientRect().right <= innerWidth]), doc: document.documentElement.scrollWidth }; });
+      ok(bx.l >= 0 && bx.r <= 390 && bx.doc <= 390 && bx.btn.every(([hh, inside]) => hh >= 40 && inside), `[390px·확인 상자] 백업 확인 상자가 화면 안(${Math.round(bx.l)}~${Math.round(bx.r)}px), 단추 높이 ${bx.btn.map((x) => x[0]).join('·')}px`);
+      await page.locator('#bkNo').click();
+      // 이름 메뉴(화면 아래 판)
+      await clickWho(page);
+      const sh = await page.evaluate(() => { const b = document.querySelector('#sheet').getBoundingClientRect(); return { l: b.left, r: b.right, btn: [...document.querySelectorAll('#sheet button')].map((x) => Math.round(x.getBoundingClientRect().height)) }; });
+      ok(sh.l >= 0 && sh.r <= 390 && sh.btn.every((x) => x >= 40), `[390px·이름 메뉴] 화면 안, 단추 높이 ${sh.btn.join('·')}px`);
+      await page.keyboard.press('Escape');
+      await page.locator('#glanceCard').scrollIntoViewIfNeeded();
+      // 넓은 화면(1280px) 모양은 그대로: 누르는 자리를 키우는 규칙이 700px 이하에서만 적용됨
+      await page.setViewportSize({ width: 1280, height: 900 });
+      await page.waitForTimeout(200);
+      const wide = await page.evaluate(() => ({
+        chip: Math.round(document.querySelector('#facets .chip.pick').getBoundingClientRect().height), sm: Math.round(document.querySelector('#carCopy').getBoundingClientRect().height),
+        glanceFont: getComputedStyle(document.querySelector('.glance td')).fontSize, glanceWrap: getComputedStyle(document.querySelector('.glance td')).whiteSpace, thBtn: Math.round(document.querySelector('.glance th button').getBoundingClientRect().height),
+        wrapMargin: getComputedStyle(document.querySelector('.glance-wrap')).marginLeft, cw: [document.querySelector('.glance-wrap').scrollWidth, document.querySelector('.glance-wrap').clientWidth],
+      }));
+      ok(wide.chip < 36 && wide.sm === 36, `[1280px·그대로] 분류 단추 ${wide.chip}px(40 미만) · 작은 단추 ${wide.sm}px`);
+      eq([wide.glanceFont, wide.glanceWrap, wide.wrapMargin, wide.cw[0] <= wide.cw[1], wide.thBtn < 30], ['14px', 'nowrap', '0px', true, true], '[1280px·그대로] 한눈에 보기 표는 14px · 줄바꿈 없음 · 여백 그대로');
+      await page.close();
+    }
+
+    // ── 14. 늦게 온 사람 빠른 추가: 오류는 맨 위 #error 가 아니라 입력칸 아래 #quickMsg 에 보임 ──
+    {
+      await fill();
+      const { page } = await openBoard({ width: 390 });
+      await openCard(page, 'teamCard');
+      await page.locator('#quickInput').fill('견본가, 시험영업부'); // 이미 있는 사람
+      await page.locator('#quickBtn').click();
+      await page.waitForFunction(() => document.querySelector('#quickMsg').textContent, null, { timeout: 5000 });
+      eq((await page.locator('#quickMsg').innerText()).trim(), '시험영업부의 견본가 님은 이미 명단에 있어요.', '[빠른 추가·오류] 같은 이름·부서 오류가 입력칸 아래 안내줄에 나옴');
+      eq(await page.locator('#error').innerText(), '', '[빠른 추가·오류] 맨 위 #error 에는 안 나옴');
+      ok(await page.locator('#quickMsg').isVisible() && await page.locator('#quickMsg').evaluate((e) => e.classList.contains('err') && getComputedStyle(e).color === getComputedStyle(document.querySelector('.error')).color), '[빠른 추가·오류] 안내줄이 보이고 오류 색(빨강)');
+      eq(await page.locator('#quickInput').inputValue(), '견본가, 시험영업부', '[빠른 추가·오류] 입력칸은 그대로 둠');
+      await page.locator('#quickInput').fill('이름만');
+      await page.locator('#quickBtn').click();
+      await page.waitForFunction(() => /이름, 부서 순서/.test(document.querySelector('#quickMsg').textContent), null, { timeout: 5000 });
+      eq(await page.locator('#error').innerText(), '', '[빠른 추가·오류] 형식 오류도 #quickMsg(#error 는 비어 있음)');
+      // 성공하면 같은 자리에 성공 문구(빨강 아님)
+      await page.locator('#quickInput').fill('견본신, 시험영업부');
+      await page.locator('#quickBtn').click();
+      await page.waitForFunction(() => /추가했어요/.test(document.querySelector('#quickMsg').textContent), null, { timeout: 5000 });
+      ok(!(await page.locator('#quickMsg').evaluate((e) => e.classList.contains('err'))) && (await people()).length === 30, '[빠른 추가·성공] 추가되고 성공 문구는 오류 색이 아님');
+      eq(await page.locator('#error').innerText(), '', '[빠른 추가·성공] #error 는 비어 있음');
+      await page.close();
+      await fill(); // 시험용으로 넣은 사람 정리
+    }
+
+    // ── 15. 프로젝터 보기에서는 차량 자료 받기(board_cars)를 쉬고, 관리자 페이지로 돌아오면 곧바로 받음 ──
+    {
+      await fill();
+      const calls = (fn, from) => server.calls.slice(from).filter((c) => c.fn === fn).length;
+      const c0 = server.calls.length;
+      const { page } = await openBoard({ url: '?tv=1' });
+      await page.locator('#columns .col').first().waitFor({ timeout: 10000 });
+      await page.waitForTimeout(7000); // 5초 새로고침이 한 번 이상, 차량 첫 받기(0.8초 뒤)도 지나는 시간
+      ok(calls('board_state', c0) >= 1, `[프로젝터·차량] 그사이 5초 새로고침은 돌았음(board_state ${calls('board_state', c0)}번)`);
+      eq(calls('board_cars', c0), 0, '[프로젝터·차량] 프로젝터 보기에서는 board_cars 를 한 번도 안 받음');
+      const c1 = server.calls.length;
+      await page.locator('#tvBtn').click(); // 관리자 페이지로
+      await page.waitForFunction(() => !document.body.classList.contains('tv'));
+      const t0 = Date.now();
+      while (calls('board_cars', c1) === 0 && Date.now() - t0 < 2500) await page.waitForTimeout(100);
+      ok(calls('board_cars', c1) >= 1, `[프로젝터·차량] 관리자 페이지로 돌아오면 곧바로(${Date.now() - t0}ms, 5초 기다리지 않고) 차량 자료를 받음`);
+      await page.waitForFunction(() => /^차량 6\/29/.test(document.querySelector('#glanceSum').textContent.replace(/\s+/g, ' ')) || /차량 \d+\/29/.test(document.querySelector('#glanceSum').textContent), null, { timeout: 5000 });
+      ok(/차량 [^-]/.test((await tiles(page))[0]) && !/^차량 -/.test((await tiles(page))[0]), `[프로젝터·차량] 돌아온 뒤 차량 타일이 채워짐: ${(await tiles(page))[0]}`);
+      // 다시 프로젝터 보기로 가면 또 쉼
+      await page.locator('#tvBtn').click();
+      await page.waitForFunction(() => document.body.classList.contains('tv'));
+      const c2 = server.calls.length;
+      await page.waitForTimeout(6500);
+      eq(calls('board_cars', c2), 0, '[프로젝터·차량] 다시 프로젝터 보기로 가면 또 받지 않음');
+      await page.close();
     }
 
     eq(errors, [], '페이지 오류 없음');
