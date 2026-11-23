@@ -17,7 +17,7 @@ const CLOSED_RE = /^마감됐어요\(11\/25\(수\) 15시\)\. 지금은 여기서
 const T_BEFORE = Date.parse('2026-11-25T14:00:00+09:00'); // 마감(11/25 15시) 한 시간 전 — 화면 시계를 이 시각으로
 const T_AFTER = Date.parse('2026-11-25T15:00:01+09:00');  // 마감 1초 뒤
 const DEADLINE_SPEC = [ // [칸 이름, 안내 id, 방법에 들어 있어야 할 말]
-  ['아침 메뉴', '#menuDeadline', '수정'], ['점심', '#lunchDeadline', '직접 고치기'], ['자유시간', '#actDeadline', '직접 고치기'], ['탑승 차량', '#carDeadline', '직접 옮기기'],
+  ['아침 메뉴', '#menuDeadline', '직접 고치기'], ['점심', '#lunchDeadline', '직접 고치기'], ['자유시간', '#actDeadline', '직접 고치기'], ['탑승 차량', '#carDeadline', '직접 옮기기'],
 ];
 const OPEN_KEY = 'team-picker-board-open'; // 관리자 페이지 칸 열림 기억
 // 칸(모두 details.card) 순서: 한눈에 보기 → 참가자 메인 순서(일정·차량·아침·점심·자유시간) → 현장 뽑기(객실표·팀) → 관리용(명단 관리·초기화)
@@ -248,9 +248,9 @@ export async function adminAlignTests() {
       }
       ok(await page.evaluate(() => document.querySelector('#menuDeadline').compareDocumentPosition(document.querySelector('#menus')) & Node.DOCUMENT_POSITION_FOLLOWING), '[마감 안내·아침 메뉴] 목록(#menus)보다 위');
       const how = async (sel) => (await page.locator(sel).textContent()).match(/\(방법: (.+)\)$/)[1];
-      ok((await how('#menuDeadline')).includes('수정') && (await how('#lunchDeadline')).includes('직접 고치기') && (await how('#actDeadline')).includes('직접 고치기') && (await how('#carDeadline')).includes('직접 옮기기'), '[마감 안내] 방법이 칸에 실제 있는 흐름(수정·직접 고치기·직접 옮기기)을 가리킴');
+      ok((await how('#menuDeadline')).includes('직접 고치기') && (await how('#lunchDeadline')).includes('직접 고치기') && (await how('#actDeadline')).includes('직접 고치기') && (await how('#carDeadline')).includes('직접 옮기기'), '[마감 안내] 방법이 칸에 실제 있는 흐름(직접 고치기·직접 옮기기)을 가리킴');
       // 그 흐름이 실제로 있는지
-      eq([await page.locator('#lunchMove').count(), await page.locator('#actMove').count(), await page.locator('#carMove').count(), await page.locator('#peopleBody [data-edit]').count()], [1, 1, 1, 29], '[마감 안내] 직접 고치기·직접 옮기기·수정 단추가 그대로 있음');
+      eq([await page.locator('#menuMove').count(), await page.locator('#lunchMove').count(), await page.locator('#actMove').count(), await page.locator('#carMove').count(), await page.locator('#peopleBody [data-edit]').count()], [1, 1, 1, 1, 29], '[마감 안내] 아침 메뉴·점심·자유시간 직접 고치기, 직접 옮기기, 명단 관리의 수정 단추가 그대로 있음');
       const note = (await page.locator('#carNote').textContent()).replace(/\s+/g, ' ');
       ok(/운전자는 뽑지 않고/.test(note) && /반씩/.test(note) && /마감 전에는 차량을 비우면 .*다시 뽑을 수 있어요/.test(note), `[마감 안내·탑승 차량] 핵심 안내(운전자 고정·반씩·마감 전 다시 뽑기): ${note}`);
       eq(await page.locator('#carCard > p.hint-line').count(), 2, '[마감 안내·탑승 차량] 안내는 두 문단');
@@ -272,8 +272,8 @@ export async function adminAlignTests() {
       await openCard(page, 'teamCard');
       // 아침 메뉴 복사 글은 식당과 쓰는 말 "조식"을 그대로 둠
       await page.locator('#menuCopy').click();
-      await page.waitForFunction(() => document.querySelector('#copyBox').value, null, { timeout: 5000 });
-      ok((await page.locator('#copyBox').inputValue()).startsWith('12/18(금) 조식: '), `[이름] 식당에 전하는 복사 글은 "조식" 그대로: ${await page.locator('#copyBox').inputValue()}`);
+      await page.waitForFunction(() => document.querySelector('#menuCopyBox').value, null, { timeout: 5000 });
+      ok((await page.locator('#menuCopyBox').inputValue()).startsWith('12/18(금) 조식: '), `[이름] 식당에 전하는 복사 글은 "조식" 그대로: ${await page.locator('#menuCopyBox').inputValue()}`);
       // 팀 대신 정하기: 표의 단추와 이름 메뉴(실제로 팀을 정하지는 않고 문구만 봄)
       const c0 = server.calls.length;
       const proxyBtn = page.locator('#peopleBody [data-proxy]').first();
@@ -489,7 +489,7 @@ export async function adminAlignTests() {
       ok(true, '[접고 편 뒤·탑승 차량] 차량별 탑승자 복사');
       await reopen('menuCard');
       await page.locator('#menuCopy').click();
-      await page.waitForFunction(() => document.querySelector('#copyBox').value.startsWith('12/18(금) 조식: '), null, { timeout: 5000 });
+      await page.waitForFunction(() => document.querySelector('#menuCopyBox').value.startsWith('12/18(금) 조식: '), null, { timeout: 5000 });
       ok(true, '[접고 편 뒤·아침 메뉴] 복사(칸 안 아래쪽 단추)');
       await reopen('lunchCard');
       await page.locator('#lunchMove').check();
@@ -642,7 +642,7 @@ export async function adminAlignTests() {
       await page.waitForFunction(() => !document.querySelector('#actCopyBox').hidden, null, { timeout: 5000 });
       eq(await page.locator('#actCopyBox').inputValue(), text, '[자유시간 복사] 클립보드가 막히면 같은 글을 직접 복사할 상자로 보여 줌');
       // 다른 칸의 복사와 섞이지 않음
-      eq([await page.locator('#copyBox').inputValue(), await page.locator('#lunchCopyBox').inputValue()].some((v) => v.includes('자유시간')), false, '[자유시간 복사] 아침 메뉴·점심 복사 상자와 섞이지 않음');
+      eq([await page.locator('#menuCopyBox').inputValue(), await page.locator('#lunchCopyBox').inputValue()].some((v) => v.includes('자유시간')), false, '[자유시간 복사] 아침 메뉴·점심 복사 상자와 섞이지 않음');
       await page.close();
     }
 
@@ -748,6 +748,285 @@ export async function adminAlignTests() {
       const c2 = server.calls.length;
       await page.waitForTimeout(6500);
       eq(calls('board_cars', c2), 0, '[프로젝터·차량] 다시 프로젝터 보기로 가면 또 받지 않음');
+      await page.close();
+    }
+
+    // ── 16~20. 아침 메뉴·점심·자유시간 세 칸이 같은 구성 + 직접 고치기 토글 + 복사 + 프로젝터 보기(아침 메뉴 예전 모양 그대로) + 390px ──
+    const CHOICES = [ // 세 칸의 시험 값. n0 = 견본 명단(--picked)에서 이미 고른 사람 수, to/other = 바꿀 값, stId = 참가자 메인의 상태 줄
+      { key: 'menu', card: 'menuCard', list: '#menus', what: 'menu', col: 'menu', head: '12/18(금) 조식', title: '아침 메뉴', n0: 12, to: 'miyeok', toName: '소고기 미역국', other: 'hwangtae', none: '안 고름', opts: ['안 고름', '우거지 해장국', '소고기 미역국', '버섯 황태 해장국'], stId: '#stMenu' },
+      { key: 'lunch', card: 'lunchCard', list: '#lunches', what: 'lunch', col: 'lunch', head: '12/18(금) 점심', title: '점심', n0: 8, to: 'spicy', toName: '얼큰 설렁탕', other: 'plain', none: '안 고름', opts: ['안 고름', '일반 설렁탕', '얼큰 설렁탕'], stId: '#stLunch' },
+      { key: 'act', card: 'actCard', list: '#acts', what: 'activity', col: 'activity', head: '12/18(금) 저녁 자유시간', title: '자유시간', n0: 6, to: 'ski', toName: '스키', other: 'rest', none: '안 고름', opts: ['안 고름', '스키', '휴식'], stId: '#stAct' },
+    ];
+    const norm = (t) => t.replace(/\s+/g, ' ').trim();
+    const waitCalls = async (fn, from, n, ms = 15000) => { const end = Date.now() + ms; while (server.calls.slice(from).filter((c) => c.fn === fn).length < n && Date.now() < end) await new Promise((r) => setTimeout(r, 50)); };
+    const waitDb = async (id, col, want, ms = 10000) => { const end = Date.now() + ms; let v; while (Date.now() < end) { v = (await db.query(`select ${col} as v from public.people where id = $1`, [id])).rows[0].v; if (v === want) return v; await new Promise((r) => setTimeout(r, 50)); } return v; };
+
+    // ── 16. 세 칸의 구성(요소 순서·id/클래스 대응·도구 줄·이름표 모양)이 같음 ──
+    {
+      await fill();
+      const { page } = await openBoard();
+      for (const c of CHOICES) await openCard(page, c.card);
+      const sig = await page.evaluate((keys) => Object.fromEntries(keys.map(([card, key]) => {
+        const d = document.getElementById(card);
+        const tag = (e) => `${e.tagName}${[...e.classList].filter((x) => x !== 'admin-only').sort().map((x) => '.' + x).join('')}`;
+        const kids = [...d.children].filter((e) => !e.matches('p.note')); // 자유시간만 있는 술 금지 안내는 따로 확인
+        const row = d.querySelector(':scope > .tools2');
+        const first = d.querySelector('.menu-group');
+        const none = d.querySelector('.menu-group.none');
+        const cs = (e, ...ps) => ps.map((p) => getComputedStyle(e)[p]).join(' ');
+        return [card, {
+          kids: kids.map(tag),
+          ids: [':scope > .hint-line', ':scope > p.msg:not(.hint-line)', ':scope > textarea', ':scope > .tools2 input', ':scope > .tools2 button', ':scope > summary .sum-n'].map((q) => d.querySelector(q).id.replace(key, '§')),
+          sum: [...d.querySelector(':scope > summary').children].map(tag),
+          row: [...row.children].map((e) => `${tag(e)}|${e.textContent.trim()}|${e.querySelector('input') ? e.querySelector('input').type : ''}`),
+          groupKids: [...first.children].map(tag), chipTag: tag(first.querySelector('.chip')), chipKids: [...first.querySelector('.chip').children].map(tag),
+          noneTitle: none ? none.querySelector('p').textContent.replace(/\d+/, 'N').trim() : '',
+          noneLast: !!none && d.querySelector(':scope > div:not(.row) > .menu-group:last-child') === none,
+          titleShape: [...d.querySelectorAll('.menu-group > p')].map((p) => p.textContent.replace(/\d+명/, 'N명').trim()),
+          look: [cs(d.querySelector(':scope > .hint-line'), 'fontSize', 'color', 'marginTop', 'marginBottom'), cs(row, 'marginTop', 'paddingTop', 'borderTopWidth', 'columnGap', 'rowGap', 'display'),
+            cs(row.querySelector('label'), 'fontSize', 'color', 'display'), cs(row.querySelector('button'), 'height', 'fontSize', 'paddingTop', 'borderTopWidth', 'borderRadius'),
+            cs(first.querySelector('p'), 'fontSize', 'fontWeight'), cs(first.querySelector('.chip'), 'fontSize', 'borderRadius', 'paddingTop')].join(' | '),
+          pos: [d.querySelector(':scope > summary').nextElementSibling.id.replace(key, '§'), d.querySelector(':scope > .hint-line').compareDocumentPosition(d.querySelector(':scope > div')) & Node.DOCUMENT_POSITION_FOLLOWING ? 'deadline→list' : '?',
+            row.compareDocumentPosition(d.querySelector(':scope > p.msg:not(.hint-line)')) & Node.DOCUMENT_POSITION_FOLLOWING ? 'row→msg' : '?',
+            d.querySelector(':scope > p.msg:not(.hint-line)').nextElementSibling.tagName, d.querySelector(`.copybox`).hidden],
+          copyBtnRight: Math.round(row.getBoundingClientRect().right - row.querySelector('button').getBoundingClientRect().right),
+          count: d.querySelector(':scope > summary .sum-n').textContent.trim().replace(/\d+/g, 'N'),
+        }];
+      })), CHOICES.map((c) => [c.card, c.key]));
+      const [m, l, a] = CHOICES.map((c) => sig[c.card]);
+      for (const [name, x] of [['점심', l], ['자유시간', a]]) {
+        for (const f of ['kids', 'ids', 'sum', 'row', 'groupKids', 'chipTag', 'chipKids', 'noneTitle', 'noneLast', 'pos', 'copyBtnRight']) eq(x[f], m[f], `[칸 구성] 아침 메뉴와 ${name}의 ${f}가 같음`);
+        eq(x.look, m.look, `[칸 구성] 아침 메뉴와 ${name}의 글자 크기·색·여백·도구 줄·이름표 모양이 같음`);
+      }
+      eq(m.kids, ['SUMMARY', 'P.hint-line.msg', 'DIV', 'DIV.row.tools2', 'P.msg', 'TEXTAREA.copybox'], '[칸 구성] 위에서 아래: 제목 줄 → 마감 안내 → 목록 → 도구 줄 → 안내줄 → 복사 상자');
+      eq(m.row, ['LABEL.check|직접 고치기|checkbox', 'BUTTON.push.sm|복사|'], '[칸 구성] 도구 줄: 왼쪽 직접 고치기 토글, 오른쪽 끝 복사 단추');
+      eq(m.ids, ['§Deadline', '§CopyMsg', '§CopyBox', '§Move', '§Copy', '§Count'], '[칸 구성] id 이름 짝: ○Deadline · ○CopyMsg · ○CopyBox · ○Move · ○Copy · ○Count');
+      ok([m, l, a].every((x) => /^N\/N명 고름 · .+ N$/.test(x.count)), `[칸 구성] 제목 줄 숫자 같은 꼴 "N/N명 고름 · 항목별 인원": ${m.count} / ${l.count} / ${a.count}`);
+      eq([l.count, a.count].map((x) => x.split(' · ')[0]), [m.count.split(' · ')[0], m.count.split(' · ')[0]], '[칸 구성] 제목 줄 숫자 앞부분 "N/N명 고름"이 같음');
+      ok(m.titleShape.every((t) => /^.+ N명$/.test(t)) && l.titleShape.at(-1) === '아직 안 고른 사람 N명' && m.titleShape.at(-1) === '아직 안 고른 사람 N명' && a.titleShape.at(-1) === '아직 안 고른 사람 N명', `[칸 구성] 묶음 제목 "이름 N명"과 맨 끝 "아직 안 고른 사람": ${m.titleShape.join(' / ')}`);
+      eq([m.pos[0], l.pos[0], a.pos[0]], ['§Deadline', '§Deadline', '§Deadline'], '[칸 구성] 마감 안내가 제목 줄 바로 아래');
+      eq(await page.locator('#actDeadline + p.note').count(), 1, '[칸 구성] 자유시간만 마감 안내 아래에 스키 술 금지 안내가 더 있음(그대로)');
+      eq(await page.locator('#menuCard > p.note, #lunchCard > p.note').count(), 0, '[칸 구성] 아침 메뉴·점심에는 그 안내가 없음');
+      // 아침 메뉴 칸 안 관리용 요소는 모두 admin-only(프로젝터 보기에서 숨김)
+      eq(await page.evaluate(() => ['#menuDeadline', '#menuCard > .tools2', '#menuMove', '#menuCopy', '#menuCopyMsg', '#menuCopyBox'].map((s) => !!document.querySelector(s).closest('.admin-only'))), [true, true, true, true, true, true], '[칸 구성] 아침 메뉴 칸의 마감 안내·도구 줄·직접 고치기·복사·안내줄·복사 상자는 admin-only(프로젝터 보기에서 숨김)');
+      // 이름표: 세 칸 모두 "이름 직급 · 부서", 직급 높은 순(견본가=대표이사가 앞, 견본다=이사)
+      for (const c of CHOICES) {
+        const chip = norm(await page.locator(`${c.list} .chip`).filter({ hasText: '견본가' }).first().innerText());
+        eq(chip, '견본가 대표이사 · 시험영업부', `[칸 구성·${c.title}] 이름표는 이름 직급 · 부서`);
+      }
+      eq(await page.locator('#menus .menu-group').nth(0).locator('.chip').first().innerText().then(norm), '견본다 이사 · 시험생산부', '[칸 구성·아침 메뉴] 한 묶음 안은 직급 높은 순(점심·자유시간과 같음)');
+      eq(await page.locator('#menus .menu-group > p').allInnerTexts().then((a) => a.map(norm)), ['우거지 해장국 4명', '소고기 미역국 4명', '버섯 황태 해장국 4명', '아직 안 고른 사람 17명'], '[칸 구성·아침 메뉴] 묶음: 메뉴 3개 + 아직 안 고른 사람');
+      await page.close();
+    }
+
+    // ── 17. 직접 고치기 토글(세 칸 같음): 꺼짐 기본 → 켜면 고르는 칸 → 바꾸면 admin_assign 한 번 → 비우기 → 마감 뒤 → 참가자 화면 → 실패 되돌림 → 5초 새로고침 ──
+    for (const c of CHOICES) {
+      await fill();
+      const base = (await db.query(`select id, ${c.col} as v from public.people order by id`)).rows;
+      const { page } = await openBoard();
+      await openCard(page, c.card);
+      const sel = (id) => page.locator(`${c.list} select.seat[data-id="${id}"]`);
+      eq([await page.locator(`#${c.key}Move`).isChecked(), await page.locator(`${c.list} select.seat`).count()], [false, 0], `[직접 고치기·${c.title}] 처음엔 꺼짐 — 고르는 칸 없음(보기만)`);
+      await page.locator(`#${c.key}Move`).check();
+      eq(await page.locator(`${c.list} select.seat`).count(), 29, `[직접 고치기·${c.title}] 켜면 사람마다 고르는 칸 29개`);
+      eq(await sel(20).locator('option').allInnerTexts(), c.opts, `[직접 고치기·${c.title}] 고르는 칸 항목: ${c.opts.join('·')}`);
+      eq(await sel(20).inputValue(), '', `[직접 고치기·${c.title}] 안 고른 사람은 "안 고름"`);
+      eq(await sel(1).inputValue(), base[0].v, `[직접 고치기·${c.title}] 고른 사람은 그 값`);
+      // 바꾸면 바로 저장(admin_assign 한 번, 그 항목·그 사람만)
+      let c0 = server.calls.length;
+      await sel(20).selectOption(c.to);
+      await waitCalls('admin_assign', c0, 1);
+      await page.evaluate(() => document.activeElement && document.activeElement.blur());
+      const calls = server.calls.slice(c0).filter((x) => x.fn !== 'board_state' && x.fn !== 'board_cars');
+      eq(calls.map((x) => x.fn), ['admin_assign'], `[직접 고치기·${c.title}] 바꾸면 쓰기 호출은 admin_assign 한 번뿐`);
+      eq([calls[0].args.p_what, calls[0].args.p_rows], [c.what, [{ id: 20, value: c.to }]], `[직접 고치기·${c.title}] admin_assign(${c.what}) 그 사람 한 명만`);
+      eq(await waitDb(20, c.col, c.to), c.to, `[직접 고치기·${c.title}] DB에 반영됨`);
+      const rows = (await db.query(`select id, ${c.col} as v from public.people order by id`)).rows;
+      eq(rows.filter((r, i) => r.v !== base[i].v).map((r) => Number(r.id)), [20], `[직접 고치기·${c.title}] 그 사람 하나만 바뀜`);
+      await page.waitForFunction(([id, n]) => new RegExp(`^${n}/29명 고름`).test(document.getElementById(id).textContent), [`${c.key}Count`, c.n0 + 1], { timeout: 10000 });
+      const groupsOf = () => page.evaluate((list) => Object.fromEntries([...document.querySelectorAll(`${list} .menu-group`)].map((g) => [g.querySelector('p').textContent.replace(/\s*\d+명$/, '').trim(), [...g.querySelectorAll('.chip')].map((x) => x.firstChild.textContent.trim())])), c.list);
+      await page.waitForFunction(([list, n]) => [...document.querySelectorAll(`${list} .menu-group`)].some((g) => g.querySelector('p').textContent.startsWith(n) && [...g.querySelectorAll('.chip')].some((x) => x.firstChild.textContent.trim() === '견본버')), [c.list, c.toName], { timeout: 10000 });
+      const gr = await groupsOf();
+      ok(gr[c.toName].includes('견본버'), `[직접 고치기·${c.title}] 화면에서 그 사람이 ${c.toName} 묶음으로 옮겨 감`);
+      ok(!gr['아직 안 고른 사람'].includes('견본버'), `[직접 고치기·${c.title}] 아직 안 고른 사람에서는 빠짐`);
+      // 참가자 화면: 같은 사람이 로그인하면 그 값이 반영
+      {
+        const pctx = await env.browser.newContext({ viewport: { width: 420, height: 900 }, locale: 'ko-KR' });
+        const pg = await guardNetwork(pctx, server.url);
+        const login = async () => {
+          const idx = await pctx.newPage();
+          idx.on('pageerror', (e) => errors.push(e.message));
+          await idx.goto(`${server.url}/index.html`);
+          if (await idx.locator('#goMenu').isHidden()) {
+            await idx.locator('#dept option', { hasText: '시험개발부' }).waitFor({ state: 'attached', timeout: 10000 });
+            await idx.locator('#dept').selectOption({ label: '시험개발부' });
+            await idx.locator('#name').fill('견본버');
+            await idx.locator('#loginBtn').click();
+          }
+          await idx.locator('#goMenu').waitFor({ state: 'visible', timeout: 10000 });
+          return idx;
+        };
+        const idx = await login();
+        await idx.waitForFunction(([s, n]) => document.querySelector(s).textContent.includes(n), [c.stId, c.toName], { timeout: 10000 });
+        ok(true, `[직접 고치기·${c.title}] 참가자 화면(index.html, 견본버 로그인)에 "${c.toName}"이 나옴`);
+        await idx.close();
+        // 비우기("안 고름")
+        c0 = server.calls.length;
+        await sel(20).selectOption('');
+        await waitCalls('admin_assign', c0, 1);
+        await page.evaluate(() => document.activeElement && document.activeElement.blur());
+        eq(server.calls.slice(c0).filter((x) => x.fn === 'admin_assign').map((x) => [x.args.p_what, x.args.p_rows]), [[c.what, [{ id: 20, value: '' }]]], `[직접 고치기·${c.title}] "안 고름"으로 되돌리면 admin_assign 한 번(빈 값)`);
+        eq(await waitDb(20, c.col, null), null, `[직접 고치기·${c.title}] DB에서 비워짐`);
+        const idx2 = await login();
+        await idx2.waitForFunction(([s, n]) => !document.querySelector(s).textContent.includes(n), [c.stId, c.toName], { timeout: 10000 });
+        ok(true, `[직접 고치기·${c.title}] 참가자 화면에서도 비워짐(다시 고를 수 있음)`);
+        await idx2.close();
+        pg.assertClean();
+        await pctx.close();
+      }
+      eq(await sel(20).inputValue(), '', `[직접 고치기·${c.title}] 화면의 고르는 칸도 "안 고름"`);
+      // 끄면 보기만
+      await page.locator(`#${c.key}Move`).uncheck();
+      eq(await page.locator(`${c.list} select.seat`).count(), 0, `[직접 고치기·${c.title}] 끄면 고르는 칸이 사라지고 보기만`);
+      await page.locator(`#${c.key}Move`).check();
+
+      // 저장 실패: 고르는 칸이 저장된 값으로 되돌아오고 오류가 보임, DB는 그대로
+      await page.route('**/rest/v1/rpc/admin_assign', (route) => route.fulfill({ status: 400, contentType: 'application/json', body: JSON.stringify({ message: '시험: 저장 실패', code: null, details: null, hint: null }) }));
+      const cFail = server.calls.length;
+      await sel(20).selectOption(c.to);
+      await page.waitForFunction(() => /시험: 저장 실패/.test(document.querySelector('#error').textContent), null, { timeout: 10000 });
+      await page.waitForFunction(([s]) => document.querySelector(s).value === '', [`${c.list} select.seat[data-id="20"]`], { timeout: 5000 });
+      ok(true, `[직접 고치기·${c.title}] 저장이 실패하면 오류 안내 + 고르는 칸이 저장된 값("안 고름")으로 되돌아옴`);
+      eq(server.calls.slice(cFail).filter((x) => x.fn === 'admin_assign').length, 0, `[직접 고치기·${c.title}] 가로챈 저장 요청은 서버에 닿지 않음(서버 기록에 admin_assign 호출 없음)`);
+      eq(await waitDb(20, c.col, null, 500), null, `[직접 고치기·${c.title}] DB 값도 그대로`);
+      await page.unroute('**/rest/v1/rpc/admin_assign');
+      await page.evaluate(() => { document.querySelector('#error').textContent = ''; });
+
+      // 5초 새로고침: 고르는 칸을 잡고 있는 동안 칸이 닫히지 않고 값·초점이 튀지 않음. 다른 사람·같은 사람 값이 DB에서 바뀌어도 그대로, 나오면 맞춤
+      await sel(20).focus();
+      const b0 = server.calls.length;
+      await db.query(`update public.people set ${c.col} = $1 where id = 21`, [c.to]);
+      await db.query(`update public.people set ${c.col} = $1 where id = 20`, [c.other]);
+      await page.waitForFunction(([id, n]) => new RegExp(`^${n}/29명 고름`).test(document.getElementById(id).textContent), [`${c.key}Count`, c.n0 + 2], { timeout: 15000 }); // 제목 줄 숫자는 곧바로 바뀜 = 새로 받기가 돌았음
+      await waitCalls('board_state', b0, 2);
+      eq(await page.evaluate(([card, move, list]) => [document.getElementById(card).open, document.querySelector(move).checked, document.activeElement.dataset.seat + ':' + document.activeElement.dataset.id, document.activeElement.value, document.querySelectorAll(`${list} select.seat`).length], [c.card, `#${c.key}Move`, c.list]),
+        [true, true, `${c.what}:20`, '', 29], `[직접 고치기·${c.title}] 5초 새로고침이 돌아도 칸 열림·토글·초점·고르는 칸 값("안 고름")이 그대로`);
+      await page.evaluate(() => document.activeElement.blur());
+      await page.waitForFunction(([s, v]) => document.querySelector(s).value === v, [`${c.list} select.seat[data-id="20"]`, c.other], { timeout: 5000 });
+      ok(true, `[직접 고치기·${c.title}] 칸에서 나오면 저장된 값(${c.other})으로 맞춤`);
+      await page.close();
+
+      // 마감 뒤(화면 시계 고정)에도 진행자는 바꿀 수 있음
+      await fill();
+      const late = await openBoard({ fixed: T_AFTER });
+      await openCard(late.page, c.card);
+      ok(CLOSED_RE.test(norm(await late.page.locator(`#${c.key}Deadline`).textContent())), `[직접 고치기·${c.title}·마감 뒤] 마감 안내는 "마감됐어요(…)" + 방법에 직접 고치기`);
+      await late.page.locator(`#${c.key}Move`).check();
+      await late.page.locator(`${c.list} select.seat[data-id="20"]`).selectOption(c.to);
+      eq(await waitDb(20, c.col, c.to), c.to, `[직접 고치기·${c.title}·마감 뒤] 마감 뒤에도 바뀜`);
+      await late.page.close();
+    }
+
+    // ── 18. 복사 글: 세 칸 모두 같은 틀의 한 줄(아침 메뉴 "조식", 점심 "점심"), 복사 단추·안내줄·직접 복사 상자 ──
+    {
+      await fill();
+      await env.context.grantPermissions(['clipboard-read', 'clipboard-write']);
+      const { page } = await openBoard();
+      const WANT_FIRST = {
+        menu: '12/18(금) 조식: 우거지 해장국 4 · 소고기 미역국 4 · 버섯 황태 해장국 4 (아직 안 고름 17) / 총 29명',
+        lunch: '12/18(금) 점심: 일반 설렁탕 4 · 얼큰 설렁탕 4 (아직 안 고름 21) / 총 29명',
+        act: '12/18(금) 저녁 자유시간: 스키 3 · 휴식 3 (아직 안 고름 23) / 총 29명',
+      };
+      for (const c of CHOICES) {
+        await openCard(page, c.card);
+        eq(await page.locator(`#${c.card} > summary button, #${c.card} > summary a`).count(), 0, `[복사·${c.title}] 제목 줄에는 단추가 없음`);
+        await page.locator(`#${c.key}Copy`).click();
+        await page.waitForFunction((s) => /^복사했어요/.test(document.querySelector(s).textContent), `#${c.key}CopyMsg`, { timeout: 5000 });
+        const text = await page.evaluate(() => navigator.clipboard.readText());
+        eq(text.split('\n')[0], WANT_FIRST[c.key], `[복사·${c.title}] 첫 줄(인원 한 줄)`);
+        ok(text.startsWith(c.head + ': '), `[복사·${c.title}] 머리말 "${c.head}"`);
+        ok(!(await page.locator(`#${c.key}CopyBox`).isVisible()), `[복사·${c.title}] 복사되면 직접 복사 상자는 숨김`);
+        ok((await page.locator(`#${c.key}CopyMsg`).innerText()).startsWith('복사했어요: '), `[복사·${c.title}] 복사했다고 알림`);
+        // 클립보드가 막히면 같은 글을 직접 복사할 상자로
+        await page.evaluate(() => { Object.defineProperty(navigator.clipboard, 'writeText', { configurable: true, value: () => Promise.reject(new Error('시험: 막힘')) }); });
+        await page.locator(`#${c.key}Copy`).click();
+        await page.waitForFunction((s) => !document.querySelector(s).hidden, `#${c.key}CopyBox`, { timeout: 5000 });
+        eq(await page.locator(`#${c.key}CopyBox`).inputValue(), text, `[복사·${c.title}] 클립보드가 막히면 같은 글을 직접 복사할 상자로`);
+        await page.evaluate(() => { delete navigator.clipboard.writeText; }); // 원래 함수로 되돌림
+      }
+      const boxes = await Promise.all(CHOICES.map((c) => page.locator(`#${c.key}CopyBox`).inputValue()));
+      ok(boxes[0].startsWith('12/18(금) 조식') && boxes[1].startsWith('12/18(금) 점심') && boxes[2].startsWith('12/18(금) 저녁 자유시간') && !boxes[0].includes('점심') && !boxes[1].includes('조식'), '[복사] 세 상자가 섞이지 않음(아침 메뉴는 "조식", 점심은 "점심")');
+      // 직접 고친 뒤의 인원이 복사 글에 반영
+      await page.locator('#menuMove').check();
+      await page.locator('#menus select.seat[data-id="20"]').selectOption('miyeok');
+      await page.waitForFunction(() => /^13\/29명 고름/.test(document.querySelector('#menuCount').textContent), null, { timeout: 10000 });
+      await page.evaluate(() => document.activeElement && document.activeElement.blur());
+      await page.locator('#menuCopy').click();
+      await page.waitForFunction(() => /소고기 미역국 5/.test(document.querySelector('#menuCopyBox').value), null, { timeout: 5000 });
+      eq((await page.locator('#menuCopyBox').inputValue()).split('\n')[0], '12/18(금) 조식: 우거지 해장국 4 · 소고기 미역국 5 · 버섯 황태 해장국 4 (아직 안 고름 16) / 총 29명', '[복사·아침 메뉴] 직접 고친 인원이 복사 글에 반영');
+      await page.close();
+    }
+
+    // ── 19. 프로젝터 보기(?tv=1): 아침 메뉴는 예전 모양 그대로, 새 요소(직접 고치기·복사·안내줄·고르는 칸)는 안 보임 ──
+    {
+      await fill();
+      const { page } = await openBoard();
+      await openCard(page, 'menuCard');
+      await page.locator('#menuMove').check(); // 직접 고치기를 켜 둔 채 프로젝터 보기로 가도 보이지 않아야 함
+      await page.locator('#menus select.seat').first().waitFor();
+      await page.locator('#tvBtn').click();
+      await page.waitForFunction(() => document.body.classList.contains('tv'));
+      await page.locator('#columns .col').first().waitFor();
+      for (const sel of ['#menuMove', '#menuCopy', '#menuCopyMsg', '#menuCopyBox', '#menuDeadline', '#menuCard .tools2', '#lunchCard', '#actCard']) ok(!(await page.locator(sel).first().isVisible()), `[프로젝터] ${sel} 안 보임`);
+      eq(await page.locator('#menus select').count(), 0, '[프로젝터] 아침 메뉴에 고르는 칸이 없음(직접 고치기를 켜 둔 채여도)');
+      ok(await page.locator('#menuCard').isVisible() && await page.locator('#menuCard > summary').isVisible() && await page.locator('#menus').isVisible(), '[프로젝터] 아침 메뉴 칸은 그대로 보임');
+      eq(norm(await page.locator('#menuCount').innerText()), '12/29명 고름 · 우거지 해장국 4 · 소고기 미역국 4 · 버섯 황태 해장국 4', '[프로젝터] 제목 줄 숫자는 그대로');
+      const deptOf = Object.fromEntries((await db.query('select id, dept, name, menu from public.people')).rows.map((r) => [r.id, r]));
+      const byName = (a, b) => a.dept.localeCompare(b.dept, 'ko') || a.name.localeCompare(b.name, 'ko');
+      const rowsAll = Object.values(deptOf);
+      const want = [
+        ...['ugeoji', 'miyeok', 'hwangtae'].map((k, i) => [`${['우거지 해장국', '소고기 미역국', '버섯 황태 해장국'][i]} 4명`, rowsAll.filter((r) => r.menu === k).sort(byName).map((r) => `${r.name} ${r.dept}`)]),
+        ['아직 안 고른 사람 17명', rowsAll.filter((r) => !r.menu).sort(byName).map((r) => `${r.name} ${r.dept}`)],
+      ];
+      const got = await page.evaluate(() => [...document.querySelectorAll('#menus > .menu-group')].map((g) => [g.querySelector('p').textContent.replace(/\s+/g, ' ').trim(), [...g.querySelectorAll('.chips > *')].map((c) => c.textContent.replace(/\s+/g, ' ').trim()), [...g.querySelectorAll('.chips > *')].map((c) => c.tagName + '.' + c.className).filter((x, i, a) => a.indexOf(x) === i), g.className.trim()]));
+      eq(got.map((g) => [g[0], g[1]]), want, '[프로젝터] 아침 메뉴 이름표: 메뉴별 묶음 + 아직 안 고른 사람, 이름·부서만(직급 없음), 부서·이름순(예전 그대로)');
+      ok(got.every((g) => g[2].every((x) => x === 'SPAN.chip' || x === 'SPAN.empty')) && got.at(-1)[3] === 'menu-group none', `[프로젝터] 이름표는 예전처럼 span.chip(누르는 단추 아님): ${JSON.stringify(got.map((g) => g[2]))}`);
+      eq(await page.evaluate(() => [getComputedStyle(document.querySelector('#menus .chip')).fontSize, getComputedStyle(document.querySelector('#menus .menu-group p')).fontSize, getComputedStyle(document.querySelector('#menus .menu-group p b')).fontSize, getComputedStyle(document.querySelector('#menuCard > summary')).fontSize]), ['18px', '18px', '24px', '20px'], '[프로젝터] 큰 글씨 그대로(이름표 18px · 묶음 제목 18/24px · 제목 줄 20px)');
+      // 관리자 페이지로 돌아오면 직접 고치기(켜 둔 채)가 다시 보임
+      await page.locator('#tvBtn').click();
+      await page.waitForFunction(() => !document.body.classList.contains('tv'));
+      await page.waitForFunction(() => document.querySelectorAll('#menus select.seat').length === 29, null, { timeout: 5000 });
+      ok(await page.locator('#menuMove').isChecked() && await page.locator('#menuCopy').isVisible(), '[프로젝터] 관리자 페이지로 돌아오면 직접 고치기·복사가 다시 보임');
+      await page.close();
+    }
+
+    // ── 20. 휴대폰(390px): 세 칸이 같은 모양 · 가로로 안 넘침 · 누르는 자리 40px 이상 · 도구 줄이 화면 안 ──
+    {
+      await fill();
+      const { page } = await openBoard({ width: 390 });
+      for (const c of CHOICES) { await openCard(page, c.card); await page.locator(`#${c.key}Move`).check(); }
+      await page.waitForFunction(() => document.querySelectorAll('#menus select.seat, #lunches select.seat, #acts select.seat').length === 87, null, { timeout: 5000 });
+      const m = await page.evaluate((keys) => Object.fromEntries(keys.map(([card, key, list]) => {
+        const d = document.getElementById(card), row = d.querySelector(':scope > .tools2'), lab = row.querySelector('label'), btn = row.querySelector('button');
+        const r = (e) => { const b = e.getBoundingClientRect(); return [Math.round(b.left), Math.round(b.right), Math.round(b.height)]; };
+        const seats = [...d.querySelectorAll(`${list} select.seat`)], chips = [...d.querySelectorAll(`${list} .chip`)];
+        return [card, { label: r(lab), btn: r(btn), rowH: Math.round(row.getBoundingClientRect().height), kids: [...row.children].every((k) => k.getBoundingClientRect().left >= -1 && k.getBoundingClientRect().right <= innerWidth + 1),
+          seatH: [...new Set(seats.map((s) => Math.round(s.getBoundingClientRect().height)))], seatsIn: seats.every((s) => s.getBoundingClientRect().right <= innerWidth && s.getBoundingClientRect().left >= 0), chipsIn: chips.every((c) => c.getBoundingClientRect().right <= innerWidth + 1),
+          cb: lab.querySelector('input').getBoundingClientRect().width, doc: [document.documentElement.scrollWidth, document.documentElement.clientWidth] }];
+      })), CHOICES.map((c) => [c.card, c.key, c.list]));
+      const [a, b, d] = CHOICES.map((c) => m[c.card]);
+      eq([b.label, b.btn, b.rowH], [a.label, a.btn, a.rowH], '[390px·세 칸] 점심의 직접 고치기·복사 단추 자리와 크기가 아침 메뉴와 같음');
+      eq([d.label, d.btn, d.rowH], [a.label, a.btn, a.rowH], '[390px·세 칸] 자유시간의 직접 고치기·복사 단추 자리와 크기가 아침 메뉴와 같음');
+      for (const [name, x] of [['아침 메뉴', a], ['점심', b], ['자유시간', d]]) {
+        ok(x.label[2] >= 40 && x.btn[2] >= 40 && x.seatH.every((h) => h >= 40) && x.cb >= 20, `[390px·${name}] 누르는 자리 40px 이상(직접 고치기 ${x.label[2]}px · 복사 ${x.btn[2]}px · 고르는 칸 ${x.seatH.join('/')}px)`);
+        ok(x.kids && x.seatsIn && x.chipsIn && x.doc[0] <= x.doc[1], `[390px·${name}] 도구 줄·이름표·고르는 칸이 화면 안, 가로로 안 넘침(${x.doc[0]} ≤ ${x.doc[1]})`);
+      }
+      await page.setViewportSize({ width: 1280, height: 900 });
+      await page.waitForTimeout(150);
+      const wide = await page.evaluate(() => ['menuCard', 'lunchCard', 'actCard'].map((id) => { const row = document.querySelector(`#${id} > .tools2`); return [Math.round(row.getBoundingClientRect().height), Math.round(row.querySelector('button').getBoundingClientRect().height), Math.round(row.querySelector('label').getBoundingClientRect().height)]; }));
+      eq(wide[1], wide[0], '[1280px·세 칸] 점심 도구 줄 크기가 아침 메뉴와 같음');
+      eq(wide[2], wide[0], '[1280px·세 칸] 자유시간 도구 줄 크기가 아침 메뉴와 같음');
+      eq(wide[0][1], 36, '[1280px] 복사 단추 높이 36px(넓은 화면 모양 그대로)');
       await page.close();
     }
 

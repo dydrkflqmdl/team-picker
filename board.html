@@ -121,6 +121,7 @@
     .menu-group.picking .chips { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); }
     .menu-group.picking .chip { display: flex; align-items: center; gap: 6px; border-radius: 12px; padding: 6px 8px 6px 12px; }
     .menu-group.picking .chip select.seat { margin-left: auto; }
+    @media (min-width: 701px) { #menus .menu-group.picking .chips { grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); } } /* 아침 메뉴 이름이 길어서(버섯 황태 해장국) 이름표가 글자마다 줄바꿈되지 않게 조금 넓게 */
     .tools2 { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); gap: 8px 14px; } /* 칸 아래쪽 도구 줄: 위 내용과 줄로 나눔 */
     .tools2 label { margin: 0; }
     #planCard .tools2:has(> #planEditBtn[hidden]) { display: none; } /* 일정을 고치는 동안에는 빈 도구 줄을 숨김 */
@@ -407,7 +408,8 @@
       <textarea class="copybox" id="carCopyBox" readonly hidden aria-label="복사할 차량별 탑승자 글"></textarea>
     </details>
 
-    <!-- 12/18(금) 아침 메뉴: 프로젝터 보기에서도 보이는 칸(그때는 늘 펼침) -->
+    <!-- 12/18(금) 아침 메뉴·점심·저녁 자유시간: 세 칸이 같은 구성(제목 줄 → 마감 안내 → 목록 → 도구 줄[직접 고치기 · 복사] → 안내줄 → 복사 상자).
+         자유시간만 마감 안내 아래에 스키 술 금지 안내가 더 있음. 아침 메뉴는 프로젝터 보기에서도 보이는 칸(그때는 늘 펼침 — 도구 줄·안내줄·복사 상자는 admin-only 라 안 보임) -->
     <details class="card" id="menuCard">
       <summary><span class="sum-t">12/18(금) 아침 메뉴</span> <small class="sum-n" id="menuCount"></small></summary>
       <!-- 마감 안내: 아침 메뉴·점심·자유시간·탑승 차량 네 칸이 같은 틀로 제목 바로 아래에 둠.
@@ -415,13 +417,14 @@
       <p class="msg hint-line admin-only" id="menuDeadline"></p>
       <div id="menus"></div>
       <div class="row tools2 admin-only">
+        <label class="check"><input type="checkbox" id="menuMove" /> 직접 고치기</label>
         <button type="button" id="menuCopy" class="sm push">복사</button>
       </div>
-      <p class="msg admin-only" id="copyMsg" role="status"></p>
-      <textarea class="copybox admin-only" id="copyBox" readonly hidden aria-label="복사할 아침 메뉴 인원 글"></textarea>
+      <p class="msg admin-only" id="menuCopyMsg" role="status"></p>
+      <textarea class="copybox admin-only" id="menuCopyBox" readonly hidden aria-label="복사할 아침 메뉴 인원 글"></textarea>
     </details>
 
-    <!-- 12/18(금) 점심: 참가자가 직접 고르고, 진행자는 대신 고치고 식당에 알릴 인원을 복사할 수 있음(자유시간 칸과 같은 모양) -->
+    <!-- 12/18(금) 점심: 참가자가 직접 고르고, 진행자는 대신 고치고 식당에 알릴 인원을 복사할 수 있음(아침 메뉴·자유시간 칸과 같은 모양) -->
     <details class="card admin-only" id="lunchCard">
       <summary><span class="sum-t">12/18(금) 점심</span> <small class="sum-n" id="lunchCount"></small></summary>
       <p class="msg hint-line" id="lunchDeadline"></p>
@@ -654,17 +657,6 @@
     $('#waiting').innerHTML = waiting.length
       ? waiting.map(waitChip).join('')
       : `<span class="empty">${people.length ? '모두 팀을 뽑았어요!' : '아직 명단이 없어요. 아래 명단 관리에서 추가하세요.'}</span>`;
-
-    // 아침 메뉴: 메뉴마다 고른 사람들(부서·이름순) + 아직 안 고른 사람
-    const group = (title, list, cls = '') => `
-      <div class="menu-group ${cls}">
-        <p>${title} <b>${list.length}</b>명</p>
-        <div class="chips">${[...list].sort(byName).map(chip).join('') || '<span class="empty">아직 없어요</span>'}</div>
-      </div>`;
-    const noMenu = people.filter((p) => !p.menu);
-    $('#menuCount').textContent = `${people.length - noMenu.length}/${people.length}명 고름 · ${MENU_KEYS.map((m) => `${MENUS[m]} ${people.filter((p) => p.menu === m).length}`).join(' · ')}`;
-    $('#menus').innerHTML = MENU_KEYS.map((m) => group(MENUS[m], people.filter((p) => p.menu === m))).join('')
-      + (noMenu.length ? group('아직 안 고른 사람', noMenu, 'none') : '');
 
     $('#totalCount').textContent = `총 ${people.length}명`;
     if (editing != null && !people.some((p) => p.id === editing)) { // 고치던 사람이 그사이 명단에서 빠짐: 줄을 닫고 그 사실을 알림
@@ -1137,6 +1129,7 @@
   // 이름 옆 고르는 칸("직접 옮기기"·"직접 고치기"를 켰을 때만). 객실은 그 사람 성별의 방만 고를 수 있고, 성별이 없으면 모든 방
   const SEATS = {
     room: { title: '객실', none: '방 없음', names: ROOMS, keys: (p) => ROOM_KEYS.filter((k) => !p.gender || roomGender(k) === p.gender || k === p.room) },
+    menu: { title: '아침 메뉴', none: '안 고름', names: MENUS, keys: () => MENU_KEYS },
     activity: { title: '자유시간', none: '안 고름', names: ACTS, keys: () => ACT_KEYS },
     lunch: { title: '점심', none: '안 고름', names: LUNCHES, keys: () => LUNCH_KEYS },
   };
@@ -1174,6 +1167,21 @@
     }).join(''));
     // 방 없는 사람: 한 명이라도 나눈 뒤이거나 직접 옮기는 중일 때만 따로 보여줌(처음에는 전원이라 굳이 안 늘어놓음)
     put('#roomless', roomless.length && (housed || move) ? crowd('아직 방이 없는 사람', roomless, 'room', move, 'none') : '');
+
+    // 12/18(금) 아침 메뉴: 메뉴마다 고른 사람들 + 아직 안 고른 사람(점심·자유시간과 같은 모양: 직급 높은 순 · 직접 고치기를 켜면 고르는 칸).
+    // 프로젝터 보기(tv)는 예전 모양 그대로(부서·이름순 이름표, 고르는 칸 없음)
+    const fixM = $('#menuMove').checked;
+    const noMenu = people.filter((p) => !p.menu).sort(byRank);
+    const choosing = (k) => people.filter((p) => p.menu === k).sort(byRank);
+    $('#menuCount').textContent = `${people.length - noMenu.length}/${people.length}명 고름 · ${MENU_KEYS.map((k) => `${MENUS[k]} ${choosing(k).length}`).join(' · ')}`;
+    const tvGroup = (title, list, cls = '') => `
+      <div class="menu-group ${cls}">
+        <p>${title} <b>${list.length}</b>명</p>
+        <div class="chips">${[...list].sort(byName).map((p) => `<span class="chip">${esc(p.name)} <span class="hint">${esc(p.dept)}</span></span>`).join('') || '<span class="empty">아직 없어요</span>'}</div>
+      </div>`;
+    put('#menus', tv
+      ? MENU_KEYS.map((k) => tvGroup(MENUS[k], choosing(k))).join('') + (noMenu.length ? tvGroup('아직 안 고른 사람', noMenu, 'none') : '')
+      : MENU_KEYS.map((k) => crowd(MENUS[k], choosing(k), 'menu', fixM)).join('') + (noMenu.length ? crowd('아직 안 고른 사람', noMenu, 'menu', fixM, 'none') : ''));
 
     // 자유시간: 고른 것마다 사람들 + 아직 안 고른 사람
     const fix = $('#actMove').checked;
@@ -1351,6 +1359,7 @@ Day 3 · 12/19(토) — 함께 만드는 내년
     return { what: 'room', mode: onlyNew ? 'fill' : 'all', cleared, assigned: rows.filter((r) => r.value).length, skipped, legacy: true };
   }
   $('#roomMove').addEventListener('change', renderExtras);
+  $('#menuMove').addEventListener('change', renderExtras);
   $('#actMove').addEventListener('change', renderExtras);
   $('#lunchMove').addEventListener('change', renderExtras);
 
@@ -1978,7 +1987,7 @@ Day 3 · 12/19(토) — 함께 만드는 내년
     if (!people.length) throw new Error('복사할 내용이 없어요. 명단이 비어 있어요.');
     const noMenu = people.filter((p) => !p.menu).length;
     const text = `12/18(금) 조식: ${MENU_KEYS.map((m) => `${MENUS[m]} ${people.filter((p) => p.menu === m).length}`).join(' · ')}${noMenu ? ` (아직 안 고름 ${noMenu})` : ''} / 총 ${people.length}명`;
-    await copyOut(text, $('#copyBox'), $('#copyMsg'));
+    await copyOut(text, $('#menuCopyBox'), $('#menuCopyMsg'));
   }));
   $('#lunchCopy').addEventListener('click', guard(async () => {
     if (!people.length) throw new Error('복사할 내용이 없어요. 명단이 비어 있어요.');
@@ -2003,7 +2012,7 @@ Day 3 · 12/19(토) — 함께 만드는 내년
   // 마감 전 "참가자는 11/25(수) 15시까지 …할 수 있어요. 그 뒤로는 여기서만 바꿀 수 있어요. (방법: …)", 마감 뒤 "마감됐어요(11/25(수) 15시). 지금은 여기서만 바꿀 수 있어요. (방법: …)".
   // 화면을 열어 둔 채 마감 시각을 넘겨도 바뀌도록 1초마다 살핌(바뀔 때만 글을 다시 넣음 — 칸의 열림 상태·입력 중인 것은 건드리지 않음)
   const DEADLINE_TEXTS = [
-    ['#menuDeadline', '고르고 바꿀 수 있어요', '아래 명단 관리에서 그 사람의 <b>수정</b>을 눌러 아침 메뉴를 골라요.'],
+    ['#menuDeadline', '고르고 바꿀 수 있어요', '아래 <b>직접 고치기</b>를 켜요.'],
     ['#lunchDeadline', '고르고 바꿀 수 있어요', '아래 <b>직접 고치기</b>를 켜요.'],
     ['#actDeadline', '스키·휴식을 고르고 바꿀 수 있어요', '아래 <b>직접 고치기</b>를 켜요.'],
     ['#carDeadline', '차량을 뽑을 수 있어요', '아래 <b>직접 옮기기</b>를 켜서 인원이 적은 차량에 넣어요.'],
