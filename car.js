@@ -1,8 +1,11 @@
 // 탑승 차량 뽑기(참가자 화면). index.html 의 메인 단추(#goCar)와 차량 화면(#carCard)을 채운다.
 // index.html 의 인라인 스크립트보다 먼저 읽히므로, 거기서 만든 것(me·busy·call·screen·fill 등)은 함수가 불릴 때(나중에)만 쓴다.
 // 바깥에는 window.Car 하나만 내놓음(이름이 겹쳐 index.html 의 스크립트가 멈추지 않게 전체를 함수로 감쌈).
-//   Car.home(left)  메인 단추·남은 것 목록을 채움(paintHome 이 부름)   Car.ensure()  아직 못 받았으면 받음
+//   Car.home(left, missed)  메인 단추·남은 것·마감돼서 못 한 것 목록을 채움(paintHome 이 부름). 차량 정보를 아직 모르면 'loading'·'failed'(알면 '')   Car.ensure()  아직 못 받았으면 받음
 //   Car.load()      car_state 를 새로 받음                            Car.reset()   로그아웃·로그인 화면에서 비움
+//   Car.paint()     차량 화면을 지금 상태로 다시 그림(마감 시각을 넘길 때 index.html 의 syncClosed 가 부름)
+// 마감: 점심·조식·자유시간과 같은 마감(index.html 의 choicesClosed() — common.js 의 CHOICE_DEADLINE + 서버가 마감이라고 답한 적)을 그대로 씀.
+//   마감 뒤에는 아직 안 뽑은 사람만 막힘(서버 pick_car 가 거절). 이미 뽑은 사람·운전자는 그대로 보고 '그림 보기'도 됨
 (function () {
   // 차량 색(차량 목록 순서대로 돌려 씀)
   const COLORS = ['#4f6fd8', '#d9644a', '#2f9e78', '#8b5cf6', '#d99a1a', '#52617a'];
@@ -34,6 +37,8 @@
   const obj = (w) => { const c = (w || '').charCodeAt(w.length - 1) - 0xac00; return c >= 0 && c < 11172 && c % 28 ? '을' : '를'; };
   // 보이는 이름: "1호차 · 가온님 차량"(문구가 없으면 이름만)
   const fullName = (c) => (c.label ? `${c.name} · ${c.label}` : c.name);
+  // 마감됐는지(index.html 의 choicesClosed 를 그대로 씀. 없으면 마감 아님으로)
+  const isClosed = () => typeof choicesClosed === 'function' && choicesClosed();
 
   // ── 그림 ──
   // 작은 차(위에서 본 모습). color 가 없으면 회색 + 가운데 물음표(뽑기 전)
@@ -171,18 +176,23 @@
   // 받은 결과가 있으면 끝냈는지 아닌지로, 아직 못 받았으면(받는 중·못 받음) 색을 칠하지 않은 단추로. 못 받았어도 다른 단추에는 영향이 없음
   // 끝낸 뒤에도(운전자도) 눌려서 지금 그림(같은 차 사람이 늘어난 모습)을 볼 수 있음 — 자유시간의 '바꾸기'처럼 '그림 보기' 표시.
   // index.html 의 HIDDEN_TASKS 에 'Car' 를 넣으면 숨김(남은 것·막대에서도 빠짐)
-  function home(left) {
+  // 마감 전 아직 안 뽑았으면 다른 고르기처럼 "11/25(수) 15시까지", 마감 뒤 못 뽑았으면 차분한 회색 "⏰ 마감됐어요 · 진행자에게 말해 주세요"
+  // (눌리지 않고, '남은 것' 대신 missed 에 넣음 — index.html 의 점심·조식·자유시간과 같은 처리)
+  function home(left, missed = []) {
     const btn = $('#goCar');
     btn.hidden = typeof HIDDEN_TASKS !== 'undefined' && HIDDEN_TASKS.has('Car');
     if (btn.hidden) return;
     const st = state();
+    const closed = isClosed();
     const done = !!(st && st.car);
-    const todo = !!(st && !st.car);
+    const lapsed = !!(st && !st.car) && closed; // 못 뽑은 채 마감
+    const todo = !!(st && !st.car) && !closed;
     btn.classList.toggle('is-done', done);
     btn.classList.toggle('is-todo', todo);
-    btn.disabled = false;
-    fill(btn.querySelector('.mb-title'), done ? '🚗 타고 갈 차량' : '🚗 타고 갈 차량 뽑기');
-    fill($('#srCar'), done ? '끝났어요.' : '');
+    btn.classList.toggle('is-closed', lapsed);
+    btn.disabled = lapsed;
+    fill(btn.querySelector('.mb-title'), done || lapsed ? '🚗 타고 갈 차량' : '🚗 타고 갈 차량 뽑기');
+    fill($('#srCar'), done ? '끝났어요.' : lapsed ? '마감됐어요.' : '');
     let html = '', more = '';
     if (done) {
       const car = carOf(st), people = membersOf(st), crew = crewOf(st);
@@ -192,27 +202,35 @@
         + '<span class="sr-only"> · </span><span class="mb-edit">그림 보기</span>';
       const note = people.length < car.seats ? '아직 안 뽑은 사람은 뽑으면 나타나요.' : '';
       more = crew.length ? `<span class="mb-people"><span class="mb-plabel">같은 차 사람 ${crew.length}명<span class="sr-only">: </span></span><span class="mb-chips">${crewChips(st)}</span>${note ? `<span class="mb-pnote">${note}</span>` : ''}</span>` : '';
+    } else if (lapsed) {
+      html = '⏰ 마감됐어요 · 진행자에게 말해 주세요';
     } else if (todo) {
-      html = '👉 아직 안 뽑았어요<span class="mb-go">눌러요</span>';
+      html = `👉 아직 안 뽑았어요<span class="mb-go">눌러요</span><span class="mb-due">${esc(CHOICE_DEADLINE_SHORT)}까지</span>`;
     } else {
       html = err ? '차량 정보를 못 받았어요. 눌러서 다시 받아요' : '차량 정보를 받는 중…';
     }
     fill($('#stCar'), html);
     fill($('#pvCar'), more);
-    if (!done) left.push('차량 뽑기');
+    if (lapsed) missed.push('차량 뽑기');
+    else if (todo) left.push('차량 뽑기');
+    // 차량 정보를 아직 모름: 'loading'(받는 중) / 'failed'(못 받음). '남은 것'에 넣지 않고, paintHome 이 "다 끝났어요" 대신 상태에 맞는 문구를 보여 줌
+    return st ? '' : err ? 'failed' : 'loading';
   }
 
   // ── 차량 화면 ──
-  const REVEAL_FIRST = '버튼을 눌러 차량을 뽑으세요. 한 번만 뽑을 수 있어요.';
+  const REVEAL_FIRST = () => `버튼을 눌러 차량을 뽑으세요. 한 번만 뽑을 수 있어요(${CHOICE_DEADLINE_LABEL}까지).`;
+  // 마감 뒤 아직 안 뽑은 사람(lapsed): 뽑기 단추 없이 마감 안내만(조식의 "마감돼서 아직 못 골랐어요"와 같은 모양)
   function paintScreen(landed = false) {
     const st = state();
     const has = !!(st && st.car);
+    const lapsed = !!st && !has && isClosed();
     const stage = $('#carStage');
-    stage.hidden = !st;
+    stage.hidden = !st || lapsed;
     stage.dataset.state = has ? 'done' : 'idle';
-    $('#carSub').textContent = has ? (driving(st) ? '운전하는 차량이에요. 뽑지 않아도 돼요.' : '한 번 뽑은 차량은 바꿀 수 없어요.') : '누구와 같은 차를 탈지 완전 랜덤으로 정해져요';
-    $('#carBtn').hidden = !st || has;
-    $('#carHomeBtn').hidden = !(has || !st);
+    $('#carSub').textContent = has ? (driving(st) ? '운전하는 차량이에요. 뽑지 않아도 돼요.' : '한 번 뽑은 차량은 바꿀 수 없어요.')
+      : lapsed ? '마감됐어요.' : '누구와 같은 차를 탈지 완전 랜덤으로 정해져요';
+    $('#carBtn').hidden = !st || has || lapsed;
+    $('#carHomeBtn').hidden = !(has || !st || lapsed);
     $('#carRetry').hidden = !!st || !err;
     $('#carCrewCard').hidden = !has;
     if (!st) {
@@ -220,8 +238,13 @@
       fill($('#carReveal'), '');
       return;
     }
+    if (lapsed) {
+      $('#carText').innerHTML = `⏰ 마감돼서 아직 못 뽑았어요.<span class="car-result-label">${esc(CHOICE_DEADLINE_LABEL)}에 마감됐어요. 차량은 진행자에게 말해 주세요.</span>`;
+      fill($('#carReveal'), '');
+      return;
+    }
     if (!has) {
-      $('#carText').textContent = REVEAL_FIRST;
+      $('#carText').textContent = REVEAL_FIRST();
       fill($('#carReveal'), '');
       return;
     }
@@ -284,6 +307,7 @@
   }
   async function pick() {
     if (busy || !me) return;
+    if (isClosed()) return paintScreen(); // 시계가 마감을 넘긴 직후: 잠긴 모습으로
     const mine = me;
     const controls = () => all('#carCard .back, #topbar .logout');
     $('#carBtn').disabled = true;
@@ -307,7 +331,8 @@
         if (shown === 'car' && state() && state().car && document.activeElement === document.body) $('#carHomeBtn').focus({ preventScroll: true });
       }, 1600);
     } catch (e) {
-      paintScreen(); // 실패하면 원래 상태로
+      if (typeof markClosed === 'function') markClosed(e); // 서버가 마감이라고 거절(휴대폰 시계가 늦은 경우 등) → 아래에서 마감 모습으로 그리고 문구는 guard 가 보여 줌
+      paintScreen(); // 실패하면 원래 상태로(마감이면 잠긴 모습)
       showError(e.message);
       await load(); // 답이 늦었을 뿐 차량은 이미 정해졌을 수 있음(같은 사람이 다시 눌러도 DB가 같은 차량을 돌려줌)
       if (me !== mine) return;
@@ -329,5 +354,5 @@
   $('#carBtn').addEventListener('click', guard(pick));
   $('#carRetry').addEventListener('click', () => { err = ''; paintScreen(); load(); });
 
-  window.Car = { home, load, ensure, reset };
+  window.Car = { home, load, ensure, reset, paint: () => paintScreen() };
 })();

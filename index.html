@@ -11,7 +11,7 @@
   <!-- Supabase 연결 파일은 저장소에 같이 둔 것(2.117.3 버전). 받은 파일이 바뀌지 않았는지 integrity 로 확인. 올릴 때는 v 숫자와 integrity 를 같이 바꾼다 -->
   <script src="supabase.js?v=2.117.3" integrity="sha384-BWcjm9OdFth9TbhCxZPdm+gAOUMAzQy9nmTs12ioXdCcbVnJaPMn+fMUoQCLt60R"></script>
   <!-- common.js 를 고치면 v 숫자를 올린다(휴대폰에 남아 있는 예전 common.js 를 새 화면이 쓰지 않게) -->
-  <script src="common.js?v=12"></script>
+  <script src="common.js?v=13"></script>
   <style>
     /* 가로로 돌려도 글자가 멋대로 커지지 않게. 키보드로 옮겨 간 메뉴 카드가 화면 아래에 붙은 단추 줄에 가리지 않게 */
     html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; scroll-padding-bottom: 120px; }
@@ -499,8 +499,8 @@
   </section>
 </main>
 
-<script src="car.js?v=4"></script><!-- 탑승 차량 뽑기(아래 스크립트가 쓰는 Car). 이 파일은 아래 스크립트보다 먼저 -->
-<script>if (!window.Car) { window.Car = { home() { const b = document.querySelector('#goCar'); if (b) b.hidden = true; }, load() {}, ensure() {}, reset() {} }; }</script><!-- car.js 를 못 받았으면 차량 단추만 숨기고(막대·남은 것에서도 빠짐) 나머지는 그대로 -->
+<script src="car.js?v=7"></script><!-- 탑승 차량 뽑기(아래 스크립트가 쓰는 Car). 이 파일은 아래 스크립트보다 먼저 -->
+<script>if (!window.Car) { window.Car = { home() { const b = document.querySelector('#goCar'); if (b) b.hidden = true; }, load() {}, ensure() {}, reset() {}, paint() {} }; }</script><!-- car.js 를 못 받았으면 차량 단추만 숨기고(막대·남은 것에서도 빠짐) 나머지는 그대로 -->
 <script>
   const ME_KEY = 'team-picker-me';
   // 메인에서 숨기는 것('Room' = 방 뽑기, 'Team' = 팀 뽑기, 'Car' = 탑승 차량 뽑기도 넣으면 숨김). 다시 보이게 하려면 여기서 빼면 됨(화면·DB 함수는 그대로 있음).
@@ -938,9 +938,11 @@
     const left = [];
     const missed = []; // 마감까지 못 고른 것(진행자에게 말해야 함)
     const closed = choicesClosed();
-    // 탑승 차량 단추(car.js). 남은 것 목록에는 맨 앞에. 차량은 '뽑기'라 마감이 없음(방·팀처럼).
+    // 탑승 차량 단추(car.js). 남은 것 목록에는 맨 앞에. 차량 뽑기도 점심·조식·자유시간과 같은 마감(못 뽑은 채 마감이면 missed 로).
     // car.js 쪽 오류가 메인 전체를 막지 않게 감싸고, 실패하면 차량 단추만 숨김(막대·남은 것에서도 빠짐)
-    try { Car.home(left); } catch (e) { $('#goCar').hidden = true; }
+    // 차량 정보를 아직 모르면(받는 중·못 받음) '남은 것'에는 넣지 않고, 다른 것을 다 끝냈어도 "다 끝났어요" 대신 확인 중이라고 보여 줌
+    let carUnknown = ''; // '' = 앎, 'loading' = 받는 중, 'failed' = 못 받음
+    try { carUnknown = Car.home(left, missed) || ''; } catch (e) { $('#goCar').hidden = true; }
     const set = (id, label, done, html, more = '') => {
       const btn = $(`#go${id}`);
       btn.hidden = HIDDEN_TASKS.has(id); // 숨긴 것은 그리지도, 남은 것에 세지도 않음
@@ -972,10 +974,12 @@
       : (me.activity === 'ski' ? '<b class="mb-big">스키</b><span class="sr-only"> · </span><span class="mb-warn">🙅 저녁 술 금지!</span>' : `<b class="mb-big">${esc(ACTS[me.activity])}</b>`)
         + editPill);
     fill($('#homeLeft'), left.length ? `남은 것 <b>${left.length}개</b>: ${left.join(' · ')}`
-      : missed.length ? `마감돼서 못 고른 것 <b>${missed.length}개</b>: ${missed.join(' · ')}<br />진행자에게 말해 주세요` : '다 끝났어요! 🎉 즐거운 워크숍 보내요');
+      : missed.length ? `마감돼서 못 고른 것 <b>${missed.length}개</b>: ${missed.join(' · ')}<br />진행자에게 말해 주세요`
+      : carUnknown === 'failed' ? '차량 말고는 다 끝났어요. 차량 정보를 받지 못했어요(차량 칸을 눌러 다시 받아요)'
+      : carUnknown ? '차량 말고는 다 끝났어요. 차량 정보를 확인하는 중이에요' : '다 끝났어요! 🎉 즐거운 워크숍 보내요');
     // 막대 칸: 숨긴 것(HIDDEN_TASKS)과, 화면에서 숨겨진 단추(car.js 를 못 받은 차량 단추 등)는 빼고
     fill($('#homeBar'), HOME_TASKS.filter((k) => !HIDDEN_TASKS.has(k) && !$(`#go${k}`).hidden).map((k) => `<i${$(`#go${k}`).classList.contains('is-done') ? ' class="on"' : ''}></i>`).join(''));
-    $('#homeProg').classList.toggle('all-done', !left.length && !missed.length);
+    $('#homeProg').classList.toggle('all-done', !left.length && !missed.length && !carUnknown);
     $('#homeLead').hidden = !left.length;
   }
   function showHome() {
@@ -1194,6 +1198,7 @@
     else if (shown === 'menu') showMenu();
     else if (shown === 'act') paintAct();
     else if (shown === 'lunch') paintLunch();
+    else if (shown === 'car') Car.paint(); // 탑승 차량(car.js): 안 뽑은 사람은 뽑기 단추가 사라지고 마감 안내
   }
   setInterval(syncClosed, 30000);
   { const wait = CHOICE_DEADLINE - Date.now(); if (wait > 0 && wait < 2 ** 31) setTimeout(syncClosed, wait + 500); }
