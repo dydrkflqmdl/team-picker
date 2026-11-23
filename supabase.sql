@@ -463,20 +463,21 @@ begin
   return teams[myteam];
 end $$;
 
--- 방 뽑기. 남녀 따로, 같은 부서 사람은 되도록 같은 방, 직급은 보지 않고 무작위. 한 번 뽑으면 끝(다시 부르면 같은 방을 돌려줌).
+-- 방 뽑기. 기준은 두 가지뿐: 남녀를 섞지 않고, 같은 성별 안에서 방 인원을 고르게(방끼리 차이 1명 이내).
+-- 그 밖에는 전부 무작위다. 부서·직급·임원 여부·명단 순서 등 어떤 것도 보지 않는다. 한 번 뽑으면 끝(다시 부르면 같은 방을 돌려줌).
 -- 다시 뽑게 하려면 진행자가 그 사람(또는 전원)의 방을 비운다(admin_assign·admin_clear).
--- 생각은 팀 뽑기(pick)와 같다: 누를 때마다 '같은 성별에서 아직 방이 없는 사람 전원(나 포함)을 그 성별의 방에 어떻게 넣으면
--- 가장 좋은지' 계획을 새로 세우고, 그 계획의 내 방을 준다. 이미 방이 있는 사람(뽑았거나 진행자가 넣은 사람)은 그대로 둔다.
--- 1) 방 인원: 그 성별 인원 ÷ 방 수의 내림~올림 사이면 0, 벗어난 만큼 벌점 10000(반드시 맞춤). 예: 남 20명 5실 → 4명씩, 여 9명 2실 → 5·4명.
--- 2) 같은 부서 모으기: 방마다 '그 방에 있는 부서 수'를 더한 것(= (방, 부서) 짝의 수)이 벌점. 적을수록 같은 부서가 한 방에 모인다.
---    부서가 방보다 크면 쪼개지는 건 어쩔 수 없다(그래도 되도록 적은 방으로).
--- 3) 계획은 무작위 부서 순서로 '같은 부서가 이미 있는 방, 없으면 빈자리가 많은 방'에 채워 넣어 시작하고, 3000번 바꿔 보며 다듬는다.
---    벌점이 같은 계획끼리는 무작위라 매번 다르다.
--- 뽑을 때마다 (이미 뽑은 사람을 그대로 둔 채) 가장 좋은 계획을 따르므로, 모두 다 뽑으면 처음부터 한꺼번에 나눈 것만큼 좋은 나눔이 된다.
--- 뽑는 도중의 방 인원은 맞추지 않는다(예: 첫 두 사람이 같은 부서면 같은 방). 마지막 인원은 계획이 맞춘다.
--- (가짜 29명 명단(남 20·여 9, 부서 6개)으로 시험: 한 명씩 무작위 순서로 다 뽑기 400번 모두 방 인원이 맞고 (방, 부서) 짝의 수가
---  이론상 가장 적은 값(남 7·여 6)이었다. 진행자가 8명·15명을 먼저 아무 방에 넣어 둔 뒤 나머지가 뽑기 600번은 599번이 그 상태의
---  가장 적은 값, 1번이 그보다 1 많음. 한 명에 7ms 남짓(개발용 Mac)이라 29명이 한꺼번에 눌러도 0.2초 안에 끝난다.)
+-- 생각은 팀 뽑기(pick)와 같다: 누를 때마다 '같은 성별에서 아직 방이 없는 사람 전원(나 포함)을 그 성별의 방에 넣는 계획'을
+-- 새로 세우고, 그 계획의 내 방을 준다. 이미 방이 있는 사람(뽑았거나 진행자가 넣은 사람)은 그대로 둔다.
+-- 1) 방마다 마지막 인원(목표): 방 없는 사람을 '지금 인원이 가장 적은 방'부터 한 명씩 채웠을 때의 인원.
+--    예: 남 20명 5실 → 4명씩, 여 9명 2실 → 5·4명. 진행자가 어떤 방에 이미 많이 넣어 두었으면 그 방은 그대로 두고
+--    나머지 방끼리 고르게 채운다(그때는 차이가 1명을 넘을 수 있지만, 가능한 가장 고른 모양이다).
+--    한 명 더 들어가는 방(예: 여 9명이면 5명 방)은 무작위로 정하되, 그렇게 나누는 경우의 수에 비례하게 고른다.
+-- 2) 방 없는 사람 전원을 무작위로 섞어 그 목표 자리에 차례로 넣는다.
+-- 이렇게 하면 계획 하나가 '목표 인원을 지키는 모든 나눔 가운데 하나를 똑같은 확률로 고른 것'이 되고, 한 명씩 차례로 뽑아도
+-- (처음부터 한꺼번에 똑같은 확률로 나눈 것과 같아서) 같은 성별 안에서는 누구나 어느 방에든 같은 확률로 들어간다.
+-- 뽑는 도중의 방 인원은 맞추지 않는다(예: 첫 두 사람이 같은 방일 수 있다). 마지막 인원은 계획이 맞춘다.
+-- (가짜 29명 명단(남 20·여 9, 부서 6개)으로 한 명씩 무작위 순서로 다 뽑기를 여러 번 시험: 성별이 섞이거나 방 인원 차이가
+--  1명을 넘은 적이 없고, 같은 방에 같은 부서가 모이는 정도·사람마다 방이 나온 횟수가 완전 무작위와 같았다. README '규칙' 참고.)
 -- ⚠️ 명단에 있는데 안 누르는 사람이 있으면 그 자리만큼 방 인원이 어긋날 수 있다 → 진행자가 '방 없는 사람만 넣기'로 채운다.
 -- 성별이 빈 사람은 뽑을 수 없고(진행자가 성별을 넣거나 직접 방을 넣음) 계획에서도 뺀다.
 -- 진행자가 다른 성별의 방에 직접 넣은 사람도 계획에서 뺀다(그 사람은 그 방에 그대로 둠).
@@ -491,18 +492,15 @@ declare
   rooms  text[];                       -- 내 성별의 방 키
   nr     int;                          -- 방 수
   pid    bigint[];                     -- 계획에 드는 사람(같은 성별) id
-  pd     int[];                        -- 사람별 부서 번호 1~nd
   cur    int[];                        -- 사람별 방 번호 1~nr. 방이 있는 사람은 고정, 나머지는 계획
-  cnt    int[];                        -- 방별 계획 인원
-  dc     int[];                        -- (부서, 방) 칸별 계획 인원. 칸 번호 = (부서 번호 - 1) × nr + 방 번호
-  tc     int[];                        -- (부서, 방) 칸별 계획 인원 중 아직 방이 없는 사람(옮길 수 있는 사람)만
-  cap    int[];                        -- 첫 계획에서 방마다 채울 인원
-  dk     float8[];                     -- 첫 계획에서 부서를 줄 세울 무작위 순서
+  cnt    int[];                        -- 방별 지금 인원(이미 방이 있는 사람)
+  tgt    int[];                        -- 방별 목표 인원
+  el     int[] := '{}';                -- 한 명 더 들어갈 수 있는 방(지금 인원이 lv 이하인 방)
   todo   int[] := '{}';                -- 아직 방이 없는 사람(나 포함)
-  nd int; n int; nf int; mi int; lo int; hi int; extra int;
-  i int; j int; k int; p int; q int; a int; b int; xp int; xq int; m int; d int; dg int; e float8;
-  cost int := 0; best int; myroom int;
-  steps constant int := 3000;
+  seats  int[] := '{}';                -- 남은 자리(방 번호를 자리 수만큼)
+  n int; nf int; mi int; lv int; extra int; ne int; s int; mask int; pickm int; c int;
+  i int; k int; myroom int;
+  w float8; wsum float8 := 0;
 begin
   -- 지나치게 긴 입력은 바로 거절(누구나 부를 수 있는 함수라, 큰 입력으로 차례를 오래 쥐어 다른 사람을 막지 못하게)
   if char_length(p_dept) > 100 or char_length(p_name) > 100 then
@@ -538,146 +536,87 @@ begin
   rooms := case me.gender when '남' then array['m1', 'm2', 'm3', 'm4', 'm5'] else array['f1', 'f2'] end;
   nr := cardinality(rooms);
 
-  -- 같은 성별 사람(방이 없거나 이 성별의 방에 있는 사람)과 부서·방을 한 문장으로 읽는다
+  -- 같은 성별 사람(방이 없거나 이 성별의 방에 있는 사람)과 방을 한 문장으로 읽는다(부서·직급 등은 읽지 않는다)
   with g as (
-    select id, dense_rank() over (order by dept)::int as dno, coalesce(array_position(rooms, room), 0) as r
+    select id, coalesce(array_position(rooms, room), 0) as r
     from people
     where gender = me.gender and (room is null or room = any (rooms)))
-  select array_agg(id order by id), array_agg(dno order by id), array_agg(r order by id), max(dno)
-  into pid, pd, cur, nd from g;
+  select array_agg(id order by id), array_agg(r order by id)
+  into pid, cur from g;
   n  := coalesce(cardinality(pid), 0);
   mi := array_position(pid, mid);
   if mi is null then  -- 두 번 읽는 사이 진행자가 이 사람을 고친 경우(사실상 없음)
     raise exception '잠시 뒤 다시 눌러 주세요.';
   end if;
-  lo := n / nr;                -- 방마다 최소(내림)
-  hi := (n + nr - 1) / nr;     -- 방마다 최대(올림)
 
   cnt := array_fill(0, array[nr]);
-  dc  := array_fill(0, array[nd * nr]);
-  tc  := array_fill(0, array[nd * nr]);
   for i in 1..n loop
     if cur[i] > 0 then
       cnt[cur[i]] := cnt[cur[i]] + 1;
-      dc[(pd[i] - 1) * nr + cur[i]] := dc[(pd[i] - 1) * nr + cur[i]] + 1;
     else
       todo := todo || i;
     end if;
   end loop;
   nf := cardinality(todo);
 
-  -- 첫 계획: 방마다 채울 인원을 정하고(최소 인원, 이미 그보다 많으면 지금 인원, 남는 자리는 아직 최대가 아닌 방 아무 데나 한 명씩),
-  -- 방 없는 사람을 부서끼리 붙여 무작위 부서 순서로 한 명씩, 자리가 남은 방 중 '같은 부서가 가장 많은 방(이미 방이 있는 사람 포함),
-  -- 같으면 빈자리가 많은 방, 그래도 같으면 아무 데나'에 넣는다. 이미 방이 있는 사람의 부서를 따라가므로 다듬기가 덜 헤맨다.
-  cap := array_fill(lo, array[nr]);
-  for k in 1..nr loop
-    cap[k] := greatest(lo, cnt[k]);
+  -- 1) 목표 인원. lv = '모든 방을 적어도 lv 명(이미 더 많으면 지금 인원)으로 채울 수 있는' 가장 큰 수.
+  --    그러고 남는 extra 명은 지금 인원이 lv 이하인 방(el) 가운데 서로 다른 방에 한 명씩 더 들어간다(extra < el 의 방 수).
+  lv := 0;
+  loop
+    s := 0;
+    for k in 1..nr loop
+      s := s + greatest(cnt[k], lv + 1);
+    end loop;
+    exit when s > n;
+    lv := lv + 1;
   end loop;
+  tgt := array_fill(0, array[nr]);
   extra := n;
   for k in 1..nr loop
-    extra := extra - cap[k];
+    tgt[k] := greatest(cnt[k], lv);
+    extra := extra - tgt[k];
+    if cnt[k] <= lv then el := el || k; end if;
   end loop;
-  while extra > 0 loop
-    select k2 into k from generate_series(1, nr) k2 order by (cap[k2] < hi) desc, random() limit 1;
-    cap[k] := cap[k] + 1;
-    extra := extra - 1;
-  end loop;
-  select array_agg(random()) into dk from generate_series(1, nd);
-  for i in select x from unnest(todo) x order by dk[pd[x]], random() loop
-    select k2 into k from generate_series(1, nr) k2
-    where cnt[k2] < cap[k2]
-    order by dc[(pd[i] - 1) * nr + k2] desc, cap[k2] - cnt[k2] desc, random() limit 1;
-    if not found then  -- 자리는 늘 남지만, 혹시 모자라면 아무 방에나
-      k := 1 + floor(random() * nr)::int;
+  --    한 명 더 들어갈 방 묶음 고르기: el 에서 extra 개를 고르는 모든 묶음을 훑어, 묶음마다 '그렇게 나누는 경우의 수'에
+  --    비례하는 확률로 하나를 고른다(경우의 수 비 = 묶음에 든 방마다 1 / (lv + 1 - 지금 인원)). 방이 많아야 5개라 묶음은 32개 이하.
+  --    이렇게 해야 이미 방이 있는 사람이 있을 때도 '목표를 지키는 모든 나눔이 같은 확률'이 된다.
+  ne := cardinality(el);
+  pickm := 0;
+  for mask in 0..(1 << ne) - 1 loop
+    c := 0;
+    w := 1;
+    for i in 1..ne loop
+      if (mask >> (i - 1)) & 1 = 1 then
+        c := c + 1;
+        w := w / (lv + 1 - cnt[el[i]]);
+      end if;
+    end loop;
+    if c = extra then
+      wsum := wsum + w;
+      if random() * wsum < w then pickm := mask; end if;  -- 하나씩 보며 무게에 비례해 바꿔 들기(끝나면 무게 비례로 하나가 남음)
     end if;
-    cur[i] := k;
-    cnt[k] := cnt[k] + 1;
-    dc[(pd[i] - 1) * nr + k] := dc[(pd[i] - 1) * nr + k] + 1;
-    tc[(pd[i] - 1) * nr + k] := tc[(pd[i] - 1) * nr + k] + 1;
+  end loop;
+  for i in 1..ne loop
+    if (pickm >> (i - 1)) & 1 = 1 then
+      tgt[el[i]] := tgt[el[i]] + 1;
+    end if;
   end loop;
 
+  -- 2) 남은 자리(방 번호를 '목표 - 지금 인원' 개씩)를 늘어놓고, 방 없는 사람을 무작위로 섞어 차례로 앉힌다.
   for k in 1..nr loop
-    cost := cost + 10000 * (greatest(0, cnt[k] - hi) + greatest(0, lo - cnt[k]));
+    for i in 1..tgt[k] - cnt[k] loop
+      seats := seats || k;
+    end loop;
   end loop;
-  for k in 1..nd * nr loop
-    if dc[k] > 0 then cost := cost + 1; end if;
+  if cardinality(seats) <> nf then  -- 늘 같지만, 혹시 다르면 다시 누르게
+    raise exception '잠시 뒤 다시 눌러 주세요.';
+  end if;
+  i := 0;
+  for k in select x from unnest(todo) x order by random() loop
+    i := i + 1;
+    cur[k] := seats[i];
   end loop;
-  best := cost;
   myroom := cur[mi];
-
-  -- 계획 다듬기: 방 없는 사람 둘(p, q)을 골라
-  --   같은 방이면 p 를 다른 방으로 옮기고,
-  --   다른 방·다른 부서면 맞바꾼다. 절반은 두 사람만, 절반은 두 사람이 속한 '부서 덩어리'를 같은 수만큼 통째로 맞바꾼다
-  --   (예: p 방의 영업부 3명 중 2명 ↔ q 방의 품질부 2명). 한 명씩 맞바꾸면 벌점이 두 번 올랐다 내려가야 하는 자리 바꿈을
-  --   한 번에 할 수 있어, 이미 방이 정해진 사람이 몇 있을 때도 가장 좋은 계획을 잘 찾는다.
-  --   같은 부서 둘이면 맞바꿔도 벌점은 그대로고 누가 어느 방인지만 바뀐다.
-  -- 벌점이 늘지 않으면 받아들인다. 초반에는 조금 늘어나는 것도 가끔 받아들여 막다른 곳을 빠져나온다.
-  -- 벌점이 같은 계획 사이는 자유롭게 오가므로 누가 어느 방인지가 무작위가 된다.
-  -- 벌점이 가장 낮았던 계획(같으면 나중 것)의 내 방을 고른다.
-  -- 빠르게 하려고 벌점 변화(d)는 바뀌는 칸만 보고 계산한다(m = 옮기는 사람 수).
-  --   방 인원: x 방에서 한 명 빠질 때 10000 × (x 인원 <= 최소면 +1, > 최대면 -1, 아니면 0), y 방에 들어갈 때 (>= 최대면 +1, < 최소면 -1)
-  --   부서 짝: (부서, 빠지는 방) 칸이 m명이었으면 짝이 없어져 -1, (부서, 들어가는 방) 칸이 0명이었으면 짝이 생겨 +1
-  -- 길잡이: 짝의 수만 보면 벌점이 같은 계획이 너무 많아(평평해서) 더 나은 계획 쪽으로 가는 길을 잘 못 찾는다.
-  --   그래서 앞쪽 80% 동안은 '같은 부서끼리 한 방에 더 많이 모이는 쪽'(칸 인원² 의 합, 바뀐 양 dg)을 조금 더 쳐 준다.
-  --   이 덤은 점점 줄어 뒤쪽 20% 에는 0 이라, 마지막 고르기는 위 벌점만 본다(덤 때문에 결과 기준이 바뀌지 않음).
-  for step in 1..steps loop
-    p := todo[1 + floor(random() * nf)::int];
-    q := todo[1 + floor(random() * nf)::int];
-    a := cur[p];
-    b := cur[q];
-    xp := (pd[p] - 1) * nr;
-    xq := (pd[q] - 1) * nr;
-    if a = b then  -- p 를 a 방에서 다른 방 b 로 옮김
-      b := 1 + floor(random() * (nr - 1))::int;
-      if b >= a then b := b + 1; end if;
-      q := 0;
-      m := 1;
-      d := 10000 * ((case when cnt[a] <= lo then 1 when cnt[a] > hi then -1 else 0 end)
-                  + (case when cnt[b] >= hi then 1 when cnt[b] < lo then -1 else 0 end))
-         + (case when dc[xp + a] = 1 then -1 else 0 end) + (case when dc[xp + b] = 0 then 1 else 0 end);
-      dg := 2 * (dc[xp + b] - dc[xp + a] + 1);
-    elsif xp = xq then  -- 같은 부서 둘을 맞바꿈: 벌점은 그대로
-      m := 1;
-      d := 0;
-      dg := 0;
-    else           -- p 쪽 m명은 a → b, q 쪽 m명은 b → a (방 인원은 그대로)
-      m := case when random() < 0.5 then 1 else least(tc[xp + a], tc[xq + b]) end;
-      d := (case when dc[xp + a] = m then -1 else 0 end) + (case when dc[xp + b] = 0 then 1 else 0 end)
-         + (case when dc[xq + b] = m then -1 else 0 end) + (case when dc[xq + a] = 0 then 1 else 0 end);
-      dg := 2 * m * (dc[xp + b] - dc[xp + a] + m) + 2 * m * (dc[xq + a] - dc[xq + b] + m);
-    end if;
-
-    -- e = 벌점 변화 - 길잡이 덤. 방 인원을 어기는 변화(d >= 100)는 받지 않고, 나머지는 e 가 0 이하면 받고 아니면 온도에 따라 가끔 받는다.
-    e := d - 1.5 * greatest(0, 1 - step / (0.8 * steps)) * dg;
-    if d < 100 and (e <= 0 or random() < exp(-e / greatest(0.1, 1 - step / steps::float8))) then
-      if q = 0 then
-        cnt[a] := cnt[a] - 1;  cnt[b] := cnt[b] + 1;
-      else
-        cur[q] := a;
-      end if;
-      cur[p] := b;
-      if m > 1 then  -- 덩어리 맞바꾸기: p·q 말고 m - 1 명씩 더 옮긴다(같은 부서 안에서 누구든 벌점은 같음)
-        i := m - 1;
-        j := m - 1;
-        for k in select x from unnest(todo) x order by random() loop
-          exit when i = 0 and j = 0;
-          if k <> p and k <> q then
-            if i > 0 and pd[k] = pd[p] and cur[k] = a then cur[k] := b; i := i - 1;
-            elsif j > 0 and pd[k] = pd[q] and cur[k] = b then cur[k] := a; j := j - 1;
-            end if;
-          end if;
-        end loop;
-      end if;
-      dc[xp + a] := dc[xp + a] - m;  dc[xp + b] := dc[xp + b] + m;
-      tc[xp + a] := tc[xp + a] - m;  tc[xp + b] := tc[xp + b] + m;
-      if q > 0 then
-        dc[xq + b] := dc[xq + b] - m;  dc[xq + a] := dc[xq + a] + m;
-        tc[xq + b] := tc[xq + b] - m;  tc[xq + a] := tc[xq + a] + m;
-      end if;
-      cost := cost + d;
-      if cost <= best then best := cost; myroom := cur[mi]; end if;
-    end if;
-  end loop;
 
   -- 계획을 세우는 사이 진행자가 이 사람에게 방을 넣었거나, 지웠거나, 성별을 바꿨으면 그것을 따른다
   update people set room = rooms[myroom]
