@@ -95,12 +95,12 @@ const DRAW_CONFIG = {
   const dupNames = () => {
     if (dupMemo.ref !== S.people) {
       const n = new Map();
-      for (const p of S.people) n.set(p.name, (n.get(p.name) || 0) + 1);
+      for (const p of S.people) n.set(p.name.trim(), (n.get(p.name.trim()) || 0) + 1); // 앞뒤 공백만 다른 이름도 같은 이름
       dupMemo = { ref: S.people, names: new Set([...n].filter(([, c]) => c > 1).map(([k]) => k)) };
     }
     return dupMemo.names;
   };
-  const isDup = (p) => dupNames().has(p.name);
+  const isDup = (p) => dupNames().has(p.name.trim());
   const who = (p) => (isDup(p) ? `${p.name}(${p.dept})` : p.name); // 글·안내용: 같은 이름이면 이름(부서)
   const dupTag = (p) => (isDup(p) ? `<small class="dup">(${esc(p.dept)})</small>` : ''); // 칸 안: 이름 뒤 작은 글씨
   const lock = () => { S.busy = true; updateControls(); };
