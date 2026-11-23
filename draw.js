@@ -29,7 +29,8 @@ const DRAW_CONFIG = {
   // 화면이 바뀐 직후 그 화면의 단추가 누름(클릭·Enter·Space)을 받지 않는 시간(ms). 앞 화면에서 두 번 누른 것이
   // 같은 자리에 새로 나타난 단추를 눌러 버리는 일을 막는다(예: '마지막 장면 보기'를 두 번 → '방 배정 뽑기로'가 눌림)
   // finaleAuto: 룰렛이 끝나 저절로 전체 결과로 넘어간 직후(이름이 칸에 채워지는 연출 약 2초 + 여유). 룰렛 중에 누르던 키·클릭이 '방 배정 뽑기로' 등을 누르지 않게
-  screenGuardMs: { menu: 700, intro: 700, finale: 1500, finaleAuto: 2800 },
+  // play: 시작 화면에서 '시작하기'를 Enter 로 두 번 누른 것이 곧바로 '뽑기 시작'(저장)으로 이어지지 않게
+  screenGuardMs: { menu: 700, intro: 700, play: 600, finale: 1500, finaleAuto: 2800 },
 };
 
 (() => {
@@ -291,7 +292,7 @@ const DRAW_CONFIG = {
     for (const v of VIEWS) { $(`#${v}View`).hidden = v !== view; $(`#${v}View`).removeAttribute('aria-disabled'); }
     guardScreen(view, guardMs);
     $('#homeBtn').hidden = !['intro', 'play', 'finale'].includes(view);
-    $('#progress').hidden = view !== 'play';
+    $('#progress').hidden = view !== 'play' || S.unit === 'all'; // 전체 한 번에는 진행 막대(정한 인원 / 전체)만
     if (view !== 'finale') confetti.stop();
     setTitle();
     updateControls();
@@ -373,7 +374,7 @@ const DRAW_CONFIG = {
     $('#homeBtn').disabled = S.busy;
     // 진행 숫자: 공개한 사람 / 뽑을 수 있는 사람
     if (S.kind && S.view === 'play') {
-      $('#progress').innerHTML = allMode ? `정함 <b>${S.saveDone}</b> / ${S.saveTotal || eligiblePeople().length}명` : `공개 <b>${shownEligible().length}</b> / ${eligiblePeople().length}명`;
+      if (!allMode) $('#progress').innerHTML = `공개 <b>${shownEligible().length}</b> / ${eligiblePeople().length}명`;
     }
     const sb = $('#soundBtn');
     sb.textContent = sound.on ? '🔊 소리 켜짐' : '🔇 소리 꺼짐';
@@ -708,6 +709,7 @@ const DRAW_CONFIG = {
     updateControls();
   }
   async function rouletteAll() {
+    if (!S.queue.length) return finale({ enter: true }); // 저장할 사람이 없음(예: 마지막 한 명을 건너뜀) → 룰렛 없이 바로
     lock();
     setPhase('saving');
     setReveal('roulette');
@@ -718,13 +720,16 @@ const DRAW_CONFIG = {
     wheel.classList.remove('all-on');
     wheel.innerHTML = KINDS[k].groups.map((g) => `<span class="opt ${groupClass(g)}" data-key="${g}" data-testid="draw-wheel-${g}">${esc(chipLabel(g))}</span>`).join('');
     const chips = [...wheel.children];
-    // 이름과 함께 그 사람의 칸에 불: 이미 정해진 사람은 진짜 팀(방), 아직이면 그 사람이 갈 수 있는 칸 중 아무 데나(방은 같은 성별만).
-    // 느려질 때(모두 저장된 뒤) 보이는 이름·칸 짝은 모두 진짜 결과라, 화면이 틀린 짝을 보여 주지 않음
+    // 이름과 함께 칸에 불: 이미 정해진 사람이면 그 사람의 진짜 팀(방)만 밝게(on).
+    // 아직 안 정한 사람이면 어느 칸도 밝히지 않고 그 사람이 갈 수 있는 칸(방은 같은 성별)만 옅게(maybe) — 정해진 짝처럼 보이지 않게.
+    // 느려질 때는 모두 저장된 뒤라 보이는 짝이 모두 진짜 결과(맛보기)
     const showPair = (p) => {
       showName(p, false);
-      const opts = optionsFor(p, k);
-      const key = p[k] || opts[Math.floor(Math.random() * opts.length)];
-      chips.forEach((c) => c.classList.toggle('on', c.dataset.key === key));
+      const opts = p[k] ? [] : optionsFor(p, k);
+      chips.forEach((c) => {
+        c.classList.toggle('on', !!p[k] && c.dataset.key === p[k]);
+        c.classList.toggle('maybe', opts.includes(c.dataset.key));
+      });
     };
     let prev = null;
     const nextPerson = () => { // 지난번과 다른 사람
@@ -754,7 +759,7 @@ const DRAW_CONFIG = {
         try { v = await api.pick(k, p, (n) => setMsg(`연결이 느려 다시 보내고 있어요… (${n})`)); } catch (e) {
           spinning = false;
           await spin;
-          chips.forEach((c) => c.classList.remove('on'));
+          chips.forEach((c) => c.classList.remove('on', 'maybe'));
           showName(p, true);
           return fail(e, { retry: rouletteAll, afterSkip: rouletteAll });
         }
@@ -763,7 +768,7 @@ const DRAW_CONFIG = {
         saveProgress();
       }
       S.current = null;
-      setMsg(`${w}을 모두 정했어요!`);
+      setMsg(S.saveDone >= S.saveTotal ? `${w}을 모두 정했어요!` : `${S.saveDone} / ${S.saveTotal}명의 ${w}을 정했어요`); // 건너뛴 사람이 있으면 '모두'라고 하지 않음
       while (performance.now() - start < (rm ? C.reducedSpinMs : C.rouletteMinMs)) await sleep(30); // 최소 시간까지는 계속 돎
     } finally { spinning = false; }
     await spin;
@@ -781,9 +786,9 @@ const DRAW_CONFIG = {
       }
     }
     // 모든 칸이 한꺼번에 켜짐 → 전체 결과로
-    chips.forEach((c) => c.classList.remove('on'));
+    chips.forEach((c) => c.classList.remove('on', 'maybe'));
     wheel.classList.add('all-on');
-    $('#slotDept').textContent = `${S.saveDone}명 모두 정했어요`;
+    $('#slotDept').textContent = S.saveDone >= S.saveTotal ? `${S.saveDone}명 모두 정했어요` : `${S.saveDone} / ${S.saveTotal}명 정했어요`;
     const n = $('#slotName');
     n.textContent = '결과 공개!';
     n.classList.remove('long', 'tick');
@@ -863,6 +868,7 @@ const DRAW_CONFIG = {
   // 연출 중이거나 요청 중(busy)이면 무시한다. 확인 상자가 열려 있어도 무시.
   function advance() {
     if (S.dialog || S.busy || S.view !== 'play') return;
+    if (screenGuarded()) return; // 뽑는 화면이 막 열린 직후(screenGuardMs.play)의 키는 무시 — 앞 화면에서 두 번 누른 키로 저장이 시작되지 않게
     if (S.phase === 'ready') return go(S.unit === 'all' ? stepAll : S.unit === 'group' ? stepGroup : stepPerson);
     if (S.phase === 'named') return go(() => spinAndReveal(S.current, S.pending));
     if (S.phase === 'error') return retryNow();
@@ -1067,7 +1073,8 @@ const DRAW_CONFIG = {
       S.shown = new Set(el.filter((p) => p[k]).map((p) => p.id));
       S.order = [...S.shown];
     }
-    $('#finaleTitle').textContent = `🎉 ${PRACTICE ? '(연습) ' : ''}${KINDS[k].done}`;
+    // 아직 안 뽑은 사람이 있으면(건너뛰기·그사이 비운 사람 등) 축하 제목·꽃가루 대신 안내 제목
+    $('#finaleTitle').textContent = left.length ? `${PRACTICE ? '(연습) ' : ''}아직 안 뽑은 사람이 있어요` : `🎉 ${PRACTICE ? '(연습) ' : ''}${KINDS[k].done}`;
     renderBoard($('#finaleBoard'), { finale: true });
     const notes = [];
     if (left.length) notes.push(`아직 안 뽑은 사람 <b>${left.length}명</b>: ${left.map((p) => esc(p.name)).join(', ')}${skippedLeft.length ? ' (오류로 건너뛴 사람 포함)' : ''}`);
@@ -1085,13 +1092,13 @@ const DRAW_CONFIG = {
     fitBoard($('#finaleBoard')); // 연출(처음에 커졌다 줄어드는 이름) 전에 크기를 잼
     if (opt.enter && !reduced()) $('#finaleBoard').classList.add('enter');
     if (S.unit === 'all') finaleMark(k);
-    if (!opt.quiet) {
+    if (!opt.quiet && !left.length) {
       const colors = [...KINDS[k].groups.map(colorOf), '#ffffff', '#fbbf24'];
       if (opt.enter) { const r = $('#confetti').getBoundingClientRect(); confetti.burst(colors, 160, { x: r.width / 2, y: r.height * 0.12 }); }
       confetti.rain(colors, C.confettiMs);
       sound.fanfare();
     }
-    announce(KINDS[k].done);
+    announce(left.length ? `아직 안 뽑은 사람 ${left.length}명이 있어요` : KINDS[k].done);
     unlock();
   }
   $('#finaleActs').addEventListener('click', (e) => {
@@ -1171,6 +1178,8 @@ const DRAW_CONFIG = {
   }
   // 전체 결과를 띄운 채 새로 고쳤으면 전체 결과로 다시(결과는 DB 에 있어 그대로). 꽃가루·소리 없이
   function reopenFinale(kind) {
+    // 그사이 다른 곳(관리자 페이지 등)에서 결과를 모두 비웠으면 빈 판 대신 첫 화면으로(기억도 지움)
+    if (!S.people.some((p) => eligible(p, kind) && p[kind])) { finaleMark(null); return showMenu(); }
     S.kind = kind;
     S.queue = [];
     S.skipped = new Set();

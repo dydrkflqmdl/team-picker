@@ -128,6 +128,7 @@ body.draw { margin: 0; overflow: hidden; display: flex; align-items: center; jus
 /* 룰렛: 모든 팀(방) 칸에 불이 돌다가, 멈추면 한꺼번에 켜짐 */
 .wheel.roulette { gap: calc(var(--u) * 1.8); padding: calc(var(--u) * 1) calc(var(--u) * 1.4); }
 .wheel.roulette .opt { min-width: calc(var(--u) * 10); height: calc(var(--u) * 6.4); font-size: calc(var(--u) * 2.6); transition: opacity .06s, transform .06s, box-shadow .06s; }
+.wheel.roulette .opt.maybe { opacity: .5; } /* 아직 안 정한 사람: 갈 수 있는 칸만 옅게(정해진 짝처럼 보이지 않게) */
 .wheel.all-on .opt { opacity: 1; transform: scale(1.1); box-shadow: 0 0 0 calc(var(--u) * .35) var(--gold), 0 0 calc(var(--u) * 3) var(--gold); animation: allon .7s ease-out both; }
 @keyframes allon { 0% { transform: scale(.92); filter: brightness(2.2); } 40% { transform: scale(1.22); } 100% { transform: scale(1.1); filter: none; } }
 /* 저장 진행 막대(정한 인원 / 전체) */

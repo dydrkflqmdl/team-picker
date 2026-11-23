@@ -1,5 +1,5 @@
 // 발표용 뽑기 화면(draw.html) 통합 시험.  실행: cd tests && node run.mjs draw [시나리오 번호 ...]   (예: node run.mjs draw 1 5)
-//   1~12: 기본 진행 '전체 한 번에'(unit=all) · 13~15: 권한·관리자 페이지·키 · 21~29: 남겨 둔 '한 팀·한 방씩'(?unit=group)·'한 명씩'(?unit=person) 회귀
+//   1~12·16~19: 기본 진행 '전체 한 번에'(unit=all) · 13~15: 권한·관리자 페이지·키 · 21~29: 남겨 둔 '한 팀·한 방씩'(?unit=group)·'한 명씩'(?unit=person) 회귀
 //   npm run test:draw  도 같음.  캡처 폴더: 환경변수 DRAW_SHOTS (기본 tests/.out/draw-shots). 전환 연속 캡처는 그 아래 transition-team/ · transition-room/
 // 운영 DB 에는 닿지 않는다: 모든 browser context 에 guardNetwork 를 걸고, 시나리오 끝마다 막힌 외부 요청이 0건인지 확인한다.
 // 각 시나리오는 끝난 뒤 로컬 postgres 를 직접 조회해(pg) 결과를 검증한다.
@@ -92,7 +92,8 @@ export async function drawTests(only = []) {
   }
   const st = (page) => page.evaluate(() => { const d = window.__draw; return d ? JSON.parse(JSON.stringify(d)) : null; });
   const wait = (page, fn, arg, timeout = 60000) => page.waitForFunction(fn, arg, { timeout, polling: 30 });
-  const waitView = (page, v, t) => wait(page, (x) => window.__draw && window.__draw.view === x && !window.__draw.busy, v, t);
+  // 뽑는 화면(play)은 열린 직후 보호 시간(screenGuardMs.play) 동안 진행 키를 받지 않으므로, 그게 끝날 때까지 기다림
+  const waitView = (page, v, t) => wait(page, (x) => window.__draw && window.__draw.view === x && !window.__draw.busy && (x !== 'play' || !window.__draw.guarded), v, t);
   const waitReady = (page, t) => wait(page, () => { const d = window.__draw; return d && !d.busy && d.phase === 'ready'; }, null, t);
   const waitFinale = (page, t) => wait(page, () => { const d = window.__draw; return d && d.view === 'finale' && !d.busy; }, null, t);
   const waitErr = (page, t) => wait(page, () => { const d = window.__draw; return d && d.phase === 'error' && !d.busy; }, null, t);
@@ -555,6 +556,7 @@ export async function drawTests(only = []) {
     s.eq(rs.filter((x) => x.team).length, 28, '[건너뛰기] 28명 저장 후 전체 결과');
     const note = await text(page, 'draw-finale-note');
     s.ok(/아직 안 뽑은 사람 1명/.test(note) && note.includes(Y.name), `[건너뛰기] 안내: ${note}`);
+    s.ok(/아직 안 뽑은 사람이 있어요/.test(await text(page, 'draw-finale-title')), `[건너뛰기] 축하 대신 안내 제목: ${await text(page, 'draw-finale-title')}`);
     await unguard(page);
     await tid(page, 'draw-continue').click(); await waitView(page, 'intro');
     await tid(page, 'draw-keep').click(); await waitView(page, 'play');
@@ -625,6 +627,115 @@ export async function drawTests(only = []) {
     rs = await rows();
     s.eq(rs.filter((x) => x.room).length, 29, '[방] DB 전원 방');
     s.eq(await finaleMap(page), mapOf(rs, 'room'), '[방] 전체 결과 = DB');
+  });
+
+
+  // ══ 16~19: 검수 지적 반영 확인 ═══════════════════════════
+  await scenario(16, '[전체] 시작 화면에서 Enter 두 번(80·400ms) → 저장 0건, 보호 시간 뒤에는 정상 시작', async (s) => {
+    for (const gap of [80, 400]) {
+      await resetRoster(db); resetCalls();
+      const { page } = await newCtx({ code: true });
+      await openLive(page); await chooseKind(page, 'team');
+      await sleep(800); // 시작 화면 보호(0.7초)가 끝난 뒤
+      s.eq(await page.evaluate(() => document.activeElement && document.activeElement.dataset.testid), 'draw-start', `[${gap}ms] 초점은 시작하기`);
+      await page.keyboard.press('Enter'); await sleep(gap); await page.keyboard.press('Enter');
+      await sleep(1200);
+      const d = await st(page);
+      s.eq([d.view, d.phase], ['play', 'ready'], `[${gap}ms] 두 번째 Enter 는 무시 → 뽑는 화면 준비 상태`);
+      s.eq(calls('pick').length + d.calls.pick, 0, `[${gap}ms] 저장(pick) 0건`);
+      s.eq((await rows()).filter((r) => r.team).length, 0, `[${gap}ms] DB 팀 0명`);
+      await page.keyboard.press('Enter'); // 보호 시간이 지난 뒤
+      await wait(page, () => window.__draw.phase === 'saving' || window.__draw.view === 'finale');
+      s.ok(true, `[${gap}ms] 보호 시간 뒤 누르면 룰렛 시작`);
+      await waitFinale(page);
+      s.eq((await rows()).filter((r) => r.team).length, 29, `[${gap}ms] 끝까지 29명`);
+    }
+  });
+
+  await scenario(17, '[전체] 전체 결과를 띄운 뒤 다른 곳에서 비우고 새로 고침(전부 비움 → 첫 화면 / 일부 비움 → 안내 제목)', async (s) => {
+    await resetRoster(db); resetCalls();
+    const { page } = await newCtx({ code: true });
+    await openLive(page); await chooseKind(page, 'team'); await startBtn(page);
+    await runAll(page);
+    s.ok(/^🎉/.test(await text(page, 'draw-finale-title')), `다 뽑으면 축하 제목: ${await text(page, 'draw-finale-title')}`);
+    // 일부(1명) 비움 → 같은 탭 새로 고침 → 전체 결과 + 안내 제목
+    await db.query('update public.people set team = null, picked_at = null where id = 3');
+    await page.reload(); await waitFinale(page);
+    let t = await text(page, 'draw-finale-title');
+    s.ok(/아직 안 뽑은 사람이 있어요/.test(t) && !/🎉|모두 정해졌/.test(t), `한 명 비운 뒤 제목: ${t}`);
+    s.ok(/아직 안 뽑은 사람 1명/.test(await text(page, 'draw-finale-note')), `안내: ${await text(page, 'draw-finale-note')}`);
+    s.ok(await visible(page, 'draw-continue'), '남은 1명 이어서 뽑기 단추');
+    await shot(page, '1280', 'b01_finale_reopen_one_left');
+    // 전부 비움(관리자 페이지의 비우기 흉내) → 새로 고침 → 첫 화면, 기억 지움
+    await db.query('update public.people set team = null, picked_at = null');
+    await page.reload(); await waitView(page, 'menu');
+    s.eq((await st(page)).view, 'menu', '결과가 하나도 없으면 빈 판 대신 첫 화면');
+    s.eq(await page.evaluate(() => sessionStorage.getItem('draw-finale')), null, '다시 열기 기억 지움');
+    await page.reload(); await waitView(page, 'menu');
+    s.eq((await st(page)).view, 'menu', '다시 새로 고쳐도 첫 화면');
+  });
+
+  await scenario(18, '[전체] 마지막 한 명을 건너뛰면 기다리지 않고 바로 전체 결과', async (s) => {
+    await resetRoster(db); await drawEveryone('team');
+    await db.query("update public.people set team = null, picked_at = null where id = (select min(id) from public.people)");
+    resetCalls();
+    const { page } = await newCtx({ code: true });
+    const f = await failPicks(page);
+    await openLive(page); await chooseKind(page, 'team');
+    s.ok(/남은 1명만/.test(await text(page, 'draw-keep')), `그대로 두고 단추: ${await text(page, 'draw-keep')}`);
+    await tid(page, 'draw-keep').click(); await waitView(page, 'play');
+    f.arm(3);
+    await page.keyboard.press('Space');
+    await waitErr(page, 30000);
+    const t0 = Date.now();
+    await tid(page, 'draw-skip').click();
+    await waitFinale(page);
+    const ms = Date.now() - t0;
+    s.ok(ms < 1500, `건너뛴 뒤 전체 결과까지 ${ms}ms(< 1500, 룰렛 최소 시간·멈추기 없음)`);
+    s.ok(/아직 안 뽑은 사람이 있어요/.test(await text(page, 'draw-finale-title')), `제목: ${await text(page, 'draw-finale-title')}`);
+    s.ok(/아직 안 뽑은 사람 1명/.test(await text(page, 'draw-finale-note')), `안내: ${await text(page, 'draw-finale-note')}`);
+    s.eq((await rows()).filter((r) => r.team).length, 28, 'DB 28명(건너뛴 1명 그대로)');
+    await shot(page, '1280', 'b02_finale_after_skip_last');
+    s.note(`건너뛰기 → 전체 결과 ${ms}ms`);
+  });
+
+  await scenario(19, '[전체] 빠르게 도는 동안 가짜 짝 없음 + 진행 숫자 하나만', async (s) => {
+    await resetRoster(db); resetCalls();
+    const { page } = await newCtx({ code: true });
+    let first = true;
+    await page.route(/\/rpc\/pick_room$/, async (r) => { if (first) { first = false; await sleep(2500); } r.fallback(); }); // 처음 2.5초 동안 아무도 안 정해짐
+    await openLive(page); await chooseKind(page, 'room'); await startBtn(page);
+    await page.keyboard.press('Space');
+    await wait(page, () => window.__draw.phase === 'saving');
+    s.ok(!(await visible(page, 'draw-progress')), '룰렛 중 위쪽 진행 숫자 없음(진행 막대만)');
+    s.ok(await visible(page, 'draw-savebar'), '진행 막대 보임');
+    let samples = 0; let fake = 0; let wrongGender = 0;
+    for (let i = 0; i < 15; i++) {
+      const o = await page.evaluate(() => {
+        const name = document.getElementById('slotName').textContent;
+        const on = [...document.querySelectorAll('#wheel .opt.on')].map((x) => x.dataset.key);
+        const maybe = [...document.querySelectorAll('#wheel .opt.maybe')].map((x) => x.dataset.key);
+        return { name, on, maybe, done: window.__draw.saveDone };
+      });
+      if (o.done === 0) { samples++; if (o.on.length) fake++; if (o.maybe.length && !(o.maybe.every((k) => k[0] === 'm') || o.maybe.every((k) => k[0] === 'f'))) wrongGender++; }
+      await sleep(120);
+    }
+    s.ok(samples >= 8, `아무도 안 정해진 동안 표본 ${samples}개`);
+    s.eq(fake, 0, '아직 안 정한 사람에게 밝은(정해진 것 같은) 칸 없음');
+    s.eq(wrongGender, 0, '옅게 켜지는 칸은 그 사람 성별의 방만');
+    // 느려질 때는 실제 결과(맛보기)
+    await wait(page, () => window.__draw.phase === 'landing');
+    const rs = await rows();
+    let checked = 0; let wrong = 0;
+    for (let i = 0; i < 6; i++) {
+      const o = await page.evaluate(() => ({ name: document.getElementById('slotName').textContent, on: [...document.querySelectorAll('#wheel .opt.on')].map((x) => x.dataset.key), ph: window.__draw.phase }));
+      if (o.ph !== 'landing') break;
+      const r = rs.find((x) => x.name === o.name);
+      if (r && o.on.length) { checked++; if (o.on[0] !== r.room || o.on.length !== 1) wrong++; }
+      await sleep(180);
+    }
+    s.ok(checked >= 2 && wrong === 0, `느려질 때 이름·칸 짝 = DB 결과(${checked}개 확인, 틀림 ${wrong})`);
+    await waitFinale(page);
   });
 
   // ── 화면 크기 · 캡처 · 이름 잘림 ─────────────────────────
