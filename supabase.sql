@@ -1114,6 +1114,10 @@ end $$;
 -- 운전자면 뽑지 않고 운전하는 차량을, 이미 차량이 있으면 그 차량을 그대로 돌려준다(새로 뽑지 않음).
 -- 빈자리가 남은 차량들 가운데 남은 자리 수에 비례해 무작위로 고른다(빈자리 하나하나가 같은 확률).
 -- 성별·나이·직급·부서는 보지 않는다.
+-- 마감(choices_closed() — 점심·조식·자유시간과 같은 11월 25일(수) 15시, 한국 시간) 뒤에는 아직 차량이 없는 참가자를 거절한다.
+--   오류 문구는 기존 고르기와 같은 "…까지만 고르고 바꿀 수 있어요" 꼴. 이미 뽑은 사람·운전자는 마감 뒤에도 자기 차량을 돌려받는다.
+--   car_state 와 진행자 함수(admin_set_car·admin_clear_cars·admin_set_cars)는 마감과 상관없이 된다.
+--   choices_closed() 는 now()(요청이 시작된 시각) 기준이라, 마감 전에 눌러 차례를 기다린 사람은 마감을 조금 넘겨 배정돼도 받아들여진다(choose_lunch 등과 같은 기준).
 create or replace function public.pick_car(p_dept text, p_name text) returns text
 language plpgsql security definer set search_path = public as $$
 declare
@@ -1143,6 +1147,11 @@ begin
   if me.car is not null then
     return me.car;
   end if;
+  -- 마감(choices_closed(), 점심·조식·자유시간과 같은 시각) 뒤에는 아직 차량이 없는 사람을 거절(빠른 거절. 최종 판단은 아래 차례 안에서 한 번 더).
+  -- 문구는 기존 고르기와 같은 "…까지만 고르고 바꿀 수 있어요" 꼴이라 화면이 마감 거절로 알아봄(common.js 의 CHOICE_CLOSED_ERR)
+  if choices_closed() then
+    raise exception '탑승 차량 뽑기는 11월 25일(수) 15시까지만 고르고 바꿀 수 있어요. 차량은 진행자에게 말해 주세요.';
+  end if;
 
   -- 차례 기다리기(pick_car·진행자 차량 바꾸기끼리만). 앞사람이 커밋한 뒤에 차례가 오므로 아래에서 새로 읽으면 앞사람이 탄 자리가 보인다.
   -- 기다리는 사이 바뀐 것(다른 기기에서 뽑음, 진행자가 넣음·지움·운전자 지정 등)도 다시 읽어 반영한다.
@@ -1158,6 +1167,10 @@ begin
   end if;
   if me.car is not null then
     return me.car;
+  end if;
+  -- 마감 최종 판단(차례 안). 이미 차량이 있는 사람·운전자는 위에서 자기 차량을 돌려받았으므로 여기까지 온 사람만 거절
+  if choices_closed() then
+    raise exception '탑승 차량 뽑기는 11월 25일(수) 15시까지만 고르고 바꿀 수 있어요. 차량은 진행자에게 말해 주세요.';
   end if;
 
   -- 차량별 남은 자리 = 지금 정원 - 지금 탄 인원(0 아래로는 안 내려감. 사람이 지워져 정원보다 많이 탄 차량은 0)

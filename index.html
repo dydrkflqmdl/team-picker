@@ -512,8 +512,8 @@
   </section>
 </main>
 
-<script src="car.js?v=4"></script><!-- 탑승 차량 뽑기(아래 스크립트가 쓰는 Car). 이 파일은 아래 스크립트보다 먼저 -->
-<script>if (!window.Car) { window.Car = { home() { const b = document.querySelector('#goCar'); if (b) b.hidden = true; }, load() {}, ensure() {}, reset() {} }; }</script><!-- car.js 를 못 받았으면 차량 단추만 숨기고(막대·남은 것에서도 빠짐) 나머지는 그대로 -->
+<script src="car.js?v=5"></script><!-- 탑승 차량 뽑기(아래 스크립트가 쓰는 Car). 이 파일은 아래 스크립트보다 먼저 -->
+<script>if (!window.Car) { window.Car = { home() { const b = document.querySelector('#goCar'); if (b) b.hidden = true; }, load() {}, ensure() {}, reset() {}, paint() {} }; }</script><!-- car.js 를 못 받았으면 차량 단추만 숨기고(막대·남은 것에서도 빠짐) 나머지는 그대로 -->
 <script>
   const ME_KEY = 'team-picker-me';
   // 메인에서 숨기는 것('Room' = 방 뽑기, 'Team' = 팀 뽑기, 'Car' = 탑승 차량 뽑기도 넣으면 숨김). 다시 보이게 하려면 여기서 빼면 됨(화면·DB 함수는 그대로 있음).
@@ -951,9 +951,9 @@
     const left = [];
     const missed = []; // 마감까지 못 고른 것(진행자에게 말해야 함)
     const closed = choicesClosed();
-    // 탑승 차량 단추(car.js). 남은 것 목록에는 맨 앞에. 차량은 '뽑기'라 마감이 없음(방·팀처럼).
+    // 탑승 차량 단추(car.js). 남은 것 목록에는 맨 앞에. 차량 뽑기도 점심·조식·자유시간과 같은 마감(못 뽑은 채 마감이면 missed 로).
     // car.js 쪽 오류가 메인 전체를 막지 않게 감싸고, 실패하면 차량 단추만 숨김(막대·남은 것에서도 빠짐)
-    try { Car.home(left); } catch (e) { $('#goCar').hidden = true; }
+    try { Car.home(left, missed); } catch (e) { $('#goCar').hidden = true; }
     const set = (id, label, done, html, more = '') => {
       const btn = $(`#go${id}`);
       btn.hidden = HIDDEN_TASKS.has(id); // 숨긴 것은 그리지도, 남은 것에 세지도 않음
@@ -1207,6 +1207,7 @@
     else if (shown === 'menu') showMenu();
     else if (shown === 'act') paintAct();
     else if (shown === 'lunch') paintLunch();
+    else if (shown === 'car') Car.paint(); // 탑승 차량(car.js): 안 뽑은 사람은 뽑기 단추가 사라지고 마감 안내
   }
   setInterval(syncClosed, 30000);
   { const wait = CHOICE_DEADLINE - Date.now(); if (wait > 0 && wait < 2 ** 31) setTimeout(syncClosed, wait + 500); }

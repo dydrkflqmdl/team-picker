@@ -703,6 +703,92 @@ eq "admin_update()은 차량을 건드리지 않음" "$car" "$(sql "select car f
 anon "select admin_remove('$CODE', $ID)" >/dev/null
 eq "admin_remove() 뒤 그 사람 자리가 빔" "0" "$(sql "select count(*) from people where car = '$car'")"
 
+# ── 마감(choices_closed) 전·후 ─────────────────────────────
+# 시험 안에서만 choices_closed() 를 t.closed_flag 표의 값으로 바꿔 쓴다(마감 시각 자체는 건드리지 않음). 끝나면 supabase.sql 의 원래 정의로 되돌린다.
+title "마감 전·후: 안 뽑은 사람 거절, 이미 뽑은 사람·운전자 그대로, 진행자는 계속"
+sql "create table if not exists t.closed_flag (v boolean); delete from t.closed_flag; insert into t.closed_flag values (false)" >/dev/null
+sql "create or replace function public.choices_closed() returns boolean language sql stable as \$\$ select coalesce((select v from t.closed_flag limit 1), false) \$\$" >/dev/null
+closed_on()  { sql "update t.closed_flag set v = true" >/dev/null; }
+closed_off() { sql "update t.closed_flag set v = false" >/dev/null; }
+# 오류의 SQLSTATE 와 문구를 "코드|문구" 로(참가자 anon 으로 부름)
+errof() { anon "do \$\$ begin perform $1; raise notice 'OK'; exception when others then raise notice '%|%', sqlstate, sqlerrm; end \$\$" | sed -n 's/^NOTICE:  //p'; }
+CLOSED_MSG='탑승 차량 뽑기는 11월 25일(수) 15시까지만 고르고 바꿀 수 있어요. 차량은 진행자에게 말해 주세요.'
+sql "select t.seed(12)" >/dev/null
+DRV=$(idof 김가람)
+sql "select admin_set_cars('$CODE', '[{\"id\":\"car1\",\"name\":\"1호차\",\"driver\":$DRV},{\"id\":\"car2\",\"name\":\"2호차\"}]')" >/dev/null
+# 마감 전
+eq "마감 전: choices_closed() = f" "f" "$(sql "select choices_closed()")"
+early=$(anon "select pick_car('시험2팀', '김나래')")
+eq "마감 전: 뽑기 됨" "ok" "$(oneof "$early" car1 car2)"
+# 마감 뒤
+closed_on
+eq "마감 뒤: choices_closed() = t" "t" "$(sql "select choices_closed()")"
+eq "마감 뒤: 안 뽑은 사람은 거절(기존 고르기와 같은 코드 P0001)" "P0001|$CLOSED_MSG" "$(errof "pick_car('시험3팀', '김도윤')")"
+LUNCH_ERR=$(errof "choose_lunch('시험3팀', '김도윤', 'plain')")
+eq "점심 마감 거절도 같은 코드(P0001)" "P0001" "${LUNCH_ERR%%|*}"
+eq "두 거절 문구 모두 화면의 마감 알아보기(…까지만 고르고 바꿀 수 있어요)에 맞음" "2" "$(printf '%s\n%s\n' "$CLOSED_MSG" "${LUNCH_ERR#*|}" | grep -c '까지만 고르고 바꿀 수 있어요')"
+eq "마감 뒤: 거절된 사람은 차량 없음" "" "$(sql "select coalesce(car, '') from people where name = '김도윤'")"
+eq "마감 뒤: 이미 뽑은 사람은 자기 차량 그대로" "$early" "$(anon "select pick_car('시험2팀', '김나래')")"
+eq "마감 뒤: 운전자는 운전하는 차량 그대로" "car1" "$(anon "select pick_car('시험1팀', '김가람')")"
+eq "마감 뒤: 차량 수는 그대로(1명)" "1" "$(sql "select count(*) from people where car is not null")"
+S_YET="car_state('시험3팀', '김도윤')"
+eq "마감 뒤: car_state 됨(안 뽑은 사람: car null, 차량 2대)" "null/2" "$(anon "select json_typeof($S_YET->'car') || '/' || json_array_length($S_YET->'cars')")"
+eq "마감 뒤: car_state 됨(뽑은 사람: 자기 차량·같은 차 사람)" "$early/김나래" "$(anon "select (car_state('시험2팀', '김나래')->>'car') || '/' || (select string_agg(e->>'name', ',') from json_array_elements(car_state('시험2팀', '김나래')->'members') e)")"
+eq "마감 뒤: car_state 됨(운전자)" "car1" "$(anon "select car_state('시험1팀', '김가람')->>'car'")"
+# 진행자는 마감과 상관없이
+YET=$(idof 김도윤)
+anon "select admin_set_car('$CODE', $YET, 'car2')" >/dev/null
+eq "마감 뒤: 진행자가 넣기 됨" "car2" "$(sql "select car from people where id = $YET")"
+eq "마감 뒤: 진행자가 넣은 사람은 pick_car·car_state 로 그 차량을 받음" "car2/car2" "$(anon "select pick_car('시험3팀', '김도윤')")/$(anon "select $S_YET->>'car'")"
+anon "select admin_set_car('$CODE', $YET, 'car1')" >/dev/null
+eq "마감 뒤: 진행자가 옮기기 됨" "car1" "$(sql "select car from people where id = $YET")"
+anon "select admin_set_car('$CODE', $YET, null)" >/dev/null
+eq "마감 뒤: 진행자가 한 사람 비우기 됨" "" "$(sql "select coalesce(car, '') from people where id = $YET")"
+eq "마감 뒤: 비운 사람은 다시 뽑지 못함(거절)" "P0001|$CLOSED_MSG" "$(errof "pick_car('시험3팀', '김도윤')")"
+anon "select admin_clear_cars('$CODE')" >/dev/null
+eq "마감 뒤: 진행자가 차량 모두 비우기 됨" "0" "$(sql "select count(*) from people where car is not null")"
+anon "select admin_set_cars('$CODE', '[{\"id\":\"car1\",\"name\":\"1호차\",\"label\":\"가온님 차량\",\"driver\":$DRV},{\"id\":\"car2\",\"name\":\"2호차\"}]')" >/dev/null
+eq "마감 뒤: 진행자가 차량 목록 저장 됨" "가온님 차량" "$(sql "select value::jsonb->0->>'label' from config where key = 'cars'")"
+eq "마감 뒤: 비운 뒤에도 운전자는 자기 차량" "car1" "$(anon "select pick_car('시험1팀', '김가람')")"
+closed_off
+eq "마감을 되돌리면(시험용) 다시 뽑기 됨" "ok" "$(oneof "$(anon "select pick_car('시험3팀', '김도윤')")" car1 car2)"
+
+title "마감을 넘기는 순간: 차례를 기다리던 10명(+운전자 1)이 기다리는 사이 마감됨"
+sql "select t.seed(14)" >/dev/null
+DRV=$(idof 김가람)
+sql "select admin_set_cars('$CODE', '[{\"id\":\"car1\",\"name\":\"1호차\",\"driver\":$DRV},{\"id\":\"car2\",\"name\":\"2호차\"}]')" >/dev/null
+closed_off
+EARLY2=$(anon "select pick_car('시험2팀', '김나래')")
+rm -f "$OUT"/dl-*
+# 차례 잠금(261112, 3)을 먼저 쥔 세션: 10명이 그 잠금을 기다리면 마감을 켜고(커밋) 잠금을 푼다
+$PSQL -At -c "select pg_advisory_lock(261112, 3)" \
+  -c "do \$\$ declare s timestamptz := clock_timestamp(); begin
+        loop
+          exit when (select count(*) from pg_locks where locktype = 'advisory' and classid = 261112 and objid = 3 and not granted) >= 10;
+          if clock_timestamp() - s > interval '30 seconds' then raise exception '차례에 다 모이지 않음'; end if;
+          perform pg_sleep(0.01);
+        end loop; end \$\$" \
+  -c "update t.closed_flag set v = true" -c "select pg_advisory_unlock(261112, 3)" >"$OUT/dl-hold.log" 2>&1 &
+HOLD_PID=$!
+i=0
+while [ "$(sql "select count(*) from pg_locks where locktype = 'advisory' and classid = 261112 and objid = 3 and granted")" != "1" ]; do
+  i=$((i + 1)); [ $i -gt 500 ] && { ng "차례 잠금을 쥐지 못함" "$(cat "$OUT/dl-hold.log")"; break; }
+done
+sql "select id || ' ' || dept || ' ' || name from people where car is null and id <> $DRV order by id limit 10" >"$OUT/list.txt"
+while read -r id d n; do worker_pick "dl-$id" "$d" "$n" & done <"$OUT/list.txt"
+worker_pick "dl-drv" "$(sql "select dept from people where id = $DRV")" "김가람" &
+worker_pick "dl-early" "시험2팀" "김나래" &
+wait
+eq "잠금을 쥔 세션 오류 없음" "" "$(grep -i error "$OUT/dl-hold.log")"
+eq "기다리던 10명 모두 마감 거절(차례 안에서 다시 판단), 배정 0" "10/0" "$(cat "$OUT"/dl-[0-9]*.err | grep -c '까지만 고르고 바꿀 수 있어요')/$(cat "$OUT"/dl-[0-9]*.out | grep -c '^R ')"
+eq "운전자·이미 뽑은 사람은 기다리지 않고 자기 차량" "R car1/R $EARLY2" "$(grep '^R ' "$OUT/dl-drv.out")/$(grep '^R ' "$OUT/dl-early.out")"
+eq "DB 에도 새로 배정된 사람 없음(이미 뽑은 1명만)" "1" "$(sql "select count(*) from people where car is not null")"
+
+# 시험용 choices_closed() 를 supabase.sql 의 원래 정의로 되돌림
+awk '/^create or replace function public.choices_closed\(\)/,/^\$\$;/' "$SQL_FILE" >"$OUT/choices_closed.sql"
+run_file "$OUT/choices_closed.sql" "$OUT/choices_closed.log" && ok "choices_closed() 를 supabase.sql 의 정의로 되돌림" || ng "choices_closed() 되돌리기" "$(cat "$OUT/choices_closed.log")"
+has "되돌린 choices_closed() 의 시각은 supabase.sql 그대로" "2026-11-25 15:00:00+09" "$(sql "select prosrc from pg_proc where proname = 'choices_closed'")"
+
 # ── 결과 ──────────────────────────────────────────────────
 echo
 echo "════════════════════════════"
