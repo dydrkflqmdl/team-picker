@@ -52,6 +52,8 @@
   let editing = false;  // 차량 목록을 고치는 중 — 새로 받아도 입력칸은 건드리지 않음
   let tick = 0;
   const ko = (a, b) => String(a).localeCompare(String(b), 'ko');
+  // 참가자 마감(common.js 의 CHOICE_DEADLINE — 점심·조식·자유시간과 같은 시각)이 지났는지. 지나면 비운 사람은 스스로 다시 뽑지 못함(서버 pick_car 가 거절)
+  const closed = () => typeof CHOICE_DEADLINE === 'number' && Date.now() >= CHOICE_DEADLINE;
 
   const say = (text, bad) => { msgEl.textContent = text || ''; msgEl.classList.toggle('err', !!bad); };
   const person = (p) => `${esc(p.name)} <span class="hint">${p.title ? esc(p.title) + ' · ' : ''}${esc(p.dept)}</span>`;
@@ -74,9 +76,9 @@
     return { list, lost, yet, drivers: drv.size };
   }
 
-  // 사람마다 고르는 칸: 빈칸 = 차량 비우기(다시 뽑게 하기). 운전자는 고르는 칸 대신 "운전자"(차량 목록 고치기에서 바꿈)
+  // 사람마다 고르는 칸: 빈칸 = 차량 비우기(마감 전에는 "다시 뽑게 하기", 마감 뒤에는 스스로 다시 못 뽑으므로 그냥 "차량 비우기"). 운전자는 고르는 칸 대신 "운전자"(차량 목록 고치기에서 바꿈)
   const pick = (p) => (driverIds().has(p.id) ? '<span class="car-drv-tag" title="운전자는 차량 목록 고치기에서 바꿔요">운전자</span>' : `<select class="car-sel" data-id="${p.id}" aria-label="${esc(p.name)} 님 탑승 차량">`
-    + `<option value="">${p.car ? '차량 비우기(다시 뽑게 하기)' : '차량 없음'}</option>`
+    + `<option value="">${p.car ? (closed() ? '차량 비우기' : '차량 비우기(다시 뽑게 하기)') : '차량 없음'}</option>`
     + data.cars.map((c) => `<option value="${esc(c.id)}"${p.car === c.id ? ' selected' : ''}>${esc(fullName(c))}</option>`).join('')
     + '</select>');
 
@@ -105,6 +107,7 @@
     html += `<div class="menu-group none car-yet${move ? ' picking' : ''}"><p>아직 안 뽑은 사람 <b>${yet.length}</b>명</p>
       <div class="chips">${yet.map((p) => `<span class="chip">${person(p)}${move ? pick(p) : ''}</span>`).join('') || '<span class="empty">모두 뽑았어요</span>'}</div>${drivers ? `<p class="hint">운전자 ${drivers}명은 뽑지 않아도 차량이 정해져 있어 여기에 없어요.</p>` : ''}</div>`;
     $('#carClear').hidden = !drawn;
+    warn(list, yet);
     if (html === sig) return;
     // 고르는 칸을 잡고 있는 동안(열린 목록 포함)은 다시 그리지 않고, 칸에서 나올 때 맞춤
     const at = document.activeElement;
@@ -113,19 +116,39 @@
     view.innerHTML = html;
   }
 
+  // 탑승 인원 점검(팀 칸의 인원 경고와 같은 모양 .teamwarn): 정원보다 많이 탄 차량이 있거나,
+  // 모두 정해졌는데(안 뽑은 사람 0) 자동 정원 차량끼리 탄 인원 차이가 2명 이상이면 알림. 뽑는 중 정상 범위면 알리지 않음
+  function warn(list, yet) {
+    const el = $('#carWarn');
+    if (!el) return;
+    const over = list.filter((c) => c.riders.length > c.seats);
+    const autos = list.filter((c) => c.auto);
+    const n = autos.map((c) => c.riders.length);
+    const spread = !yet.length && autos.length >= 2 && Math.max(...n) - Math.min(...n) >= 2;
+    const html = (over.length || spread)
+      ? `탑승 인원이 어긋났어요. 안 온 사람이 명단에 남아 있는지 확인하고, <b>직접 옮기기</b>로 인원이 많은 차량의 한 명을 적은 차량으로 옮기세요.<small>지금 ${list.map((c) => `${esc(c.name)} ${c.riders.length}명`).join(' · ')}`
+        + ` (정원 ${list.map((c) => `${c.seats}명${c.auto ? '(자동)' : ''}`).join(' · ')}).${over.length ? ` 정원보다 많이 탄 차량: ${over.map((c) => esc(c.name)).join(' · ')}.` : ''}</small>`
+      : '';
+    el.hidden = !html;
+    if (el.innerHTML !== html) el.innerHTML = html;
+  }
+
+  // 받기에 성공하면 true(다른 이유로 건너뛰거나 실패하면 false)
   async function load(force) {
-    if (typeof code === 'undefined' || !code || loading && !force) return;
+    if (typeof code === 'undefined' || !code || loading && !force) return false;
     const mine = ++seq;
     loading = true;
     try {
       const d = await rpc('board_cars', { p_code: code });
-      if (mine !== seq) return;
+      if (mine !== seq) return false;
       data = { cars: (d && d.cars) || [], people: (d && d.people) || [] };
       if (msgEl.dataset.load) { say(''); delete msgEl.dataset.load; }
       render();
+      return true;
     } catch (e) {
-      if (mine !== seq || e.message.includes('비밀번호')) return; // 비밀번호는 기존 화면이 처리
+      if (mine !== seq || e.message.includes('비밀번호')) return false; // 비밀번호는 기존 화면이 처리
       if (card.open) { say(e.message, true); msgEl.dataset.load = '1'; } // 칸을 열어 둔 때만 알림
+      return false;
     } finally {
       if (mine === seq) loading = false;
     }
@@ -147,7 +170,7 @@
     const p = data.people.find((x) => x.id === Number(el.dataset.id));
     el.disabled = true;
     act(() => rpc('admin_set_car', { p_code: code, p_id: Number(el.dataset.id), p_car: el.value || null }),
-      () => { const c = data.cars.find((x) => x.id === el.value); return p ? (c ? `${p.name} 님을 ${fullName(c)}에 넣었어요.` : `${p.name} 님의 차량을 비웠어요. 다시 뽑을 수 있어요.`) : ''; })
+      () => { const c = data.cars.find((x) => x.id === el.value); return p ? (c ? `${p.name} 님을 ${fullName(c)}에 넣었어요.` : (closed() ? `${p.name} 님의 차량을 비웠어요. 마감이 지나 스스로 다시 뽑지 못해요. 여기서 직접 넣어 주세요.` : `${p.name} 님의 차량을 비웠어요. 다시 뽑을 수 있어요.`)) : ''; })
       .finally(() => { el.disabled = false; });
   });
   view.addEventListener('focusout', (e) => { if (e.target.matches('select.car-sel')) setTimeout(render); });
@@ -158,7 +181,10 @@
   clearBtn.addEventListener('click', async () => {
     if (!data) return;
     const n = data.people.filter((p) => p.car).length;
-    if (!confirm(`${n}명의 탑승 차량을 모두 비울까요? 참가자가 직접 뽑은 차량도 지워져서 모두 다시 뽑아야 해요. 먼저 '차량별 탑승자 복사'로 적어 두세요. 되돌릴 수 없어요.`)) return;
+    const msg = closed()
+      ? `⚠️ 마감이 지나 참가자가 다시 뽑을 수 없어요. 비우면 진행자가 전원을 직접 넣어야 해요.\n\n${n}명의 탑승 차량을 모두 비울까요? 먼저 '차량별 탑승자 복사'로 적어 두세요. 되돌릴 수 없어요.`
+      : `${n}명의 탑승 차량을 모두 비울까요? 참가자가 직접 뽑은 차량도 지워져서 모두 다시 뽑아야 해요. 먼저 '차량별 탑승자 복사'로 적어 두세요. 되돌릴 수 없어요.`;
+    if (!confirm(msg)) return;
     clearBtn.disabled = true;
     try { await act(() => rpc('admin_clear_cars', { p_code: code }), '차량을 모두 비웠어요.'); } finally { clearBtn.disabled = false; }
   });
@@ -287,4 +313,32 @@
   card.addEventListener('toggle', () => { if (card.open) load(true); });
   document.addEventListener('visibilitychange', () => { if (!document.hidden) auto(); });
   setTimeout(auto, 800); // 처음 한 번(board.html 의 첫 새로고침 뒤)
+
+  // board.html 이 쓰는 것(있을 때만 씀 — 이 파일을 못 받아도 board.html 은 그대로 동작)
+  //   refresh()      지금 차량 정보를 받음(되돌릴 수 없는 일 전 백업 직전)
+  //   carText(id)    백업 CSV 의 탑승 차량 칸: 손님이면 차량 이름, 운전자면 "1호차(운전)", 없으면 ''
+  //   removeNote(id) 명단에서 지울 때 확인 문구에 덧붙일 말(운전자·손님이면)
+  const drivingCar = (id) => (data ? data.cars.find((c) => c.driver === id) : null);
+  // 백업 직전 받기가 실패했으면 백업의 차량 칸은 비움(예전 값을 지금 것처럼 적지 않게)
+  let backupFresh = true;
+  window.carBoard = {
+    // 지금 차량 정보를 받음(되돌릴 수 없는 일 전 백업 직전). 성공하면 true, 실패하면 false(그때 carText 는 빈칸)
+    async refresh() { backupFresh = await load(true); return backupFresh; },
+    carText(id) {
+      if (!data || !backupFresh) return '';
+      const d = drivingCar(id);
+      if (d) return `${fullName(d)}(운전)`;
+      const p = data.people.find((x) => x.id === id), c = p && p.car ? data.cars.find((x) => x.id === p.car) : null;
+      return c ? fullName(c) : p && p.car ? p.car : '';
+    },
+    // 명단에서 지우기 직전: 새로 받아서 판단(받기에 실패하면 가진 값으로)
+    async removeNote(id) {
+      await load(true);
+      if (!data) return '';
+      const d = drivingCar(id);
+      if (d) return `\n${d.name} 운전자예요. 지우면 그 차량은 운전자 없음이 돼요(탑승 차량 → 차량 목록 고치기에서 다시 골라 주세요).`;
+      const p = data.people.find((x) => x.id === id), c = p && p.car ? data.cars.find((x) => x.id === p.car) : null;
+      return c ? `\n${c.name}에 타 있어서, 지우면 그 차량 인원이 1명 줄어요.` : '';
+    },
+  };
 })();
