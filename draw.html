@@ -9,7 +9,7 @@
   <!-- 진행자가 프로젝터에 띄워 레크리에이션 팀 뽑기·방 배정 뽑기를 함께 보는 화면. 관리자 비밀번호가 있어야 열림(연습 모드 ?practice=1 은 비밀번호 없이, DB 를 전혀 부르지 않음).
        style.css·common.js·draw.css·draw.js 를 고치면 아래 v 숫자를 올린다(style.css·common.js 는 board.html·index.html 과 같은 숫자로) -->
   <link rel="stylesheet" href="style.css?v=5" />
-  <link rel="stylesheet" href="draw.css?v=6" />
+  <link rel="stylesheet" href="draw.css?v=7" />
   <script src="supabase.js?v=2.117.3" integrity="sha384-BWcjm9OdFth9TbhCxZPdm+gAOUMAzQy9nmTs12ioXdCcbVnJaPMn+fMUoQCLt60R"></script>
   <script src="common.js?v=13"></script>
 </head>
@@ -72,12 +72,9 @@
         <span class="s" id="roomStatus" data-testid="draw-menu-room-status"></span>
       </button>
     </div>
-    <div class="unitline">공개 방법
-      <span class="seg" role="group" aria-label="공개 방법">
-        <button type="button" data-unit="group" data-testid="draw-unit-group" aria-pressed="true">한 팀·한 방씩</button>
-        <button type="button" data-unit="person" data-testid="draw-unit-person" aria-pressed="false">한 명씩</button>
-      </span>
-    </div>
+    <!-- 공개 방법: 기본(전체 한 번에)이면 안 보임. 주소 ?unit=group · ?unit=person 이나 DRAW_CONFIG.unit 으로 다른 방법을 골랐을 때만 보임 -->
+    <p class="unitline" id="unitLine" data-testid="draw-unit-line" hidden>공개 방법: <b id="unitName" data-testid="draw-unit-name"></b>
+      <a class="btn ghost" id="unitReset" href="draw.html" data-testid="draw-unit-reset">기본(전체 한 번에)으로 바꾸기</a></p>
     <div class="acts">
       <a class="btn ghost" id="toPractice" href="draw.html?practice=1" data-testid="draw-to-practice">연습 모드로 바꾸기</a>
       <a class="btn ghost" id="toLive" href="draw.html" data-testid="draw-to-live" hidden>연습 끝내고 실제 뽑기로</a>
@@ -90,6 +87,7 @@
     <h2 class="big" id="introTitle"></h2>
     <p class="lead" id="introSummary" data-testid="draw-intro-summary"></p>
     <p class="note" id="introNoGender" data-testid="draw-nogender" hidden></p>
+    <p class="note" id="introHint" data-testid="draw-intro-hint" hidden></p>
     <div class="acts" id="introActs"></div>
   </section>
 
@@ -102,6 +100,7 @@
         <div class="slot-name" id="slotName" data-testid="draw-slot-name"></div>
       </div>
       <div class="wheel" id="wheel" data-testid="draw-wheel" aria-hidden="true" hidden></div>
+      <div class="savebar" id="saveBar" data-testid="draw-savebar" role="progressbar" aria-label="팀·방을 정한 인원" aria-valuemin="0" hidden><i></i><span id="saveCount"></span></div>
       <div class="result" id="result" data-testid="draw-result" hidden></div>
       <div class="group-box" id="groupBox" data-testid="draw-group-reveal" hidden></div>
       <div class="errbox" id="errBox" data-testid="draw-error" role="alert" hidden>
@@ -146,6 +145,6 @@
 
   <div class="sr-only" id="live" aria-live="polite"></div>
 </div>
-<script src="draw.js?v=5"></script>
+<script src="draw.js?v=6"></script>
 </body>
 </html>
