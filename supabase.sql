@@ -5,13 +5,14 @@
 --    다시 Run 할 때 '여기를-바꾸세요' 를 그대로 두면 기존 비밀번호가 유지돼요.
 --
 -- 구조: 참가자 화면은 테이블에 직접 접근하지 못하고, 아래 함수들만 부를 수 있다.
---   departments() / login() / choose_menu() / choose_activity() / pick() / pick_room() / schedule() / team_members() / room_members()  ← 참가자용 (누구나)
---   로그인 뒤 일정·방 뽑기·팀 뽑기·아침 메뉴·자유시간은 아무 순서로나 할 수 있다(서로 먼저 해야 하는 것이 없다).
+--   departments() / login() / choose_lunch() / choose_menu() / choose_activity() / pick() / pick_room() / schedule() / team_members() / room_members()  ← 참가자용 (누구나)
+--   로그인 뒤 일정·방 뽑기·팀 뽑기·18일 점심·아침 메뉴·자유시간은 아무 순서로나 할 수 있다(서로 먼저 해야 하는 것이 없다).
 --   board() / admin_add() / admin_update() / admin_remove() / admin_reset() / admin_reset_all()  ← 진행자용 (관리자 비밀번호 필요)
 -- 일정표: 진행자가 진행자 화면에서 적고(admin_set), 참가자 화면이 schedule() 로 받아 보여준다.
 -- 객실은 참가자가 직접 뽑고(pick_room — 한 번 뽑으면 끝) 참가자 화면이 room_members() 로 같은 방 사람을 받아 보여준다.
 --   진행자는 방을 직접 옮기거나, 비워서(admin_assign·admin_clear) 다시 뽑게 하거나, 방 없는 사람을 한꺼번에 넣을 수 있다.
--- 금요일 저녁 뒤 자유시간(스키·휴식)은 참가자가 직접 고르고(choose_activity) 언제든 바꿀 수 있다. 진행자도 고칠 수 있다.
+-- 18일 점심(일반·얼큰 설렁탕, choose_lunch)·18일 아침 메뉴(choose_menu)·금요일 저녁 뒤 자유시간(스키·휴식, choose_activity)은 참가자가 직접 고르고, 마감(choices_closed() — 11월 25일 15시, 한국 시간) 전까지 몇 번이든 바꿀 수 있다.
+--   마감 뒤에는 참가자가 처음 고르는 것도 바꾸는 것도 서버가 막는다. 진행자는 마감 뒤에도 계속 고칠 수 있다(admin_assign).
 --   board_state() / admin_assign() / admin_clear() / admin_set()  ← 진행자용 (관리자 비밀번호 필요)
 -- 여럿이 동시에 뽑을 때: pick() 끼리, pick_room() 끼리만 한 명씩 차례로 처리한다(둘은 서로 다른 차례라 서로 기다리지 않음).
 --   메뉴 고르기·진행자 저장·읽기는 뽑기를 기다리지 않는다.
@@ -38,12 +39,12 @@ alter table public.people
   add column if not exists gender  text check (gender in ('남', '여')),
   add column if not exists is_exec boolean
     generated always as (coalesce(title ~ '(대표|이사|고문|상무|전무|사장|회장)', false)) stored;
--- 조식 메뉴(12월 18일 금요일 아침). 고르기 전에는 비어 있고, 참가자가 한 번 고르면 못 바꾼다.
+-- 조식 메뉴(12월 18일 금요일 아침). 고르기 전에는 비어 있고, 참가자가 마감(choices_closed()) 전까지 고르고 바꿀 수 있다.
 -- 'ugeoji' = 우거지 해장국, 'miyeok' = 소고기 미역국, 'hwangtae' = 버섯 황태 해장국
 alter table public.people
   add column if not exists menu text check (menu in ('ugeoji', 'miyeok', 'hwangtae'));
 -- 객실: 남자 방 'm1'~'m5', 여자 방 'f1'·'f2'. 참가자가 직접 뽑고(pick_room), 자기 방과 같은 방 사람을 볼 수 있다. 진행자도 고칠 수 있다.
--- 자유시간(12월 18일 금요일 저녁 식사 뒤): 'ski' = 스키, 'rest' = 휴식. 참가자가 직접 고르고 언제든 바꿀 수 있다.
+-- 자유시간(12월 18일 금요일 저녁 식사 뒤): 'ski' = 스키, 'rest' = 휴식. 참가자가 마감(choices_closed()) 전까지 직접 고르고 바꿀 수 있다.
 alter table public.people
   add column if not exists room     text check (room in ('m1', 'm2', 'm3', 'm4', 'm5', 'f1', 'f2')),
   add column if not exists activity text check (activity in ('ski', 'rest'));
@@ -64,6 +65,8 @@ begin
     alter table public.people add constraint people_activity_check check (activity in ('ski', 'rest'));
   end if;
 end $$;
+-- 점심(12월 18일 금요일): 'plain' = 일반 설렁탕, 'spicy' = 얼큰 설렁탕. 참가자가 마감(choices_closed()) 전까지 고르고 바꿀 수 있다. 진행자도 고칠 수 있다.
+alter table public.people add column if not exists lunch text check (lunch in ('plain', 'spicy'));
 
 -- 설정: 'admin_code'(관리자 비밀번호), 'schedule'(일정표 글 — 진행자가 적고 참가자 화면에도 보임)
 -- 변경 기록(되돌리기용): people 의 줄이 바뀌거나 지워질 때마다 예전 값을 남긴다. 진행자가 실수로 전체 삭제·전체 다시 뽑기를 해도
@@ -120,6 +123,13 @@ language sql immutable as $$
   select regexp_replace(regexp_replace(normalize(coalesce(t, ''), NFC), '[\u200b-\u200d\u2060\ufeff]', '', 'g'), '[\s\u00a0\u3000]+', '', 'g')
 $$;
 
+-- 점심·아침 메뉴·자유시간 마감: 2026-11-25 15:00 한국 시간부터 참가자는 고르지도 바꾸지도 못한다(진행자는 계속 가능).
+-- 마감 시각은 이 함수에만 적는다. 바꿀 때는 common.js 의 CHOICE_DEADLINE(·LABEL·SHORT)도 함께 고치고 이 파일을 다시 Run 한다.
+create or replace function public.choices_closed() returns boolean
+language sql stable as $$
+  select now() >= timestamptz '2026-11-25 15:00:00+09'
+$$;
+
 create or replace function public.check_admin(p_code text) returns void
 language plpgsql security definer set search_path = public as $$
 declare v text;
@@ -140,16 +150,43 @@ language sql stable security definer set search_path = public as $$
   select distinct dept from people order by dept
 $$;
 
--- 명단에 있으면 {dept, name, team, menu, room, activity}, 없으면 null (room·activity 는 아직 없으면 null)
+-- 명단에 있으면 {dept, name, team, menu, room, activity, lunch}, 없으면 null (room·activity·lunch 는 아직 없으면 null)
 create or replace function public.login(p_dept text, p_name text) returns json
 language sql stable security definer set search_path = public as $$
-  select json_build_object('dept', dept, 'name', name, 'team', team, 'menu', menu, 'room', room, 'activity', activity)
+  select json_build_object('dept', dept, 'name', name, 'team', team, 'menu', menu, 'room', room, 'activity', activity, 'lunch', lunch)
   from people
   where dept = norm_dept(p_dept) and name = norm_name(p_name)
 $$;
 
--- 조식 메뉴 고르기. 한 사람이 하나만, 한 번만 고를 수 있다.
--- 이미 골랐으면 새로 보낸 값은 버리고 처음 고른 메뉴를 그대로 돌려준다(동시에 두 번 눌러도 먼저 온 것만 남음).
+-- 18일(금) 점심 고르기: 'plain' = 일반 설렁탕, 'spicy' = 얼큰 설렁탕. 자유시간처럼 마감(choices_closed()) 전까지는 이미 골랐어도 바꿀 수 있다(새 값으로 덮어씀).
+-- 마감 뒤에는 처음 고르기도 바꾸기도 거절한다(진행자는 admin_assign 으로 고칠 수 있음). 저장된 값을 돌려준다.
+create or replace function public.choose_lunch(p_dept text, p_name text, p_lunch text) returns text
+language plpgsql security definer set search_path = public as $$
+declare v text;
+begin
+  -- 지나치게 긴 입력은 정리하거나 줄을 잠그기 전에 바로 거절(누구나 부를 수 있는 함수라, 큰 입력으로 다른 사람을 막지 못하게)
+  if char_length(p_dept) > 100 or char_length(p_name) > 100 then
+    raise exception '명단에 없는 부서·이름이에요.';
+  end if;
+  if p_lunch is null or p_lunch not in ('plain', 'spicy') then
+    raise exception '점심 메뉴를 다시 골라 주세요.';
+  end if;
+  if choices_closed() then
+    raise exception '점심·아침 메뉴와 자유시간은 11월 25일(수) 15시까지만 고르고 바꿀 수 있어요. 바꾸려면 진행자에게 말해 주세요.';
+  end if;
+  -- 값이 같으면 줄을 다시 쓰지 않는다(같은 걸 또 눌러도 되돌리기 기록이 쌓이지 않게)
+  update people set lunch = p_lunch
+  where dept = norm_dept(p_dept) and name = norm_name(p_name) and lunch is distinct from p_lunch;
+  select lunch into v from people
+  where dept = norm_dept(p_dept) and name = norm_name(p_name);
+  if not found then
+    raise exception '명단에 없는 부서·이름이에요.';
+  end if;
+  return v;
+end $$;
+
+-- 조식 메뉴 고르기. 한 사람이 하나만 고르되, 마감(choices_closed()) 전까지는 이미 골랐어도 바꿀 수 있다(새 값으로 덮어씀).
+-- 마감 뒤에는 처음 고르기도 바꾸기도 거절한다(진행자는 admin_assign 으로 고칠 수 있음). 저장된 값을 돌려준다.
 create or replace function public.choose_menu(p_dept text, p_name text, p_menu text) returns text
 language plpgsql security definer set search_path = public as $$
 declare v text;
@@ -161,8 +198,12 @@ begin
   if p_menu is null or p_menu not in ('ugeoji', 'miyeok', 'hwangtae') then
     raise exception '메뉴를 다시 골라 주세요.';
   end if;
+  if choices_closed() then
+    raise exception '점심·아침 메뉴와 자유시간은 11월 25일(수) 15시까지만 고르고 바꿀 수 있어요. 바꾸려면 진행자에게 말해 주세요.';
+  end if;
+  -- 값이 같으면 줄을 다시 쓰지 않는다(같은 걸 또 눌러도 되돌리기 기록이 쌓이지 않게)
   update people set menu = p_menu
-  where dept = norm_dept(p_dept) and name = norm_name(p_name) and menu is null;
+  where dept = norm_dept(p_dept) and name = norm_name(p_name) and menu is distinct from p_menu;
   select menu into v from people
   where dept = norm_dept(p_dept) and name = norm_name(p_name);
   if not found then
@@ -171,8 +212,8 @@ begin
   return v;
 end $$;
 
--- 자유시간(금요일 저녁 식사 뒤) 고르기: 'ski' = 스키, 'rest' = 휴식. 조식과 달리 이미 골랐어도 언제든 바꿀 수 있다(새 값으로 덮어씀).
--- 저장된 값을 돌려준다.
+-- 자유시간(금요일 저녁 식사 뒤) 고르기: 'ski' = 스키, 'rest' = 휴식. 조식처럼 마감(choices_closed()) 전까지는 이미 골랐어도 바꿀 수 있다(새 값으로 덮어씀).
+-- 마감 뒤에는 처음 고르기도 바꾸기도 거절한다. 저장된 값을 돌려준다.
 create or replace function public.choose_activity(p_dept text, p_name text, p_activity text) returns text
 language plpgsql security definer set search_path = public as $$
 declare v text;
@@ -183,6 +224,9 @@ begin
   end if;
   if p_activity is null or p_activity not in ('ski', 'rest') then
     raise exception '자유시간을 다시 골라 주세요.';
+  end if;
+  if choices_closed() then
+    raise exception '점심·아침 메뉴와 자유시간은 11월 25일(수) 15시까지만 고르고 바꿀 수 있어요. 바꾸려면 진행자에게 말해 주세요.';
   end if;
   -- 값이 같으면 줄을 다시 쓰지 않는다(같은 걸 또 눌러도 되돌리기 기록이 쌓이지 않게)
   update people set activity = p_activity
@@ -681,7 +725,7 @@ language sql stable security definer set search_path = public as $$
 $$;
 
 -- ── 진행자용 (관리자 비밀번호 필요) ───────────────────────
--- 전체 현황: [{id, dept, name, title, gender, is_exec, team, picked_at, menu, room, activity}, ...]
+-- 전체 현황: [{id, dept, name, title, gender, is_exec, team, picked_at, menu, room, activity, lunch}, ...]
 create or replace function public.board(p_code text) returns json
 language plpgsql security definer set search_path = public as $$
 begin
@@ -690,7 +734,7 @@ begin
     select coalesce(json_agg(json_build_object(
              'id', id, 'dept', dept, 'name', name, 'title', title, 'gender', gender,
              'is_exec', is_exec, 'team', team, 'picked_at', picked_at, 'menu', menu,
-             'room', room, 'activity', activity)
+             'room', room, 'activity', activity, 'lunch', lunch)
              order by picked_at nulls last, dept, name), '[]'::json)
     from people
   );
@@ -782,14 +826,14 @@ begin
   where team is not null or menu is not null;
 end $$;
 
--- 객실·자유시간을 사람마다 넣기: p_what = 'room' 또는 'activity', p_rows = [{"id": 3, "value": "m1"}, ...] ("" 이면 비움).
+-- 객실·자유시간·조식·점심을 사람마다 넣기: p_what = 'room' 또는 'activity' 또는 'menu'(ugeoji·miyeok·hwangtae) 또는 'lunch'(plain·spicy). 진행자는 참가자 마감(choices_closed()) 뒤에도 쓸 수 있다. p_rows = [{"id": 3, "value": "m1"}, ...] ("" 이면 비움).
 -- 목록에 없는 사람은 그대로 둔다. 바뀐 사람 수를 돌려준다.
 create or replace function public.admin_assign(p_code text, p_what text, p_rows jsonb) returns int
 language plpgsql security definer set search_path = public as $$
 declare n int;
 begin
   perform check_admin(p_code);
-  if p_what is null or p_what not in ('room', 'activity') then
+  if p_what is null or p_what not in ('room', 'activity', 'menu', 'lunch') then
     raise exception '바꿀 수 없는 항목이에요.';
   end if;
   if p_rows is null or jsonb_typeof(p_rows) <> 'array' then
@@ -800,11 +844,20 @@ begin
     where coalesce(r->>'id', '') !~ '^\d{1,18}$'
        or (coalesce(r->>'value', '') <> ''
            and not (r->>'value' = any (case when p_what = 'room'
-                      then array['m1', 'm2', 'm3', 'm4', 'm5', 'f1', 'f2'] else array['ski', 'rest'] end)))) then
+                      then array['m1', 'm2', 'm3', 'm4', 'm5', 'f1', 'f2']
+                      when p_what = 'menu' then array['ugeoji', 'miyeok', 'hwangtae']
+                      when p_what = 'lunch' then array['plain', 'spicy']
+                      else array['ski', 'rest'] end)))) then
     raise exception '보낸 내용이 올바르지 않아요. 새로고침한 뒤 다시 해 주세요.';
   end if;
   if p_what = 'room' then
     update people p set room = nullif(r->>'value', '')
+    from jsonb_array_elements(p_rows) r where p.id = (r->>'id')::bigint;
+  elsif p_what = 'menu' then
+    update people p set menu = nullif(r->>'value', '')
+    from jsonb_array_elements(p_rows) r where p.id = (r->>'id')::bigint;
+  elsif p_what = 'lunch' then
+    update people p set lunch = nullif(r->>'value', '')
     from jsonb_array_elements(p_rows) r where p.id = (r->>'id')::bigint;
   else
     update people p set activity = nullif(r->>'value', '')
@@ -814,7 +867,7 @@ begin
   return n;
 end $$;
 
--- 모든 사람의 객실('room') 또는 자유시간('activity')을 비운다.
+-- 모든 사람의 객실('room')·자유시간('activity')·점심('lunch')을 비운다.
 create or replace function public.admin_clear(p_code text, p_what text) returns void
 language plpgsql security definer set search_path = public as $$
 begin
@@ -823,6 +876,8 @@ begin
     update people set room = null where room is not null;
   elsif p_what = 'activity' then
     update people set activity = null where activity is not null;
+  elsif p_what = 'lunch' then
+    update people set lunch = null where lunch is not null;
   else
     raise exception '바꿀 수 없는 항목이에요.';
   end if;
@@ -856,17 +911,17 @@ begin
 end $$;
 
 -- ── 실행 권한 ────────────────────────────────────────────
-revoke all on function public.norm_dept(text), public.norm_name(text), public.check_admin(text)
+revoke all on function public.norm_dept(text), public.norm_name(text), public.check_admin(text), public.choices_closed()
   from public, anon, authenticated;
 
 revoke all on function
-  public.departments(), public.login(text, text), public.choose_menu(text, text, text), public.choose_activity(text, text, text), public.pick(text, text), public.pick_room(text, text), public.schedule(text, text), public.team_members(text, text), public.room_members(text, text),
+  public.departments(), public.login(text, text), public.choose_lunch(text, text, text), public.choose_menu(text, text, text), public.choose_activity(text, text, text), public.pick(text, text), public.pick_room(text, text), public.schedule(text, text), public.team_members(text, text), public.room_members(text, text),
   public.board(text), public.admin_add(text, jsonb), public.admin_update(text, bigint, jsonb),
   public.admin_remove(text, bigint), public.admin_reset(text, bigint), public.admin_reset_all(text),
   public.board_state(text), public.admin_assign(text, text, jsonb), public.admin_clear(text, text), public.admin_set(text, text, text)
   from public;
 grant execute on function
-  public.departments(), public.login(text, text), public.choose_menu(text, text, text), public.choose_activity(text, text, text), public.pick(text, text), public.pick_room(text, text), public.schedule(text, text), public.team_members(text, text), public.room_members(text, text),
+  public.departments(), public.login(text, text), public.choose_lunch(text, text, text), public.choose_menu(text, text, text), public.choose_activity(text, text, text), public.pick(text, text), public.pick_room(text, text), public.schedule(text, text), public.team_members(text, text), public.room_members(text, text),
   public.board(text), public.admin_add(text, jsonb), public.admin_update(text, bigint, jsonb),
   public.admin_remove(text, bigint), public.admin_reset(text, bigint), public.admin_reset_all(text),
   public.board_state(text), public.admin_assign(text, text, jsonb), public.admin_clear(text, text), public.admin_set(text, text, text)

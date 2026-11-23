@@ -30,6 +30,15 @@ const roomGender = (key) => (key[0] === 'm' ? '남' : '여');
 // 저녁 식사 뒤 자유시간에 할 것
 const ACTS = { ski: '스키', rest: '휴식' };
 const ACT_KEYS = Object.keys(ACTS);
+// 12월 18일(금) 점심(설렁탕). 앞의 영어 이름은 DB에 저장되는 값
+const LUNCHES = { plain: '일반 설렁탕', spicy: '얼큰 설렁탕' };
+const LUNCH_KEYS = Object.keys(LUNCHES);
+// 점심·아침 메뉴·자유시간 마감: 2026-11-25 15:00 한국 시간부터 참가자는 고르지도 바꾸지도 못한다(진행자는 계속 가능).
+// 서버(supabase.sql 의 choices_closed())가 실제로 막고, 이 값은 화면을 맞추는 용도라 바꿀 때는 둘을 함께 고쳐야 한다(라벨·짧은 라벨도).
+const CHOICE_DEADLINE = Date.parse('2026-11-25T15:00:00+09:00');
+const CHOICE_DEADLINE_LABEL = '11월 25일(수) 15시';
+const CHOICE_DEADLINE_SHORT = '11/25(수) 15시';
+const CHOICE_CLOSED_ERR = /까지만 고르고 바꿀 수 있어요/; // 서버가 마감이라고 거절할 때의 오류 문구
 
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
