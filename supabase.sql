@@ -885,3 +885,441 @@ exception when others then
   raise warning 'anon 의 제한 시간을 바꾸지 못했어요(Supabase 기본 3초 그대로): %', sqlerrm;
 end $$;
 notify pgrst, 'reload config';  -- Supabase API(PostgREST)가 바뀐 제한 시간을 바로 읽게 함
+
+-- ══ 탑승 차량 뽑기 ═══════════════════════════════════════
+-- 이 묶음은 위의 다른 기능과 따로 떨어져 있다(위 함수·권한 줄은 건드리지 않음). 여러 번 Run 해도 안전하다:
+-- 칸은 없을 때만 더하고, 차량 목록(config 'cars')은 처음 한 번만 넣으므로 진행자가 고친 목록과 뽑은 결과는 그대로 남는다.
+--   pick_car() / car_state()                                        ← 참가자용 (누구나)
+--   board_cars() / admin_set_car() / admin_clear_cars() / admin_set_cars()  ← 진행자용 (관리자 비밀번호 필요)
+-- 규칙: 성별·나이·직급·부서를 전혀 보지 않는 완전 무작위. 남은 빈자리 하나하나가 같은 확률이다
+--   (= 차량마다 남은 자리 수에 비례해서 고름). 한 번 뽑으면 끝.
+-- 정원: 차량마다 seats 를 적으면 그 숫자, 비워 두면 "자동(반씩)". 자동 차량의 정원은 뽑을 때마다 그때의 명단으로 다시 센다:
+--   N = 명단 인원 - (명단에 실제로 있는) 운전자 수, F = seats 를 적은 차량들의 seats 합, A = 자동 차량 수
+--   자동 차량 하나의 정원 = ceil(max(N - F, 0) / A)
+--   두 대 모두 자동이면 정원이 ceil(N/2) 씩이라, 모두 뽑으면 두 차량의 차이는 1명 이내이고(N 이 홀수면 남는 빈자리 하나가
+--   무작위 차량에 생김), 빈자리마다 같은 확률로 고르므로 누구나 뽑는 차례와 상관없이 각 차량에 1/2 확률이다.
+--   명단에서 사람이 지워져 정원보다 많이 탄 차량은 더 뽑히지 않을 뿐 오류를 내지 않는다.
+-- 운전자: 차량마다 driver(명단의 사람 id)를 고를 수 있다. 운전자는 정원에 들지 않고, 뽑지 않아도 그 차량에 탄다
+--   (people.car 는 비워 두고 config 로만 정한다. 그래서 탄 인원·정원 계산·차량 모두 비우기가 손님만 다룬다).
+--   운전자가 pick_car 를 부르면 뽑지 않고 운전하는 차량 id 를 돌려준다. 운전자가 명단에서 지워지면 그 차량은 운전자 없음으로 보인다.
+-- 여럿이 동시에 누를 때: pick_car 와 진행자의 차량 넣기·비우기·목록 저장은 한 명씩 차례로 처리한다
+--   (잠금 번호 261112, 3 — 팀 뽑기(1)·방 뽑기(2)와 달라 서로 기다리지 않음). 정원 계산도 차례 안에서 하므로 어느 차량도 정원을 넘지 않는다.
+-- 차량 변경도 위 people_log 트리거가 그대로 남긴다(op = 'UPDATE', 바뀌기 전 줄 전체). 차량 목록을 고치면 고치기 전 목록을 op = 'CARS' 로 남긴다.
+
+-- 사람마다 탄 차량(config 'cars' 의 id, 없으면 null)과 배정된 시각(같은 차량 안의 순서용). 운전자는 여기에 넣지 않는다.
+alter table public.people
+  add column if not exists car    text check (car ~ '^[a-z0-9_-]{1,20}$'),
+  add column if not exists car_at timestamptz;
+
+-- 차량 목록: [{"id": 영문 소문자·숫자·_·- 1~20자, "name": 보이는 이름 1~30자, "label": 함께 보이는 문구 0~30자(예: '○○님 차량'),
+--              "seats": 정원(운전자 뺀 손님 자리 수, 1~99, 없으면 자동), "driver": 운전자(명단의 사람 id, 없으면 운전자 미지정)}, ...] (이 순서대로 보임)
+-- 처음 한 번만 넣는다(on conflict do nothing). 다시 Run 해도 진행자가 관리자 페이지에서 고친 목록은 그대로 남는다.
+-- 처음 값은 차량 두 대, 정원 자동(반씩), 운전자·문구 없음. 운전자와 문구('○○님 차량')는 배포 뒤 관리자 페이지에서 고른다
+-- (저장소에 실제 이름을 남기지 않으려고 여기에는 적지 않음).
+insert into public.config (key, value) values
+  ('cars', '[{"id": "car1", "name": "1호차", "label": ""}, {"id": "car2", "name": "2호차", "label": ""}]')
+on conflict (key) do nothing;
+
+-- 차량 목록 검사. 맞으면 null, 틀리면 무엇이 틀렸는지 한국어 문구를 돌려준다(admin_set_cars 와 car_list 가 같이 씀).
+-- 운전자가 명단에 있는지는 여기서 보지 않는다(운전자가 명단에서 지워져도 뽑기는 그대로 되게). 저장할 때 admin_set_cars 가 본다.
+create or replace function public.car_check(j jsonb) returns text
+language plpgsql immutable set search_path = public as $$
+declare
+  e       jsonb;
+  ids     text[] := '{}';
+  names   text[] := '{}';
+  drvs    text[] := '{}';   -- 운전자 id (겹침 검사용)
+  dnames  text[] := '{}';   -- 그 운전자의 차량 이름
+  v_id    text;
+  v_name  text;
+  v_seats text;
+  v_drv   text;
+  k       int;
+begin
+  if j is null or jsonb_typeof(j) <> 'array' then
+    return '차량 목록은 [ … ] 모양의 목록이어야 해요.';
+  end if;
+  if jsonb_array_length(j) < 1 or jsonb_array_length(j) > 20 then
+    return '차량은 1대에서 20대까지 둘 수 있어요.';
+  end if;
+  for e in select x from jsonb_array_elements(j) x loop
+    if jsonb_typeof(e) <> 'object' then
+      return '차량 하나하나는 {"id", "name"} 모양이어야 해요.';
+    end if;
+    v_id := e->>'id';
+    if jsonb_typeof(e->'id') is distinct from 'string' or v_id !~ '^[a-z0-9_-]{1,20}$' then
+      return format('차량 id "%s" 가 올바르지 않아요. 영문 소문자·숫자·_·- 로 1~20자예요.', left(coalesce(v_id, ''), 30));
+    end if;
+    if v_id = any (ids) then
+      return format('차량 id "%s" 가 두 번 있어요.', v_id);
+    end if;
+    v_name := btrim(e->>'name');
+    if jsonb_typeof(e->'name') is distinct from 'string' or char_length(v_name) not between 1 and 30 then
+      return format('차량 "%s" 의 이름은 1~30자여야 해요.', v_id);
+    end if;
+    if v_name = any (names) then
+      return format('차량 이름 "%s" 가 두 번 있어요.', v_name);
+    end if;
+    -- 문구: 없거나 null 이면 빈 문구. 있으면 글자로 30자까지(앞뒤 공백은 빼고 셈)
+    if coalesce(jsonb_typeof(e->'label'), 'null') <> 'null'
+       and (jsonb_typeof(e->'label') <> 'string' or char_length(btrim(e->>'label')) > 30) then
+      return format('"%s" 의 문구는 30자까지 적을 수 있어요.', v_name);
+    end if;
+    -- 정원: 없거나 null 이면 자동. 있으면 1~99 정수(숫자로 바꾸기 전에 모양부터 봐서 글자·소수·아주 큰 수를 거름)
+    if coalesce(jsonb_typeof(e->'seats'), 'null') <> 'null' then
+      v_seats := e->>'seats';
+      if jsonb_typeof(e->'seats') <> 'number' or v_seats !~ '^[0-9]{1,2}$' or v_seats::int < 1 then
+        return format('"%s" 의 정원은 비워 두거나(자동) 1~99 사이의 정수여야 해요.', v_name);
+      end if;
+    end if;
+    -- 운전자: 없거나 null 이면 미지정. 있으면 명단의 사람 번호(양의 정수), 한 사람은 한 차량만
+    if coalesce(jsonb_typeof(e->'driver'), 'null') <> 'null' then
+      v_drv := e->>'driver';
+      if jsonb_typeof(e->'driver') <> 'number' or v_drv !~ '^[1-9][0-9]{0,17}$' then
+        return format('"%s" 의 운전자 값이 올바르지 않아요(명단의 사람 번호여야 해요).', v_name);
+      end if;
+      k := array_position(drvs, v_drv);
+      if k is not null then
+        return format('한 사람이 "%s"·"%s" 두 차량의 운전자예요. 한 차량에만 골라 주세요.', dnames[k], v_name);
+      end if;
+      drvs := drvs || v_drv;
+      dnames := dnames || v_name;
+    end if;
+    ids := ids || v_id;
+    names := names || v_name;
+  end loop;
+  return null;
+end $$;
+
+-- 예전 모양(운전자·문구 칸이 없던 것)의 car_list 가 있으면 한 번만 지운다(돌려주는 칸이 바뀌어 create or replace 로는 못 바꿈)
+do $$
+begin
+  if to_regprocedure('public.car_list()') is not null
+     and not exists (select 1 from pg_proc where oid = to_regprocedure('public.car_list()') and 'driver' = any (proargnames)) then
+    drop function public.car_list();
+  end if;
+end $$;
+
+-- 지금 차량 목록을 적힌 그대로 표로(config 순서). seats 가 null 이면 자동, driver 가 null 이면 운전자 미지정.
+-- 목록이 깨져 있으면(SQL Editor 에서 잘못 고친 경우) 알아볼 수 있는 오류를 낸다.
+create or replace function public.car_list()
+returns table (ord int, id text, name text, label text, seats int, driver bigint)
+language plpgsql stable set search_path = public as $$
+declare
+  v   text;
+  j   jsonb;
+  msg text;
+begin
+  select c.value into v from config c where c.key = 'cars';
+  if v is null then
+    raise exception '차량 목록이 아직 없어요(config 의 cars). 진행자에게 말해 주세요.';
+  end if;
+  begin
+    j := v::jsonb;
+  exception when others then
+    j := null;
+  end;
+  if j is null then
+    raise exception '차량 목록이 잘못 저장돼 있어요(config 의 cars 가 JSON 이 아니에요). 진행자에게 말해 주세요.';
+  end if;
+  msg := car_check(j);
+  if msg is not null then
+    raise exception '차량 목록이 잘못 저장돼 있어요(config 의 cars: %). 진행자에게 말해 주세요.', msg;
+  end if;
+  return query
+    select t.o::int, t.e->>'id', btrim(t.e->>'name'), coalesce(btrim(t.e->>'label'), ''),
+           (t.e->>'seats')::int, (t.e->>'driver')::bigint
+    from jsonb_array_elements(j) with ordinality as t(e, o)
+    order by t.o;
+end $$;
+
+-- 차량 목록 + 지금 정원(자동이면 그때의 명단으로 계산). driver_ok = 운전자가 명단에 실제로 있음.
+--   N = 명단 인원 - 명단에 있는 운전자 수, F = 적은 seats 합, A = 자동 차량 수 → 자동 정원 = ceil(max(N - F, 0) / A)
+create or replace function public.car_caps()
+returns table (ord int, id text, name text, label text, seats int, auto boolean, driver bigint, driver_ok boolean)
+language plpgsql stable set search_path = public as $$
+begin
+  return query
+    with l as materialized (select * from car_list()),
+    d as (select l.ord as o, (l.driver is not null and exists (select 1 from people p where p.id = l.driver)) as ok from l),
+    k as (select ((select count(*) from people) - (select count(*) from d where d.ok))::int as n,
+                 coalesce((select sum(l.seats) from l where l.seats is not null), 0)::int as f,
+                 (select count(*) from l where l.seats is null)::int as a)
+    select l.ord, l.id, l.name, l.label,
+           coalesce(l.seats, ceil(greatest(k.n - k.f, 0)::numeric / greatest(k.a, 1))::int),
+           l.seats is null, l.driver, d.ok
+    from l join d on d.o = l.ord cross join k
+    order by l.ord;
+end $$;
+
+-- ── 참가자용 ─────────────────────────────────────────────
+-- 차량 뽑기. 돌려주는 값은 차량 id.
+-- 운전자면 뽑지 않고 운전하는 차량을, 이미 차량이 있으면 그 차량을 그대로 돌려준다(새로 뽑지 않음).
+-- 빈자리가 남은 차량들 가운데 남은 자리 수에 비례해 무작위로 고른다(빈자리 하나하나가 같은 확률).
+-- 성별·나이·직급·부서는 보지 않는다.
+create or replace function public.pick_car(p_dept text, p_name text) returns text
+language plpgsql security definer set search_path = public as $$
+declare
+  me    people;
+  mid   bigint;        -- 내 id(차례가 온 뒤 다시 읽을 때)
+  ids   text[];        -- 차량 id (config 순서)
+  frees int[];         -- 차량별 남은 자리
+  total int := 0;      -- 남은 자리 합
+  r     int;
+  k     int;
+  v     text;
+begin
+  -- 지나치게 긴 입력은 바로 거절(누구나 부를 수 있는 함수라, 큰 입력으로 차례를 오래 쥐어 다른 사람을 막지 못하게)
+  if char_length(p_dept) > 100 or char_length(p_name) > 100 then
+    raise exception '명단에 없는 부서·이름이에요.';
+  end if;
+  -- 차례를 기다리기 전에 먼저 확인: 명단에 없거나, 운전자거나, 이미 차량이 있는 사람은 기다리지 않고 끝냄
+  select * into me from people
+  where dept = norm_dept(p_dept) and name = norm_name(p_name);
+  if not found then
+    raise exception '명단에 없는 부서·이름이에요.';
+  end if;
+  select c.id into v from car_list() c where c.driver = me.id;
+  if v is not null then
+    return v;
+  end if;
+  if me.car is not null then
+    return me.car;
+  end if;
+
+  -- 차례 기다리기(pick_car·진행자 차량 바꾸기끼리만). 앞사람이 커밋한 뒤에 차례가 오므로 아래에서 새로 읽으면 앞사람이 탄 자리가 보인다.
+  -- 기다리는 사이 바뀐 것(다른 기기에서 뽑음, 진행자가 넣음·지움·운전자 지정 등)도 다시 읽어 반영한다.
+  perform pg_advisory_xact_lock(261112, 3);
+  mid := me.id;
+  select * into me from people where id = mid;
+  if not found then
+    raise exception '명단에 없는 부서·이름이에요.';
+  end if;
+  select c.id into v from car_list() c where c.driver = mid;
+  if v is not null then
+    return v;
+  end if;
+  if me.car is not null then
+    return me.car;
+  end if;
+
+  -- 차량별 남은 자리 = 지금 정원 - 지금 탄 인원(0 아래로는 안 내려감. 사람이 지워져 정원보다 많이 탄 차량은 0)
+  select array_agg(c.id order by c.ord), array_agg(greatest(0, c.seats - coalesce(n.cnt, 0)) order by c.ord)
+  into ids, frees
+  from car_caps() c
+  left join (select p.car, count(*)::int as cnt from people p where p.car is not null group by p.car) n
+    on n.car = c.id;
+  for k in 1..coalesce(cardinality(ids), 0) loop
+    total := total + frees[k];
+  end loop;
+  if total = 0 then
+    raise exception '빈자리가 있는 차량이 없어요. 진행자에게 말해 주세요.';
+  end if;
+
+  -- 빈자리 0 ~ total-1 중 하나를 고르고, 그 자리가 속한 차량을 찾는다
+  r := floor(random() * total)::int;
+  v := null;
+  for k in 1..cardinality(ids) loop
+    r := r - frees[k];
+    if r < 0 then
+      v := ids[k];
+      exit;
+    end if;
+  end loop;
+
+  update people set car = v, car_at = clock_timestamp()
+  where id = mid and car is null;
+  if not found then
+    select * into me from people where id = mid;
+    if not found then
+      raise exception '명단에 없는 부서·이름이에요.';
+    end if;
+    if me.car is not null then
+      return me.car;
+    end if;
+    raise exception '잠시 뒤 다시 눌러 주세요.';  -- 줄은 있고 차량도 비었는데 못 넣은 경우(사실상 없음)
+  end if;
+  return v;
+end $$;
+
+-- 참가자 화면의 차량 현황. 명단에 없으면 null. 있으면
+-- {"cars": [{id, name, label, seats(지금 정원), auto(자동 정원인지), count(지금 탄 손님 수),
+--            driver: {dept, name, title} 또는 null(운전자 미지정·명단에 없음)}] (config 순서),
+--  "car": 내 차량 id(운전자면 운전하는 차량) 또는 null,
+--  "members": 내 차량에 탄 손님 [{dept, name, title}] (배정된 순서. 손님이면 나 포함, 운전자면 손님만이라 빈 목록일 수 있음) 또는 null(차량이 없을 때)}
+create or replace function public.car_state(p_dept text, p_name text) returns json
+language sql stable security definer set search_path = public as $$
+  select json_build_object(
+    'cars', (select coalesce(json_agg(json_build_object(
+                      'id', c.id, 'name', c.name, 'label', c.label, 'seats', c.seats, 'auto', c.auto,
+                      'count', (select count(*) from people p where p.car = c.id),
+                      'driver', (select json_build_object('dept', p.dept, 'name', p.name, 'title', p.title)
+                                 from people p where p.id = c.driver)) order by c.ord), '[]'::json)
+             from car_caps() c),
+    'car', x.car,
+    'members', case when x.car is null then null else
+                 coalesce((select json_agg(json_build_object('dept', p.dept, 'name', p.name, 'title', p.title) order by p.car_at, p.id)
+                           from people p where p.car = x.car), '[]'::json) end)
+  from people me
+  cross join lateral (select coalesce((select c.id from car_list() c where c.driver = me.id), me.car) as car) x
+  where me.dept = norm_dept(p_dept) and me.name = norm_name(p_name)
+$$;
+
+-- ── 진행자용 (관리자 비밀번호 필요) ───────────────────────
+-- 차량 현황: {"cars": [{id, name, label, seats(지금 정원), auto, driver(사람 id 또는 null — 명단에서 지워진 사람일 수도 있음)}] (config 순서),
+--            "people": [{id, dept, name, title, gender, car, car_at}] (명단 전원, 안 뽑은 사람·운전자 포함. 운전자의 car 는 null)}
+create or replace function public.board_cars(p_code text) returns json
+language plpgsql security definer set search_path = public as $$
+begin
+  perform check_admin(p_code);
+  return json_build_object(
+    'cars', (select coalesce(json_agg(json_build_object(
+                      'id', c.id, 'name', c.name, 'label', c.label, 'seats', c.seats, 'auto', c.auto, 'driver', c.driver)
+                      order by c.ord), '[]'::json)
+             from car_caps() c),
+    'people', (select coalesce(json_agg(json_build_object(
+                        'id', p.id, 'dept', p.dept, 'name', p.name, 'title', p.title, 'gender', p.gender,
+                        'car', p.car, 'car_at', p.car_at)
+                        order by p.car_at nulls last, p.dept, p.name), '[]'::json)
+               from people p));
+end $$;
+
+-- 한 사람의 차량을 직접 넣거나 옮긴다. p_car 가 null 이나 '' 이면 비운다(= 그 사람이 다시 뽑게 함).
+-- 정원(자동이면 지금 계산된 정원)을 넘게는 못 넣는다(pick_car 와 같은 차례를 써서 동시에 뽑는 사람과 엇갈리지 않음).
+-- 운전자는 손님으로 넣지 못한다(운전자는 차량 목록에서 바꿈).
+create or replace function public.admin_set_car(p_code text, p_id bigint, p_car text) returns void
+language plpgsql security definer set search_path = public as $$
+declare
+  v_car   text := nullif(p_car, '');
+  v_old   text;
+  v_seats int;
+  v_cnt   int;
+begin
+  perform check_admin(p_code);
+  perform pg_advisory_xact_lock(261112, 3);
+  select car into v_old from people where id = p_id;
+  if not found then
+    raise exception '명단에서 그 사람을 찾을 수 없어요. 새로고침해 주세요.';
+  end if;
+  if v_car is null then
+    update people set car = null, car_at = null where id = p_id and (car is not null or car_at is not null);
+    return;
+  end if;
+  if exists (select 1 from car_list() c where c.driver = p_id) then
+    raise exception '운전자는 차량 목록 고치기에서 바꿔요.';
+  end if;
+  select c.seats into v_seats from car_caps() c where c.id = v_car;
+  if not found then
+    raise exception '없는 차량이에요. 새로고침해 주세요.';
+  end if;
+  if v_old is not distinct from v_car then
+    return;  -- 이미 그 차량
+  end if;
+  select count(*) into v_cnt from people where car = v_car;
+  if v_cnt >= v_seats then
+    raise exception '그 차량은 자리가 다 찼어요(정원 %명).', v_seats;
+  end if;
+  update people set car = v_car, car_at = clock_timestamp() where id = p_id;
+end $$;
+
+-- 모든 사람의 차량을 비운다(처음부터 다시 뽑기). 운전자 지정(차량 목록)은 그대로 둔다.
+create or replace function public.admin_clear_cars(p_code text) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  perform check_admin(p_code);
+  perform pg_advisory_xact_lock(261112, 3);
+  update people set car = null, car_at = null where car is not null or car_at is not null;
+end $$;
+
+-- 차량 목록 저장: p_cars = [{"id": "car1", "name": "1호차", "label": "○○님 차량", "seats": 정원(없으면 자동), "driver": 사람 id(없으면 미지정)}, ...]
+-- 검사: 1~20대, id 는 영문 소문자·숫자·_·- 1~20자로 겹치지 않음, 이름 1~30자로 겹치지 않음, 문구 0~30자,
+--   정원은 없거나 1~99 정수, 운전자는 명단에 있는 사람으로 차량끼리 겹치지 않고 어느 차량의 손님도 아님.
+-- 탄 사람이 있는 차량을 빼거나, 정원을 적었는데 지금 탄 인원보다 작으면 거절한다(먼저 사람을 옮기거나 비움).
+-- 이름·문구 앞뒤 공백은 지우고 id·name·label·seats·driver 만 남겨 저장한다. 고치기 전 목록은 people_log 에 op = 'CARS' 로 남긴다.
+create or replace function public.admin_set_cars(p_code text, p_cars jsonb) returns void
+language plpgsql security definer set search_path = public as $$
+declare
+  msg     text;
+  v_old   text;
+  v_oldj  jsonb;
+  v_new   text;
+  r       record;
+  pp      people;
+begin
+  perform check_admin(p_code);
+  msg := car_check(p_cars);
+  if msg is not null then
+    raise exception '%', msg;
+  end if;
+  perform pg_advisory_xact_lock(261112, 3);
+  select value into v_old from config where key = 'cars';
+  -- 오류 문구에 쓸 예전 이름(예전 목록이 깨져 있어도 저장은 되게, 읽기 실패는 무시)
+  begin
+    v_oldj := v_old::jsonb;
+  exception when others then
+    v_oldj := null;
+  end;
+  if v_oldj is null or jsonb_typeof(v_oldj) <> 'array' then
+    v_oldj := '[]'::jsonb;
+  end if;
+  for r in
+    select p.car, count(*)::int as cnt, e.e as ne,
+           coalesce((select btrim(o->>'name') from jsonb_array_elements(v_oldj) o
+                     where jsonb_typeof(o) = 'object' and o->>'id' = p.car limit 1), p.car) as oname
+    from people p
+    left join lateral (select x as e from jsonb_array_elements(p_cars) x where x->>'id' = p.car) e on true
+    where p.car is not null
+    group by p.car, e.e
+    order by p.car
+  loop
+    if r.ne is null then
+      raise exception '"%" 에 탄 사람이 %명 있어 목록에서 뺄 수 없어요. 먼저 그 사람들의 차량을 비우거나 옮겨 주세요.', r.oname, r.cnt;
+    end if;
+    if jsonb_typeof(r.ne->'seats') = 'number' and (r.ne->>'seats')::int < r.cnt then
+      raise exception '"%" 의 정원(%명)이 지금 탄 인원(%명)보다 적어요. 먼저 사람을 옮기거나 비워 주세요.',
+        btrim(r.ne->>'name'), (r.ne->>'seats')::int, r.cnt;
+    end if;
+  end loop;
+  -- 운전자: 명단에 있어야 하고, 어느 차량의 손님으로도 타 있지 않아야 함(먼저 직접 옮기기에서 비움)
+  for r in
+    select btrim(t.e->>'name') as cname, (t.e->>'driver')::bigint as drv
+    from jsonb_array_elements(p_cars) with ordinality as t(e, o)
+    where jsonb_typeof(t.e->'driver') = 'number'
+    order by t.o
+  loop
+    select * into pp from people where id = r.drv;
+    if not found then
+      raise exception '"%" 의 운전자가 명단에 없어요(명단에서 지워진 사람이에요). 운전자를 다시 골라 주세요.', r.cname;
+    end if;
+    if pp.car is not null then
+      raise exception '% 님이 이미 %에 손님으로 타 있어요. 먼저 비워 주세요.', pp.name,
+        coalesce((select btrim(x->>'name') from jsonb_array_elements(p_cars) x where x->>'id' = pp.car limit 1), pp.car);
+    end if;
+  end loop;
+  select jsonb_agg(
+           jsonb_build_object('id', t.e->>'id', 'name', btrim(t.e->>'name'), 'label', coalesce(btrim(t.e->>'label'), ''))
+           || case when jsonb_typeof(t.e->'seats') = 'number' then jsonb_build_object('seats', (t.e->>'seats')::int) else '{}'::jsonb end
+           || case when jsonb_typeof(t.e->'driver') = 'number' then jsonb_build_object('driver', (t.e->>'driver')::bigint) else '{}'::jsonb end
+           order by t.o)::text
+  into v_new
+  from jsonb_array_elements(p_cars) with ordinality as t(e, o);
+  if v_old is distinct from v_new then
+    if v_old is not null then
+      insert into people_log (op, old) values ('CARS', jsonb_build_object('key', 'cars', 'value', v_old));
+    end if;
+    insert into config (key, value) values ('cars', v_new)
+    on conflict (key) do update set value = excluded.value;
+  end if;
+end $$;
+
+-- 차량 뽑기 실행 권한(이 묶음의 함수만). 안쪽 함수(car_check·car_list·car_caps)는 아무도 직접 못 부른다.
+revoke all on function public.car_check(jsonb), public.car_list(), public.car_caps() from public, anon, authenticated;
+revoke all on function
+  public.pick_car(text, text), public.car_state(text, text),
+  public.board_cars(text), public.admin_set_car(text, bigint, text), public.admin_clear_cars(text), public.admin_set_cars(text, jsonb)
+  from public;
+grant execute on function
+  public.pick_car(text, text), public.car_state(text, text),
+  public.board_cars(text), public.admin_set_car(text, bigint, text), public.admin_clear_cars(text), public.admin_set_cars(text, jsonb)
+  to anon, authenticated;
+notify pgrst, 'reload schema';  -- Supabase API(PostgREST)가 새 함수를 바로 알게 함
