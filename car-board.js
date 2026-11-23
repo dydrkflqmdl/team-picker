@@ -50,9 +50,9 @@
   let seq = 0;          // 늦게 온 예전 답을 버리기 위한 번호
   let loading = false;
   let editing = false;  // 차량 목록을 고치는 중 — 새로 받아도 입력칸은 건드리지 않음
-  let tick = 0;
+  let notified = '';    // 마지막으로 board.html 에 알린 차량 자료(차량 목록·사람별 차량). 바뀌었을 때만 'carboard' 를 보냄
   const ko = (a, b) => String(a).localeCompare(String(b), 'ko');
-  // 참가자 마감(common.js 의 CHOICE_DEADLINE — 점심·조식·자유시간과 같은 시각)이 지났는지. 지나면 비운 사람은 스스로 다시 뽑지 못함(서버 pick_car 가 거절)
+  // 참가자 마감(common.js 의 CHOICE_DEADLINE — 점심·아침 메뉴·자유시간과 같은 시각)이 지났는지. 지나면 비운 사람은 스스로 다시 뽑지 못함(서버 pick_car 가 거절)
   const closed = () => typeof CHOICE_DEADLINE === 'number' && Date.now() >= CHOICE_DEADLINE;
 
   const say = (text, bad) => { msgEl.textContent = text || ''; msgEl.classList.toggle('err', !!bad); };
@@ -87,8 +87,9 @@
     const move = $('#carMove').checked;
     const { list, lost, yet, drivers } = groups();
     const drawn = data.people.filter((p) => p.car).length;
-    // 제목 옆: 차량이 정해진 사람(뽑은 손님 + 운전자) / 명단 인원
-    $('#carCount').textContent = data.people.length ? `${drawn + drivers}/${data.people.length}명 정해짐` : '';
+    // 제목 줄(칸을 접어 두어도 보임): 차량이 정해진 사람(뽑은 손님 + 운전자) / 명단 인원, 탑승 인원이 어긋났으면 덧붙임
+    const bad = warn(list, yet);
+    $('#carCount').textContent = `${drawn + drivers}/${data.people.length}명 정해짐${bad ? ' · ⚠ 인원 어긋남' : ''}`;
     const drvLine = (c) => {
       const d = c.drv;
       if (!d) return '<p class="car-drv none">운전: 정하지 않음</p>';
@@ -106,8 +107,6 @@
       <ol>${lost.map((p, i) => `<li><span class="n">${i + 1}</span><span>${person(p)} <span class="warn">${esc(p.car)}</span></span>${move ? pick(p) : ''}</li>`).join('')}</ol></div>`;
     html += `<div class="menu-group none car-yet${move ? ' picking' : ''}"><p>아직 안 뽑은 사람 <b>${yet.length}</b>명</p>
       <div class="chips">${yet.map((p) => `<span class="chip">${person(p)}${move ? pick(p) : ''}</span>`).join('') || '<span class="empty">모두 뽑았어요</span>'}</div>${drivers ? `<p class="hint">운전자 ${drivers}명은 뽑지 않아도 차량이 정해져 있어 여기에 없어요.</p>` : ''}</div>`;
-    $('#carClear').hidden = !drawn;
-    warn(list, yet);
     if (html === sig) return;
     // 고르는 칸을 잡고 있는 동안(열린 목록 포함)은 다시 그리지 않고, 칸에서 나올 때 맞춤
     const at = document.activeElement;
@@ -117,10 +116,10 @@
   }
 
   // 탑승 인원 점검(팀 칸의 인원 경고와 같은 모양 .teamwarn): 정원보다 많이 탄 차량이 있거나,
-  // 모두 정해졌는데(안 뽑은 사람 0) 자동 정원 차량끼리 탄 인원 차이가 2명 이상이면 알림. 뽑는 중 정상 범위면 알리지 않음
+  // 모두 정해졌는데(안 뽑은 사람 0) 자동 정원 차량끼리 탄 인원 차이가 2명 이상이면 알림. 뽑는 중 정상 범위면 알리지 않음. 알렸으면 true
   function warn(list, yet) {
     const el = $('#carWarn');
-    if (!el) return;
+    if (!el) return false;
     const over = list.filter((c) => c.riders.length > c.seats);
     const autos = list.filter((c) => c.auto);
     const n = autos.map((c) => c.riders.length);
@@ -131,6 +130,7 @@
       : '';
     el.hidden = !html;
     if (el.innerHTML !== html) el.innerHTML = html;
+    return !!html;
   }
 
   // 받기에 성공하면 true(다른 이유로 건너뛰거나 실패하면 false)
@@ -144,6 +144,9 @@
       data = { cars: (d && d.cars) || [], people: (d && d.people) || [] };
       if (msgEl.dataset.load) { say(''); delete msgEl.dataset.load; }
       render();
+      // 한눈에 보기·분류 단추가 차량을 쓰므로, 차량 자료가 바뀌었을 때만 board.html 에 알림(같은 내용이면 그쪽 표를 다시 그리지 않음)
+      const now = JSON.stringify([data.cars, data.people.map((p) => [p.id, p.car || ''])]);
+      if (now !== notified) { notified = now; document.dispatchEvent(new Event('carboard')); }
       return true;
     } catch (e) {
       if (mine !== seq || e.message.includes('비밀번호')) return false; // 비밀번호는 기존 화면이 처리
@@ -176,18 +179,7 @@
   view.addEventListener('focusout', (e) => { if (e.target.matches('select.car-sel')) setTimeout(render); });
   $('#carMove').addEventListener('change', () => { sig = ''; render(); });
 
-  // 차량 모두 비우기
-  const clearBtn = $('#carClear');
-  clearBtn.addEventListener('click', async () => {
-    if (!data) return;
-    const n = data.people.filter((p) => p.car).length;
-    const msg = closed()
-      ? `⚠️ 마감이 지나 참가자가 다시 뽑을 수 없어요. 비우면 진행자가 전원을 직접 넣어야 해요.\n\n${n}명의 탑승 차량을 모두 비울까요? 먼저 '차량별 탑승자 복사'로 적어 두세요. 되돌릴 수 없어요.`
-      : `${n}명의 탑승 차량을 모두 비울까요? 참가자가 직접 뽑은 차량도 지워져서 모두 다시 뽑아야 해요. 먼저 '차량별 탑승자 복사'로 적어 두세요. 되돌릴 수 없어요.`;
-    if (!confirm(msg)) return;
-    clearBtn.disabled = true;
-    try { await act(() => rpc('admin_clear_cars', { p_code: code }), '차량을 모두 비웠어요.'); } finally { clearBtn.disabled = false; }
-  });
+  // 차량 모두 비우기는 board.html 맨 아래 초기화 칸의 '탑승 차량 초기화'(전체 초기화에도 들어 있음)가 admin_clear_cars 로 함 — 확인 문구의 인원은 아래 carBoard.riders()
 
   // 차량별 탑승자 복사
   let copyTimer;
@@ -303,10 +295,9 @@
     say('차량 목록을 저장했어요.');
   });
 
-  // 새로 받기: 기존 5초 새로고침에 맞춰 5초마다. 칸이 닫혀 있으면 15초마다(제목의 "N/M명 뽑음"만 맞춤)
+  // 새로 받기: 기존 5초 새로고침에 맞춰 5초마다. 칸을 접어 두어도 똑같이(접힌 제목 줄의 "N/M명 정해짐"과 맨 위 차량 타일이 늘 맞게)
   const auto = () => {
     if (document.hidden || $('#boardView').hidden || typeof code === 'undefined' || !code) return;
-    if (!card.open && tick++ % 3) return;
     load(false);
   };
   setInterval(auto, 5000);
@@ -318,12 +309,33 @@
   //   refresh()      지금 차량 정보를 받음(되돌릴 수 없는 일 전 백업 직전)
   //   carText(id)    백업 CSV 의 탑승 차량 칸: 손님이면 차량 이름, 운전자면 "1호차(운전)", 없으면 ''
   //   removeNote(id) 명단에서 지울 때 확인 문구에 덧붙일 말(운전자·손님이면)
+  //   riders()       초기화 확인 문구에 넣을 탑승 차량이 정해진 손님 수(운전자 제외). 새로 받아서 세고, 못 받으면 null
+  //   ready() · carKey(id) · carKeys() · carName(key) · isDriver(id)   한눈에 보기·분류 단추용(받아 둔 자료만 읽음, 새로 받지 않음).
+  //                  자료를 아직 못 받았으면 ready() 는 false, carKey 는 '', carKeys 는 []. 차량 자료가 바뀌면 document 에 'carboard' 이벤트
   const drivingCar = (id) => (data ? data.cars.find((c) => c.driver === id) : null);
   // 백업 직전 받기가 실패했으면 백업의 차량 칸은 비움(예전 값을 지금 것처럼 적지 않게)
   let backupFresh = true;
   window.carBoard = {
     // 지금 차량 정보를 받음(되돌릴 수 없는 일 전 백업 직전). 성공하면 true, 실패하면 false(그때 carText 는 빈칸)
     async refresh() { backupFresh = await load(true); return backupFresh; },
+    ready() { return !!data; },
+    // 그 사람의 차량 id: 운전자면 운전하는 차량, 손님이면 뽑은 차량(목록에 없는 차량이어도 그 값), 없으면 ''
+    carKey(id) {
+      if (!data) return '';
+      const d = drivingCar(id);
+      if (d) return d.id;
+      const p = data.people.find((x) => x.id === id);
+      return p && p.car ? p.car : '';
+    },
+    // 분류 단추에 보일 차량 id들: 차량 목록 순서 + 목록에 없는데 누가 든 차량
+    carKeys() {
+      if (!data) return [];
+      const ids = data.cars.map((c) => c.id);
+      return [...ids, ...new Set(data.people.map((p) => p.car).filter((c) => c && !ids.includes(c)))];
+    },
+    carName(key) { const c = data && data.cars.find((x) => x.id === key); return c ? c.name : key; },
+    isDriver(id) { return !!drivingCar(id); },
+    async riders() { return (await load(true)) && data ? data.people.filter((p) => p.car).length : null; },
     carText(id) {
       if (!data || !backupFresh) return '';
       const d = drivingCar(id);
