@@ -9,7 +9,7 @@
   <link rel="stylesheet" href="style.css?v=5" /><!-- style.css 를 고치면 v 숫자를 올린다 -->
   <script src="supabase.js?v=2.117.3" integrity="sha384-BWcjm9OdFth9TbhCxZPdm+gAOUMAzQy9nmTs12ioXdCcbVnJaPMn+fMUoQCLt60R"></script>
   <!-- common.js 를 고치면 v 숫자를 올린다(브라우저에 남아 있는 예전 common.js 를 새 화면이 쓰지 않게) -->
-  <script src="common.js?v=12"></script>
+  <script src="common.js?v=13"></script>
   <style>
     /* ── 공통 모양 ──
        글자 크기 단계: 칸 제목 16 · 칸 안 작은 제목 14 · 본문 15 · 안내 13 · 꼬리표 12
@@ -342,6 +342,7 @@
       <summary>탑승 차량 <small id="carCount"></small></summary>
       <p class="msg hint-line">참가자가 <b>차량 뽑기</b>로 직접 뽑아요(성별·직급과 상관없이 남은 자리마다 같은 확률). 운전자는 뽑지 않아요. 안 뽑은 사람은 <b>직접 옮기기</b>로 넣을 수 있고, 차량을 비우면 그 사람이 다시 뽑을 수 있어요(마감 전까지).</p>
       <p class="msg hint-line" id="carDeadline">참가자는 <span data-deadline></span>까지 뽑을 수 있어요. 그 뒤로는 여기서만 넣을 수 있어요(직접 옮기기 — 인원이 적은 차량에 넣어 주세요).</p>
+      <div class="teamwarn" id="carWarn" role="alert" hidden></div>
       <div class="cars" id="carView"></div>
       <div class="row tools2">
         <label class="check"><input type="checkbox" id="carMove" /> 직접 옮기기</label>
@@ -832,8 +833,10 @@
   function csvText(list, all = false) {
     // 칸마다 따옴표로 감싸고, 엑셀이 수식으로 읽는 글자(= + - @)로 시작하면 앞에 ' 를 붙여 글자로만 읽히게 함
     const cell = (v) => `"${String(v ?? '').replace(/^[=+\-@\t\r]/, "'$&").replace(/"/g, '""')}"`;
-    const lines = [['부서', '이름', '직급', '성별', '구분', '팀', '조식', ...(all ? ['객실', '자유시간', '점심'] : [])],
-      ...list.map((p) => [p.dept, p.name, p.title, p.gender, p.is_exec ? '임원' : '직원', TEAMS[p.team], MENUS[p.menu], ...(all ? [ROOMS[p.room], ACTS[p.activity], LUNCHES[lunchOf(p)]] : [])])];
+    // 탑승 차량 칸(백업에만): car-board.js 가 받아 둔 차량(운전자는 "1호차(운전)"). 받기 전이거나 car-board.js 가 없으면 빈칸
+    const carOf = (p) => (window.carBoard ? window.carBoard.carText(p.id) : '');
+    const lines = [['부서', '이름', '직급', '성별', '구분', '팀', '조식', ...(all ? ['객실', '자유시간', '점심', '탑승 차량'] : [])],
+      ...list.map((p) => [p.dept, p.name, p.title, p.gender, p.is_exec ? '임원' : '직원', TEAMS[p.team], MENUS[p.menu], ...(all ? [ROOMS[p.room], ACTS[p.activity], LUNCHES[lunchOf(p)], carOf(p)] : [])])];
     return String.fromCharCode(0xFEFF) + lines.map((r) => r.map(cell).join(',')).join('\r\n'); // 맨 앞의 U+FEFF(BOM): 엑셀이 한글을 깨뜨리지 않게
   }
   // 글을 파일로 내려받으려고 시도함. 인앱 브라우저·다운로드 차단에서는 받아지지 않아도 오류가 나지 않을 수 있으므로 호출한 쪽이 사람에게 확인을 받아야 함
@@ -855,8 +858,9 @@
   }));
   // 되돌릴 수 없는 단추를 누르기 전: 지금 명단 전체를 파일로 받고, 받아졌는지 사람이 확인해야 true 를 돌려줌(취소하면 false).
   // 파일 받기가 막힐 때를 위해 같은 내용을 복사하거나 직접 선택해 복사할 수 있게 상자에 보여 줌
-  function askBackup(what) {
-    if (!people.length) return Promise.resolve(true); // 받아 둘 것이 없음
+  async function askBackup(what) {
+    if (!people.length) return true; // 받아 둘 것이 없음
+    if (window.carBoard) await window.carBoard.refresh(); // 백업의 탑승 차량 칸을 지금 것으로(못 받아도 받아 둔 것으로)
     const t = new Date(), two2 = (n) => String(n).padStart(2, '0');
     const name = `워크숍_백업_${what}전_${t.getMonth() + 1}월${t.getDate()}일_${two2(t.getHours())}${two2(t.getMinutes())}.csv`;
     const box = $('#backupBox'), ta = $('#bkText'), msg = $('#bkMsg');
@@ -865,7 +869,7 @@
       snap = JSON.stringify(people);
       text = csvText(ordered(people), true);
       ta.value = text;
-      $('#bkWhat').innerHTML = `명단 <b>${people.length}명</b>(팀·점심·조식·객실·자유시간 포함)을 <b>${esc(name)}</b> 파일로 받으려고 했어요. 다운로드 폴더나 브라우저의 다운로드 목록에 이 이름의 파일이 있는지 확인해 주세요(같은 이름이 있으면 (1)이 붙어요).`;
+      $('#bkWhat').innerHTML = `명단 <b>${people.length}명</b>(팀·점심·조식·객실·자유시간·탑승 차량 포함)을 <b>${esc(name)}</b> 파일로 받으려고 했어요. 다운로드 폴더나 브라우저의 다운로드 목록에 이 이름의 파일이 있는지 확인해 주세요(같은 이름이 있으면 (1)이 붙어요).`;
       return saveFile(text, name);
     };
     const opener = document.activeElement;
@@ -1457,7 +1461,8 @@ Day 3 · 12/19(토) — 함께 만드는 내년
   async function removePerson(id) {
     const p = personFor(id);
     const team = p.team ? `\n이미 ${TEAMS[p.team]}팀으로 뽑혀 있어서, 지우면 그 팀 인원이 1명 줄어요.` : '';
-    if (!confirm(`${p.name} 님을 명단에서 지울까요?${team}`)) return;
+    const car = window.carBoard ? window.carBoard.removeNote(id) : ''; // 탑승 차량 운전자·손님이면 그 사실(car-board.js)
+    if (!confirm(`${p.name} 님을 명단에서 지울까요?${team}${car}`)) return;
     await rpc('admin_remove', { p_code: code, p_id: id });
     if (editing === id) editing = null; // 내가 지운 사람의 수정 줄은 알림 없이 닫음
     await reload();
@@ -1473,7 +1478,7 @@ Day 3 · 12/19(토) — 함께 만드는 내년
   $('#resetAll').addEventListener('click', hold($('#resetAll'), async () => {
     const teams = people.filter((p) => p.team).length, menus = people.filter((p) => p.menu).length;
     const kept = people.some((p) => p.room || p.activity || lunchOf(p)) ? '\n객실·점심·자유시간은 지워지지 않고 그대로 남아요.' : ''; // 준비해 둔 기능을 쓰고 있을 때만 덧붙임
-    if (!typedOk(`모든 사람의 팀과 조식 메뉴를 지우고 처음부터 다시 하게 할까요?\n지금 팀을 뽑은 ${teams}명, 조식을 고른 ${menus}명의 기록이 지워지고 되돌릴 수 없어요.${kept}`, '초기화')) return;
+    if (!typedOk(`모든 사람의 팀과 조식 메뉴를 지우고 처음부터 다시 하게 할까요?\n지금 팀을 뽑은 ${teams}명, 조식을 고른 ${menus}명의 기록이 지워지고 되돌릴 수 없어요.${kept}\n탑승 차량은 그대로 남아요.`, '초기화')) return;
     if (!(await askBackup('전체다시뽑기'))) return; // 백업을 받고, 받아졌는지 확인한 뒤에만 실행
     await rpc('admin_reset_all', { p_code: code }); // 팀 + 조식. (admin_reset 은 팀만 지움)
     seen = null;
@@ -1482,7 +1487,7 @@ Day 3 · 12/19(토) — 함께 만드는 내년
   // 모두 초기화: 팀·조식(admin_reset_all) + 방·자유시간·점심(admin_clear) — 명단과 일정표는 그대로. 네 번 나눠 부르므로 중간에 실패하면 다시 누르면 됨
   $('#resetEvery').addEventListener('click', hold($('#resetEvery'), async () => {
     const n = (k) => people.filter((p) => p[k]).length;
-    if (!typedOk(`모든 사람의 팀·점심·조식·방·자유시간을 전부 지우고 처음부터 다시 하게 할까요?\n지금 팀 ${n('team')}명, 점심 ${people.filter(lunchOf).length}명, 조식 ${n('menu')}명, 방 ${n('room')}명, 자유시간 ${n('activity')}명의 기록이 지워지고 되돌릴 수 없어요.\n명단과 일정표는 그대로 남아요.`, '초기화')) return;
+    if (!typedOk(`모든 사람의 팀·점심·조식·방·자유시간을 전부 지우고 처음부터 다시 하게 할까요?\n지금 팀 ${n('team')}명, 점심 ${people.filter(lunchOf).length}명, 조식 ${n('menu')}명, 방 ${n('room')}명, 자유시간 ${n('activity')}명의 기록이 지워지고 되돌릴 수 없어요.\n명단과 일정표, 탑승 차량은 그대로 남아요.`, '초기화')) return;
     if (!(await askBackup('모두초기화'))) return; // 백업을 받고, 받아졌는지 확인한 뒤에만 실행
     await rpc('admin_reset_all', { p_code: code });
     await rpc('admin_clear', { p_code: code, p_what: 'room' });
@@ -1723,6 +1728,6 @@ Day 3 · 12/19(토) — 함께 만드는 내년
     autoRefresh();
   });
 </script>
-<script src="car-board.js?v=3"></script>
+<script src="car-board.js?v=4"></script>
 </body>
 </html>

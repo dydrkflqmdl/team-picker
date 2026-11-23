@@ -38,7 +38,7 @@ const LUNCH_KEYS = Object.keys(LUNCHES);
 const CHOICE_DEADLINE = Date.parse('2026-11-25T15:00:00+09:00');
 const CHOICE_DEADLINE_LABEL = '11월 25일(수) 15시';
 const CHOICE_DEADLINE_SHORT = '11/25(수) 15시';
-const CHOICE_CLOSED_ERR = /까지만 고르고 바꿀 수 있어요/; // 서버가 마감이라고 거절할 때의 오류 문구
+const CHOICE_CLOSED_ERR = /까지만 고르고 바꿀 수 있어요|뽑기는 .+에 마감됐어요/; // 서버가 마감이라고 거절할 때의 오류 문구(점심·조식·자유시간 / 탑승 차량 뽑기)
 
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
