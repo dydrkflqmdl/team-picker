@@ -382,7 +382,7 @@ export async function drawTests(only = []) {
   });
 
   // 마우스로 '마지막 장면 보기'를 두 번 빠르게 누르면: 마지막 장면의 '② 방 배정 뽑기로 →' 단추가 같은 자리에 나온다(관찰)
-  await scenario(4.6, '마우스 더블클릭(마지막 장면 보기 단추 자리와 마지막 장면 단추 자리)', async (s) => {
+  await scenario(4.6, '마우스 연속 클릭(마지막 장면 보기 → 마지막 장면에 머묾, 첫 화면 카드 → 시작 화면에 머묾)', async (s) => {
     await resetRoster(db); resetCalls();
     const { page } = await newCtx({ code: true });
     await openLive(page); await chooseKind(page, 'team'); await startBtn(page);
@@ -402,6 +402,27 @@ export async function drawTests(only = []) {
       await sleep(900);
       const d = await st(page);
       out.push(`${gap}ms 간격 두 번 클릭 → view=${d.view} kind=${d.kind}`);
+      s.eq([d.view, d.kind], ['finale', 'team'], `[${gap}ms] 마지막 장면 보기를 두 번 눌러도 마지막 장면(팀)에 머묾`);
+      s.eq(calls('pick_room').length + calls('admin_clear').length + calls('admin_reset').length, 0, `[${gap}ms] 쓰기 요청 없음`);
+    }
+    // 보호 시간이 지나면 마지막 장면 단추가 정상 동작
+    await sleep(1700);
+    s.eq((await st(page)).guarded, false, '보호 시간 뒤 guarded=false');
+    await tid(page, 'draw-next-kind').click(); await waitView(page, 'intro');
+    s.eq((await st(page)).kind, 'room', '보호 시간 뒤에는 ② 방 배정 뽑기로 → 가 동작');
+    // 첫 화면 카드를 여러 번 클릭(좌표): 시작 화면에서 멈춰야 함(시작 화면의 주 단추가 같은 자리에 나와도 눌리면 안 됨)
+    await tid(page, 'draw-back').click().catch(() => {});
+    await page.goto(`${server.url}/draw.html`); await waitView(page, 'menu');
+    await sleep(900);
+    const cb = await tid(page, 'draw-menu-team').boundingBox();
+    const cx = cb.x + cb.width / 2; const cy = cb.y + cb.height / 2;
+    for (const gap of [40, 150, 300]) {
+      await page.goto(`${server.url}/draw.html`); await waitView(page, 'menu'); await sleep(900);
+      for (let i = 0; i < 4; i++) { await page.mouse.click(cx, cy); await sleep(gap); }
+      await sleep(900);
+      const d = await st(page);
+      out.push(`카드 4번 클릭(${gap}ms) → view=${d.view} kind=${d.kind}`);
+      s.eq([d.view, d.kind], ['intro', 'team'], `[카드 ${gap}ms] 첫 화면 카드를 여러 번 눌러도 시작 화면에 머묾`);
     }
     s.note(out.join(' / '));
   });
@@ -977,5 +998,5 @@ export async function drawTests(only = []) {
   } else if (!only.length || only.includes('9')) console.log('\n레이아웃 점검: 글자 잘림·넘침·무대 밖 요소 없음');
   if (shotFiles.length) console.log(`\n캡처 ${shotFiles.length}장: ${SHOTS}`);
   const failed = results.filter((r) => !r.ok);
-  return { ok: failed.length === 0, results, layoutFindings, shotFiles };
+  return { ok: failed.length === 0 && layoutFindings.length === 0, results, layoutFindings, shotFiles };
 }
