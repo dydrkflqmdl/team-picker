@@ -509,16 +509,20 @@ sql "select t.add_people(1)" >/dev/null
 eq "명단이 11명이 되면 6·6(다음 계산에 바로 반영)" "6,6" "$(anon "select string_agg(e->>'seats', ',') from json_array_elements($SA->'cars') e")"
 eq "그래서 이제 넣을 수 있음" "" "$(anon "select admin_set_car('$CODE', $(nth_id 0), 'car1')")"
 D1=$(nth_id 1)
-cars2 "\"driver\":$D1" '' >/dev/null
-eq "운전자 1명 지정 → 손님 10명 → 5·5 (1호차는 이미 6명: 정원보다 많아도 오류 없음)" "5,5/6" "$(anon "select string_agg(e->>'seats', ',') from json_array_elements($SA->'cars') e")/$(sql "select count(*) from people where car = 'car1'")"
+has "운전자 1명 지정 → 손님 10명 → 정원 5·5 인데 1호차는 이미 6명이라 저장 거절" '"1호차" 은(는) 정원 5명인데 6명이 타 있어요(1명 넘어요)' "$(cars2 "\"driver\":$D1" '')"
+eq "거절됐으니 정원 6·6 그대로" "6,6" "$(anon "select string_agg(e->>'seats', ',') from json_array_elements($SA->'cars') e")"
+# 정원보다 많이 탄 차량은 명단에서 사람을 지울 때 생길 수 있음(차량 목록 저장으로는 못 만듦)
+anon "select admin_remove('$CODE', $(sql "select id from people where car is null and id <> $D1 order by id desc limit 1"))" >/dev/null
+eq "명단에서 1명 지움 → 10명 → 5·5 (1호차는 이미 6명: 정원보다 많아도 오류 없음)" "5,5/6" "$(anon "select string_agg(e->>'seats', ',') from json_array_elements($SA->'cars') e")/$(sql "select count(*) from people where car = 'car1'")"
 eq "1호차는 더 뽑히지 않음(남은 손님은 모두 2호차)" "4" "$(pick_rest)"
-eq "결과 6·4(정원보다 많이 탄 1호차는 그대로)" "car1:6,car2:4,none:1" "$(sql "select t.counts()")"
-eq "정원 1~99: 99 저장됨" "" "$(cars2 '"seats":99' '')"
-eq "정원 적은 99 + 자동 → 자동 차량 정원 0(오류 없음)" "99:false,0:true" "$(anon "select string_agg((e->>'seats') || ':' || (e->>'auto'), ',') from json_array_elements($SA->'cars') e")"
+eq "결과 6·4(정원보다 많이 탄 1호차는 그대로)" "car1:6,car2:4,none:0" "$(sql "select t.counts()")"
+has "이때 2호차에 숫자 정원 99 → 1호차 자동 정원 0 이 되므로 거절" '"1호차" 은(는) 정원 0명인데 6명이 타 있어요(6명 넘어요)' "$(cars2 '' '"seats":99')"
 sql "select admin_clear_cars('$CODE')" >/dev/null
-eq "정원 0 인 자동 차량은 뽑히지 않음(11명 모두 1호차)" "car1:11,car2:0,none:0" "$(pick_rest >/dev/null; sql "select t.counts()")"
-has "정원 적은 차량만 '탄 인원보다 작게' 거절" '"1호차" 의 정원(5명)이 지금 탄 인원(11명)보다 적어요' "$(cars2 '"seats":5' '')"
-eq "자동으로 바꾸는 것은 탄 인원과 상관없이 저장됨" "" "$(cars2 '' '')"
+eq "정원 1~99: 99 저장됨(비운 뒤)" "" "$(cars2 '"seats":99' '')"
+eq "정원 적은 99 + 자동 → 자동 차량 정원 0(오류 없음)" "99:false,0:true" "$(anon "select string_agg((e->>'seats') || ':' || (e->>'auto'), ',') from json_array_elements($SA->'cars') e")"
+eq "정원 0 인 자동 차량은 뽑히지 않음(10명 모두 1호차)" "car1:10,car2:0,none:0" "$(pick_rest >/dev/null; sql "select t.counts()")"
+has "정원 적은 차량이 '탄 인원보다 작게' 거절(숫자 정원은 기존 문구)" '"1호차" 의 정원(5명)이 지금 탄 인원(10명)보다 적어요' "$(cars2 '"seats":5' '')"
+has "자동으로 바꿔도 정원(5)이 탄 인원(10)보다 작아지면 거절" '"1호차" 은(는) 정원 5명인데 10명이 타 있어요(5명 넘어요)' "$(cars2 '' '')"
 
 title "자동 정원: 운전자 2 + 손님 28(짝수), 전원 뽑기 300번"
 sql "select t.seed(30)" >/dev/null
@@ -649,10 +653,11 @@ has "anon: people.car 고치기 막힘" "permission denied for table people" "$(
 has "anon: 안쪽 함수 car_list 막힘" "permission denied for function car_list" "$(anon "select * from car_list()")"
 has "anon: 안쪽 함수 car_check 막힘" "permission denied for function car_check" "$(anon "select car_check('[]')")"
 has "anon: 안쪽 함수 car_caps 막힘" "permission denied for function car_caps" "$(anon "select * from car_caps()")"
+has "anon: 안쪽 함수 car_caps_of 막힘" "permission denied for function car_caps_of" "$(anon "select * from car_caps_of('[]')")"
 has "authenticated: people 읽기 막힘" "permission denied for table people" "$(authd "select * from people")"
 has "authenticated: car_list 막힘" "permission denied for function car_list" "$(authd "select * from car_list()")"
 eq "anon·authenticated 는 참가자 함수 2개 실행 가능" "t" "$(sql "select bool_and(has_function_privilege(r, f, 'execute')) from unnest(array['anon', 'authenticated']) r, unnest(array['public.pick_car(text, text)', 'public.car_state(text, text)']) f")"
-eq "PUBLIC(다른 역할)은 새 함수 6개 모두 실행 못 함" "f" "$(sql "select bool_or(has_function_privilege('nobody_test', f, 'execute')) from unnest(array['public.pick_car(text, text)', 'public.car_state(text, text)', 'public.board_cars(text)', 'public.admin_set_car(text, bigint, text)', 'public.admin_clear_cars(text)', 'public.admin_set_cars(text, jsonb)', 'public.car_list()', 'public.car_check(jsonb)', 'public.car_caps()']) f")"
+eq "PUBLIC(다른 역할)은 새 함수 6개 모두 실행 못 함" "f" "$(sql "select bool_or(has_function_privilege('nobody_test', f, 'execute')) from unnest(array['public.pick_car(text, text)', 'public.car_state(text, text)', 'public.board_cars(text)', 'public.admin_set_car(text, bigint, text)', 'public.admin_clear_cars(text)', 'public.admin_set_cars(text, jsonb)', 'public.car_list()', 'public.car_check(jsonb)', 'public.car_caps()', 'public.car_caps_of(jsonb)']) f")"
 for f in "board_cars(null)" "board_cars('')" "admin_set_car(null, 1, 'car1')" "admin_clear_cars(null)" "admin_set_cars(null, '[{\"id\":\"a\",\"name\":\"가\",\"seats\":4}]')"; do
   has "anon: $f → 비밀번호 틀림" "ERROR:  관리자 비밀번호가 틀렸어요." "$(anon "select $f")"
 done
@@ -702,6 +707,143 @@ anon "select admin_update('$CODE', $ID, '{\"dept\":\"시험1팀\",\"name\":\"김
 eq "admin_update()은 차량을 건드리지 않음" "$car" "$(sql "select car from people where id = $ID")"
 anon "select admin_remove('$CODE', $ID)" >/dev/null
 eq "admin_remove() 뒤 그 사람 자리가 빔" "0" "$(sql "select count(*) from people where car = '$car'")"
+
+# ── admin_set_cars: 새 목록으로 계산한 정원이 탄 인원보다 작아지면 거절 ──
+title "admin_set_cars: 자동 정원이 줄어 탄 인원보다 작아지는 저장은 거절(어느 차량이 몇 명 넘는지)"
+sql "select t.seed(12)" >/dev/null
+sql "select admin_set_cars('$CODE', '[{\"id\":\"car1\",\"name\":\"1호차\"},{\"id\":\"car2\",\"name\":\"2호차\"}]')" >/dev/null
+eq "명단 12명·운전자 없음 → 정원 6·6" "6,6" "$(sql "select string_agg(seats::text, ',' order by ord) from car_caps()")"
+# 운전자가 될 2명(id 가 가장 큰 둘)은 빼고, 1호차에 6명·2호차에 2명
+sql "select admin_set_car('$CODE', id, 'car1') from (select id from people order by id limit 6) x" >/dev/null
+sql "select admin_set_car('$CODE', id, 'car2') from (select id from people order by id offset 6 limit 2) x" >/dev/null
+D1=$(sql "select id from people order by id desc limit 1"); D2=$(sql "select id from people order by id desc offset 1 limit 1")
+BEFORE=$(sql "select value from config where key = 'cars'")
+WITH_DRV="[{\"id\":\"car1\",\"name\":\"1호차\",\"driver\":$D1},{\"id\":\"car2\",\"name\":\"2호차\",\"driver\":$D2}]"
+has "재현: 1호차 6명 뒤 운전자 2명 지정 → 정원 5·5 라 거절" \
+  'ERROR:  이대로 저장하면 정원보다 많이 탄 차량이 생겨요: "1호차" 은(는) 정원 5명인데 6명이 타 있어요(1명 넘어요). 먼저 직접 옮기기로 그 차량의 사람을 옮기거나 비워 주세요.' \
+  "$(anon "select admin_set_cars('$CODE', '$WITH_DRV')")"
+eq "거절된 뒤 목록 그대로" "$BEFORE" "$(sql "select value from config where key = 'cars'")"
+has "다른 차량에 숫자 정원(2호차 8) → 1호차 자동 정원 4 라 거절" '"1호차" 은(는) 정원 4명인데 6명이 타 있어요(2명 넘어요)' \
+  "$(anon "select admin_set_cars('$CODE', '[{\"id\":\"car1\",\"name\":\"1호차\"},{\"id\":\"car2\",\"name\":\"2호차\",\"seats\":8}]')")"
+has "자동 차량 더하기(3대 → 정원 4·4·4) → 거절" '"1호차" 은(는) 정원 4명인데 6명이 타 있어요(2명 넘어요)' \
+  "$(anon "select admin_set_cars('$CODE', '[{\"id\":\"car1\",\"name\":\"1호차\"},{\"id\":\"car2\",\"name\":\"2호차\"},{\"id\":\"car3\",\"name\":\"3호차\"}]')")"
+sql "select admin_set_car('$CODE', id, 'car2') from (select id from people order by id offset 8 limit 2) x" >/dev/null
+has "두 차량이 함께 넘으면 둘 다 알려 줌(운전자 2 + 3호차 숫자 정원 4 → 자동 3·3, 1호차 6·2호차 4)" \
+  '"1호차" 은(는) 정원 3명인데 6명이 타 있어요(3명 넘어요), "2호차" 은(는) 정원 3명인데 4명이 타 있어요(1명 넘어요)' \
+  "$(anon "select admin_set_cars('$CODE', '[{\"id\":\"car1\",\"name\":\"1호차\",\"driver\":$D1},{\"id\":\"car2\",\"name\":\"2호차\",\"driver\":$D2},{\"id\":\"car3\",\"name\":\"3호차\",\"seats\":4}]')")"
+eq "지금 1호차 6명·2호차 4명" "car1:6,car2:4,none:2" "$(sql "select t.counts()")"
+has "숫자 정원 둘(4·4) → 1호차 2명 넘음(숫자 정원은 기존 문구)" '"1호차" 의 정원(4명)이 지금 탄 인원(6명)보다 적어요.' \
+  "$(anon "select admin_set_cars('$CODE', '[{\"id\":\"car1\",\"name\":\"1호차\",\"seats\":4},{\"id\":\"car2\",\"name\":\"2호차\",\"seats\":4}]')")"
+sql "select admin_set_car('$CODE', id, 'car2') from (select id from people where car = 'car1' order by id desc limit 1) x" >/dev/null
+
+eq "1호차 5·2호차 5 로 맞춘 뒤" "car1:5,car2:5,none:2" "$(sql "select t.counts()")"
+anon "select admin_set_cars('$CODE', '$WITH_DRV')" >/dev/null
+eq "인원을 맞추면 운전자 지정 저장됨(정원 5·5)" "5,5/$D1" "$(sql "select string_agg(seats::text, ',' order by ord) from car_caps()")/$(sql "select value::jsonb->0->>'driver' from config where key = 'cars'")"
+# 이미 넘어 있던 차량(명단에서 사람을 지움): 정원이 더 줄지 않는 저장(문구 고치기)은 됨, 더 줄이는 저장은 거절
+sql "select admin_set_car('$CODE', id, null) from (select id from people where car = 'car2' order by id limit 2) x" >/dev/null
+sql "select admin_remove('$CODE', id) from (select id from people where car is null and id not in ($D1, $D2) order by id limit 2) x" >/dev/null
+eq "사람 2명을 지우면 정원 4·4, 1호차는 5명(이미 1명 넘음)" "4,4/car1:5,car2:3,none:2" "$(sql "select string_agg(seats::text, ',' order by ord) from car_caps()")/$(sql "select t.counts()")"
+anon "select admin_set_cars('$CODE', '[{\"id\":\"car1\",\"name\":\"1호차\",\"label\":\"가온님 차량\",\"driver\":$D1},{\"id\":\"car2\",\"name\":\"2호차\",\"driver\":$D2}]')" >/dev/null
+eq "이미 넘어 있어도 정원이 그대로인 저장(문구만)은 됨" "가온님 차량" "$(sql "select value::jsonb->0->>'label' from config where key = 'cars'")"
+has "이미 넘은 차량의 정원을 더 줄이는 저장(차량 더하기 → 3·3·3… ceil(8/3)=3)은 거절" '"1호차" 은(는) 정원 3명인데 5명이 타 있어요(2명 넘어요)' \
+  "$(anon "select admin_set_cars('$CODE', '[{\"id\":\"car1\",\"name\":\"1호차\",\"driver\":$D1},{\"id\":\"car2\",\"name\":\"2호차\",\"driver\":$D2},{\"id\":\"car3\",\"name\":\"3호차\"}]')")"
+eq "car_caps 와 car_caps_of(저장된 목록) 계산이 같음" "$(sql "select string_agg(id || ':' || seats, ',' order by ord) from car_caps()")" "$(sql "select string_agg(id || ':' || seats, ',' order by ord) from car_caps_of((select value::jsonb from config where key = 'cars'))")"
+
+# ── 마감(choices_closed) 전·후 ─────────────────────────────
+# 시험 안에서만 choices_closed() 의 '마감 시각'을 t.deadline 표의 값으로 바꿔 쓴다. 판단 방식(now() >= 마감 시각, now() = 요청이 시작된 시각)은
+# supabase.sql 과 같게 둔다. 끝나면 supabase.sql 의 원래 정의로 되돌린다(supabase.sql 의 마감 시각은 건드리지 않음).
+title "마감 전·후: 안 뽑은 사람 거절, 이미 뽑은 사람·운전자 그대로, 진행자는 계속"
+sql "create table if not exists t.deadline (d timestamptz); delete from t.deadline; insert into t.deadline values (now() + interval '1 day')" >/dev/null
+sql "create or replace function public.choices_closed() returns boolean language sql stable as \$\$ select now() >= (select d from t.deadline limit 1) \$\$" >/dev/null
+closed_on()  { sql "update t.deadline set d = now() - interval '1 hour'" >/dev/null; }   # 마감 지남
+closed_off() { sql "update t.deadline set d = now() + interval '1 day'" >/dev/null; }    # 마감 전
+# 오류의 SQLSTATE 와 문구를 "코드|문구" 로(참가자 anon 으로 부름)
+errof() { anon "do \$\$ begin perform $1; raise notice 'OK'; exception when others then raise notice '%|%', sqlstate, sqlerrm; end \$\$" | sed -n 's/^NOTICE:  //p'; }
+CLOSED_MSG='탑승 차량 뽑기는 11월 25일(수) 15시에 마감됐어요. 차량은 진행자에게 말해 주세요.'
+sql "select t.seed(12)" >/dev/null
+DRV=$(idof 김가람)
+sql "select admin_set_cars('$CODE', '[{\"id\":\"car1\",\"name\":\"1호차\",\"driver\":$DRV},{\"id\":\"car2\",\"name\":\"2호차\"}]')" >/dev/null
+# 마감 전
+eq "마감 전: choices_closed() = f" "f" "$(sql "select choices_closed()")"
+early=$(anon "select pick_car('시험2팀', '김나래')")
+eq "마감 전: 뽑기 됨" "ok" "$(oneof "$early" car1 car2)"
+# 마감 뒤
+closed_on
+eq "마감 뒤: choices_closed() = t" "t" "$(sql "select choices_closed()")"
+eq "마감 뒤: 안 뽑은 사람은 거절(기존 고르기와 같은 코드 P0001)" "P0001|$CLOSED_MSG" "$(errof "pick_car('시험3팀', '김도윤')")"
+LUNCH_ERR=$(errof "choose_lunch('시험3팀', '김도윤', 'plain')")
+eq "점심 마감 거절도 같은 코드(P0001)" "P0001" "${LUNCH_ERR%%|*}"
+# 화면이 마감 거절을 알아보는 common.js 의 CHOICE_CLOSED_ERR 로 두 문구를 직접 견줌
+CLOSED_RE=$(sed -n 's/^const CHOICE_CLOSED_ERR = \/\(.*\)\/;.*/\1/p' "$ROOT/common.js")
+eq "두 거절 문구 모두 common.js 의 CHOICE_CLOSED_ERR 에 맞음, 다른 오류는 안 맞음" "true,true,false" "$(node -e 'const re = new RegExp(process.argv[1]); console.log(process.argv.slice(2).map((m) => re.test(m)).join())' "$CLOSED_RE" "$CLOSED_MSG" "${LUNCH_ERR#*|}" '빈자리가 있는 차량이 없어요. 진행자에게 말해 주세요.')"
+eq "마감 뒤: 거절된 사람은 차량 없음" "" "$(sql "select coalesce(car, '') from people where name = '김도윤'")"
+eq "마감 뒤: 이미 뽑은 사람은 자기 차량 그대로" "$early" "$(anon "select pick_car('시험2팀', '김나래')")"
+eq "마감 뒤: 운전자는 운전하는 차량 그대로" "car1" "$(anon "select pick_car('시험1팀', '김가람')")"
+eq "마감 뒤: 차량 수는 그대로(1명)" "1" "$(sql "select count(*) from people where car is not null")"
+S_YET="car_state('시험3팀', '김도윤')"
+eq "마감 뒤: car_state 됨(안 뽑은 사람: car null, 차량 2대)" "null/2" "$(anon "select json_typeof($S_YET->'car') || '/' || json_array_length($S_YET->'cars')")"
+eq "마감 뒤: car_state 됨(뽑은 사람: 자기 차량·같은 차 사람)" "$early/김나래" "$(anon "select (car_state('시험2팀', '김나래')->>'car') || '/' || (select string_agg(e->>'name', ',') from json_array_elements(car_state('시험2팀', '김나래')->'members') e)")"
+eq "마감 뒤: car_state 됨(운전자)" "car1" "$(anon "select car_state('시험1팀', '김가람')->>'car'")"
+# 진행자는 마감과 상관없이
+YET=$(idof 김도윤)
+anon "select admin_set_car('$CODE', $YET, 'car2')" >/dev/null
+eq "마감 뒤: 진행자가 넣기 됨" "car2" "$(sql "select car from people where id = $YET")"
+eq "마감 뒤: 진행자가 넣은 사람은 pick_car·car_state 로 그 차량을 받음" "car2/car2" "$(anon "select pick_car('시험3팀', '김도윤')")/$(anon "select $S_YET->>'car'")"
+anon "select admin_set_car('$CODE', $YET, 'car1')" >/dev/null
+eq "마감 뒤: 진행자가 옮기기 됨" "car1" "$(sql "select car from people where id = $YET")"
+anon "select admin_set_car('$CODE', $YET, null)" >/dev/null
+eq "마감 뒤: 진행자가 한 사람 비우기 됨" "" "$(sql "select coalesce(car, '') from people where id = $YET")"
+eq "마감 뒤: 비운 사람은 다시 뽑지 못함(거절)" "P0001|$CLOSED_MSG" "$(errof "pick_car('시험3팀', '김도윤')")"
+anon "select admin_clear_cars('$CODE')" >/dev/null
+eq "마감 뒤: 진행자가 차량 모두 비우기 됨" "0" "$(sql "select count(*) from people where car is not null")"
+anon "select admin_set_cars('$CODE', '[{\"id\":\"car1\",\"name\":\"1호차\",\"label\":\"가온님 차량\",\"driver\":$DRV},{\"id\":\"car2\",\"name\":\"2호차\"}]')" >/dev/null
+eq "마감 뒤: 진행자가 차량 목록 저장 됨" "가온님 차량" "$(sql "select value::jsonb->0->>'label' from config where key = 'cars'")"
+eq "마감 뒤: 비운 뒤에도 운전자는 자기 차량" "car1" "$(anon "select pick_car('시험1팀', '김가람')")"
+closed_off
+eq "마감을 되돌리면(시험용) 다시 뽑기 됨" "ok" "$(oneof "$(anon "select pick_car('시험3팀', '김도윤')")" car1 car2)"
+
+title "마감 직전에 눌러 차례를 기다린 10명: 기다리는 사이 마감이 지나도 받아들여짐(누른 시각 기준, choose_lunch 등과 같음)"
+sql "select t.seed(14)" >/dev/null
+DRV=$(idof 김가람)
+sql "select admin_set_cars('$CODE', '[{\"id\":\"car1\",\"name\":\"1호차\",\"driver\":$DRV},{\"id\":\"car2\",\"name\":\"2호차\"}]')" >/dev/null
+closed_off
+EARLY2=$(anon "select pick_car('시험2팀', '김나래')")
+# 시험용 마감 시각을 지금부터 4초 뒤로
+sql "update t.deadline set d = clock_timestamp() + interval '4 seconds'" >/dev/null
+rm -f "$OUT"/dl-*
+# 차례 잠금(261112, 3)을 먼저 쥔 세션: 10명이 그 잠금을 기다리면(이들의 요청은 마감 전에 시작됨) 마감 시각이 지날 때까지 더 쥐고 있다가 푼다
+$PSQL -At -c "select pg_advisory_lock(261112, 3)" \
+  -c "do \$\$ declare s timestamptz := clock_timestamp(); dl timestamptz := (select d from t.deadline); begin
+        loop
+          exit when (select count(*) from pg_locks where locktype = 'advisory' and classid = 261112 and objid = 3 and not granted) >= 10;
+          if clock_timestamp() - s > interval '30 seconds' then raise exception '차례에 다 모이지 않음'; end if;
+          perform pg_sleep(0.01);
+        end loop;
+        if clock_timestamp() >= dl then raise exception '마감 전에 10명이 다 모이지 못함(시험 무효)'; end if;
+        perform pg_sleep(greatest(0, extract(epoch from dl - clock_timestamp())) + 0.3);
+        raise notice '푸는 시각이 마감 뒤: %', clock_timestamp() > dl;
+      end \$\$" \
+  -c "select pg_advisory_unlock(261112, 3)" >"$OUT/dl-hold.log" 2>&1 &
+i=0
+while [ "$(sql "select count(*) from pg_locks where locktype = 'advisory' and classid = 261112 and objid = 3 and granted")" != "1" ]; do
+  i=$((i + 1)); [ $i -gt 500 ] && { ng "차례 잠금을 쥐지 못함" "$(cat "$OUT/dl-hold.log")"; break; }
+done
+sql "select id || ' ' || dept || ' ' || name from people where car is null and id <> $DRV order by id limit 10" >"$OUT/list.txt"
+while read -r id d n; do worker_pick "dl-$id" "$d" "$n" & done <"$OUT/list.txt"
+worker_pick "dl-drv" "$(sql "select dept from people where id = $DRV")" "김가람" &
+worker_pick "dl-early" "시험2팀" "김나래" &
+wait
+eq "잠금을 쥔 세션 오류 없음" "" "$(grep -i error "$OUT/dl-hold.log")"
+has "잠금을 푼 것은 마감 시각 뒤" "푸는 시각이 마감 뒤: t" "$(cat "$OUT/dl-hold.log")"
+eq "마감 전에 눌러 기다린 10명은 마감 뒤에 차례가 와도 모두 배정, 마감 거절 0" "10/0" "$(cat "$OUT"/dl-[0-9]*.out | grep -c '^R ')/$(cat "$OUT"/dl-[0-9]*.err | grep -c '에 마감됐어요')"
+eq "운전자·이미 뽑은 사람은 기다리지 않고 자기 차량" "R car1/R $EARLY2" "$(grep '^R ' "$OUT/dl-drv.out")/$(grep '^R ' "$OUT/dl-early.out")"
+eq "DB: 11명 배정(이미 뽑은 1 + 기다린 10)" "11" "$(sql "select count(*) from people where car is not null")"
+eq "지금(마감 뒤) 새로 누른 사람은 거절" "P0001|$CLOSED_MSG" "$(errof "pick_car('$(sql "select dept from people where car is null and id <> $DRV order by id limit 1")', '$(sql "select name from people where car is null and id <> $DRV order by id limit 1")')")"
+
+# 시험용 choices_closed() 를 supabase.sql 의 원래 정의로 되돌림
+awk '/^create or replace function public.choices_closed\(\)/,/^\$\$;/' "$SQL_FILE" >"$OUT/choices_closed.sql"
+run_file "$OUT/choices_closed.sql" "$OUT/choices_closed.log" && ok "choices_closed() 를 supabase.sql 의 정의로 되돌림" || ng "choices_closed() 되돌리기" "$(cat "$OUT/choices_closed.log")"
+has "되돌린 choices_closed() 의 시각은 supabase.sql 그대로" "2026-11-25 15:00:00+09" "$(sql "select prosrc from pg_proc where proname = 'choices_closed'")"
 
 # ── 결과 ──────────────────────────────────────────────────
 echo
