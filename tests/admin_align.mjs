@@ -195,6 +195,15 @@ export async function adminAlignTests() {
       ok(r29.slice(6).every((x) => x === ''), `[엑셀] 아무것도 안 고른 사람은 빈칸: ${r29.slice(6).join(' / ')}`);
       ok(!rows[0].includes('조식'), '[엑셀] 머리글에 "조식"이 없음');
       eq(await page.locator('#exportMsg').innerText(), '', '[엑셀] 차량 자료가 있으면 안내 없음');
+      // 차량 자료가 이미 있으면 통신을 기다리지 않고 바로 파일을 만듦(차량 자료 요청을 4초 늦춰도 그 안에 받아짐)
+      await page.route('**/rest/v1/rpc/board_cars', async (route) => { await new Promise((r) => setTimeout(r, 4000)); await route.continue().catch(() => {}); });
+      const t0 = Date.now();
+      const dl2 = page.waitForEvent('download', { timeout: 3000 });
+      await page.locator('#exportBtn').click();
+      const d2 = await dl2;
+      ok(Date.now() - t0 < 3000 && /^워크숍_명단_3명\.csv$/.test(d2.suggestedFilename()), `[엑셀·바로] 차량 요청이 늦어도 기다리지 않고 바로 받아짐(${Date.now() - t0}ms): ${d2.suggestedFilename()}`);
+      eq(await page.locator('#exportMsg').innerText(), '', '[엑셀·바로] 안내 없음');
+      await page.unroute('**/rest/v1/rpc/board_cars');
       // 명단 전체 삭제 전의 백업 파일도 같은 열(삭제는 하지 않고 상자만 보고 취소)
       await page.locator('#clearView').click();
       await page.locator('#removeAll').click();

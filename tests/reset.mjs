@@ -135,7 +135,7 @@ export async function resetTests() {
       ok(/전체 초기화를 마쳤어요\(팀·방·아침 메뉴·점심·자유시간·탑승 차량 비움\)/.test(await page.locator('#resetMsg').innerText()), '[전체·확인] 끝 문구');
       // 화면도 비워짐
       await page.waitForFunction(() => /방 0\/29/.test(document.querySelector('#glanceSum').innerText.replace(/\s+/g, ' ')), null, { timeout: 10000 });
-      ok(/0\/29명 정해짐|1\/29명 정해짐/.test(await page.locator('#carCount').innerText()), `[전체·확인] 탑승 차량 칸 제목도 비워짐(운전자 1명만): ${await page.locator('#carCount').innerText()}`);
+      ok(/^1\/29명 정해짐/.test(await page.locator('#carCount').innerText()), `[전체·확인] 탑승 차량 칸 제목도 비워짐(손님은 0명, 운전자 1명만 정해진 것으로 셈): ${await page.locator('#carCount').innerText()}`);
       await page.close();
     }
 
@@ -151,6 +151,9 @@ export async function resetTests() {
       eq(fnCalls(c0).length, 0, `[${LABEL[k]}·취소] 쓰기 요청 없음`);
       const n = filled(snap, ITEM_COLS[k]);
       ok(seen.length === 1 && seen[0].type === 'confirm' && seen[0].msg.startsWith(`${LABEL[k]} 초기화: ${LABEL[k]} ${n}명의 기록을 지울까요?`), `[${LABEL[k]}] 확인 한 번, 첫 줄: ${seen[0] && seen[0].msg.split('\n')[0]}`);
+      ok(k === 'car'
+        ? seen[0].msg.includes('다른 항목과 명단·일정표·차량 목록(운전자 지정 포함)은 그대로 남아요.')
+        : seen[0].msg.includes('다른 항목과 명단·일정표는 그대로 남아요.') && !seen[0].msg.includes('일정표은'), `[${LABEL[k]}] 남는 것 안내의 조사가 맞음`);
       // 확인
       seen = await press(page, d, BTN[k], true);
       eq(seen.length, 1, `[${LABEL[k]}·확인] 확인 상자 한 번만`);

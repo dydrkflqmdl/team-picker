@@ -1612,7 +1612,7 @@ Day 3 · 12/19(토) — 함께 만드는 내년
     const carN = keys.includes('car') && window.carBoard && window.carBoard.riders ? await window.carBoard.riders() : null;
     const count = (k) => (k === 'car' ? (carN == null ? `${RESET_ITEMS[k].label}(인원 확인 못 함)` : `${RESET_ITEMS[k].label} ${carN}명`) : `${RESET_ITEMS[k].label} ${RESET_ITEMS[k].n()}명`);
     const kept = keys.length > 1 ? '명단·일정표·차량 목록(운전자 지정 포함)은 그대로 남아요.'
-      : `다른 항목과 명단·일정표${keys.includes('car') ? '·차량 목록(운전자 지정 포함)' : ''}는 그대로 남아요.`;
+      : (keys.includes('car') ? '다른 항목과 명단·일정표·차량 목록(운전자 지정 포함)은 그대로 남아요.' : '다른 항목과 명단·일정표는 그대로 남아요.');
     if (!confirm(`${title}: ${RESET_ORDER.filter((k) => keys.includes(k)).map(count).join(' · ')}의 기록을 지울까요?\n${resetNote(keys).join('\n')}\n${kept} 되돌릴 수 없어요.`)) return;
     const btns = [...document.querySelectorAll('#resetCard button')];
     btns.forEach((b) => { b.disabled = true; });
