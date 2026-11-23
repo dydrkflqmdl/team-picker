@@ -14,8 +14,9 @@
 -- 18일 점심(일반·얼큰 설렁탕, choose_lunch)·18일 아침 메뉴(choose_menu)·금요일 저녁 뒤 자유시간(스키·휴식, choose_activity)은 참가자가 직접 고르고, 마감(choices_closed() — 11월 25일 15시, 한국 시간) 전까지 몇 번이든 바꿀 수 있다.
 --   마감 뒤에는 참가자가 처음 고르는 것도 바꾸는 것도 서버가 막는다. 진행자는 마감 뒤에도 계속 고칠 수 있다(admin_assign).
 --   board_state() / admin_assign() / admin_clear() / admin_set()  ← 진행자용 (관리자 비밀번호 필요)
+--   admin_shuffle()  ← 진행자용: 팀·방·탑승 차량 자동 섞기(안 뽑은 사람만 / 전부 새로). 규칙은 참가자 뽑기 함수 그대로(맨 아래 '자동 섞기')
 -- 여럿이 동시에 뽑을 때: pick() 끼리, pick_room() 끼리만 한 명씩 차례로 처리한다(둘은 서로 다른 차례라 서로 기다리지 않음).
---   메뉴 고르기·진행자 저장·읽기는 뽑기를 기다리지 않는다.
+--   메뉴 고르기·진행자 저장은 뽑기의 차례 잠금을 기다리지 않지만, 진행자의 자동 섞기(admin_shuffle)가 도는 0.1~0.3초 동안은 명단 쓰기(메뉴 고르기·진행자 저장 포함)가 잠깐 기다린다. 읽기(board_state 등)는 기다리지 않는다.
 -- 참가자 요청의 제한 시간: 맨 아래에서 anon 을 8초로 늘린다(Supabase 기본 3초).
 -- 되돌리기용 기록(people_log): 명단 줄이 바뀌거나 지워질 때, 일정표를 고칠 때 예전 값을 남긴다.
 
@@ -478,7 +479,7 @@ end $$;
 -- 뽑는 도중의 방 인원은 맞추지 않는다(예: 첫 두 사람이 같은 방일 수 있다). 마지막 인원은 계획이 맞춘다.
 -- (가짜 29명 명단(남 20·여 9, 부서 6개)으로 한 명씩 무작위 순서로 다 뽑기를 여러 번 시험: 성별이 섞이거나 방 인원 차이가
 --  1명을 넘은 적이 없고, 같은 방에 같은 부서가 모이는 정도·사람마다 방이 나온 횟수가 완전 무작위와 같았다. README '규칙' 참고.)
--- ⚠️ 명단에 있는데 안 누르는 사람이 있으면 그 자리만큼 방 인원이 어긋날 수 있다 → 진행자가 '방 없는 사람만 넣기'로 채운다.
+-- ⚠️ 명단에 있는데 안 누르는 사람이 있으면 그 자리만큼 방 인원이 어긋날 수 있다 → 진행자가 '방 자동 섞기 · 안 뽑은 사람만'으로 채운다.
 -- 성별이 빈 사람은 뽑을 수 없고(진행자가 성별을 넣거나 직접 방을 넣음) 계획에서도 뺀다.
 -- 진행자가 다른 성별의 방에 직접 넣은 사람도 계획에서 뺀다(그 사람은 그 방에 그대로 둠).
 -- 여럿이 동시에 누르면 pick_room 끼리만 한 명씩 차례로 처리한다(잠금 번호 261112, 2 — 팀 뽑기의 261112, 1 과 달라 서로 기다리지 않음).
@@ -806,7 +807,8 @@ begin
   return n;
 end $$;
 
--- 모든 사람의 객실('room')·자유시간('activity')·점심('lunch')을 비운다.
+-- 모든 사람의 객실('room')·자유시간('activity')·점심('lunch')·아침 메뉴('menu')를 비운다.
+-- 'menu' 는 아침 메뉴만 비운다(팀은 그대로 — 팀까지 지우는 admin_reset_all 과 다름). 한 문장이라 읽고 나서 비우는 사이에 고른 사람이 남는 일이 없다.
 create or replace function public.admin_clear(p_code text, p_what text) returns void
 language plpgsql security definer set search_path = public as $$
 begin
@@ -817,6 +819,8 @@ begin
     update people set activity = null where activity is not null;
   elsif p_what = 'lunch' then
     update people set lunch = null where lunch is not null;
+  elsif p_what = 'menu' then
+    update people set menu = null where menu is not null;
   else
     raise exception '바꿀 수 없는 항목이에요.';
   end if;
@@ -1063,6 +1067,42 @@ begin
     order by c.ord;
 end $$;
 
+-- 차량 고르기(한곳): 빈자리가 남은 차량들 가운데 남은 자리 수에 비례해 무작위로 하나를 고른다(빈자리 하나하나가 같은 확률).
+-- 빈자리가 하나도 없으면 null. 고르기만 하고 저장하지 않는다. 차례(잠금 261112, 3)를 쥔 쪽만 부른다:
+--   참가자 뽑기 pick_car 와 진행자의 자동 섞기 admin_shuffle('car') 가 이것 하나를 같이 써서 규칙이 어긋나지 않는다.
+create or replace function public.car_draw() returns text
+language plpgsql volatile set search_path = public as $$
+declare
+  ids   text[];        -- 차량 id (config 순서)
+  frees int[];         -- 차량별 남은 자리
+  total int := 0;      -- 남은 자리 합
+  r     int;
+  k     int;
+begin
+  -- 차량별 남은 자리 = 지금 정원 - 지금 탄 인원(0 아래로는 안 내려감. 사람이 지워져 정원보다 많이 탄 차량은 0)
+  select array_agg(c.id order by c.ord), array_agg(greatest(0, c.seats - coalesce(n.cnt, 0)) order by c.ord)
+  into ids, frees
+  from car_caps() c
+  left join (select p.car, count(*)::int as cnt from people p where p.car is not null group by p.car) n
+    on n.car = c.id;
+  for k in 1..coalesce(cardinality(ids), 0) loop
+    total := total + frees[k];
+  end loop;
+  if total = 0 then
+    return null;
+  end if;
+
+  -- 빈자리 0 ~ total-1 중 하나를 고르고, 그 자리가 속한 차량을 찾는다
+  r := floor(random() * total)::int;
+  for k in 1..cardinality(ids) loop
+    r := r - frees[k];
+    if r < 0 then
+      return ids[k];
+    end if;
+  end loop;
+  return null;  -- 오지 않음(r < total)
+end $$;
+
 -- ── 참가자용 ─────────────────────────────────────────────
 -- 차량 뽑기. 돌려주는 값은 차량 id.
 -- 운전자면 뽑지 않고 운전하는 차량을, 이미 차량이 있으면 그 차량을 그대로 돌려준다(새로 뽑지 않음).
@@ -1078,11 +1118,6 @@ language plpgsql security definer set search_path = public as $$
 declare
   me    people;
   mid   bigint;        -- 내 id(차례가 온 뒤 다시 읽을 때)
-  ids   text[];        -- 차량 id (config 순서)
-  frees int[];         -- 차량별 남은 자리
-  total int := 0;      -- 남은 자리 합
-  r     int;
-  k     int;
   v     text;
 begin
   -- 지나치게 긴 입력은 바로 거절(누구나 부를 수 있는 함수라, 큰 입력으로 차례를 오래 쥐어 다른 사람을 막지 못하게)
@@ -1125,29 +1160,11 @@ begin
     return me.car;
   end if;
 
-  -- 차량별 남은 자리 = 지금 정원 - 지금 탄 인원(0 아래로는 안 내려감. 사람이 지워져 정원보다 많이 탄 차량은 0)
-  select array_agg(c.id order by c.ord), array_agg(greatest(0, c.seats - coalesce(n.cnt, 0)) order by c.ord)
-  into ids, frees
-  from car_caps() c
-  left join (select p.car, count(*)::int as cnt from people p where p.car is not null group by p.car) n
-    on n.car = c.id;
-  for k in 1..coalesce(cardinality(ids), 0) loop
-    total := total + frees[k];
-  end loop;
-  if total = 0 then
+  -- 빈자리 하나하나가 같은 확률로 차량을 고른다(계산은 car_draw() 한곳 — 진행자의 자동 섞기 admin_shuffle 도 같은 것을 씀)
+  v := car_draw();
+  if v is null then
     raise exception '빈자리가 있는 차량이 없어요. 진행자에게 말해 주세요.';
   end if;
-
-  -- 빈자리 0 ~ total-1 중 하나를 고르고, 그 자리가 속한 차량을 찾는다
-  r := floor(random() * total)::int;
-  v := null;
-  for k in 1..cardinality(ids) loop
-    r := r - frees[k];
-    if r < 0 then
-      v := ids[k];
-      exit;
-    end if;
-  end loop;
 
   update people set car = v, car_at = clock_timestamp()
   where id = mid and car is null;
@@ -1352,8 +1369,8 @@ begin
   end if;
 end $$;
 
--- 차량 뽑기 실행 권한(이 묶음의 함수만). 안쪽 함수(car_check·car_list·car_caps·car_caps_of)는 아무도 직접 못 부른다.
-revoke all on function public.car_check(jsonb), public.car_list(), public.car_caps(), public.car_caps_of(jsonb) from public, anon, authenticated;
+-- 차량 뽑기 실행 권한(이 묶음의 함수만). 안쪽 함수(car_check·car_list·car_caps·car_caps_of·car_draw)는 아무도 직접 못 부른다.
+revoke all on function public.car_check(jsonb), public.car_list(), public.car_caps(), public.car_caps_of(jsonb), public.car_draw() from public, anon, authenticated;
 revoke all on function
   public.pick_car(text, text), public.car_state(text, text),
   public.board_cars(text), public.admin_set_car(text, bigint, text), public.admin_clear_cars(text), public.admin_set_cars(text, jsonb)
@@ -1362,4 +1379,117 @@ grant execute on function
   public.pick_car(text, text), public.car_state(text, text),
   public.board_cars(text), public.admin_set_car(text, bigint, text), public.admin_clear_cars(text), public.admin_set_cars(text, jsonb)
   to anon, authenticated;
+
+-- ══ 자동 섞기(진행자) ═══════════════════════════════════
+-- 진행자 화면에서 팀·방·탑승 차량을 한 번에 정한다. 새 규칙은 없다: 참가자 뽑기 함수를 그대로 불러 정한다.
+--   팀 = pick(), 방 = pick_room(), 탑승 차량 = car_draw()(pick_car 와 같은 고르기) — 발표용 뽑기 화면(draw.js)이
+--   '정해지지 않은 사람을 무작위 순서로 줄 세워 한 명씩 pick·pick_room 을 부르는' 것과 똑같은 일을 DB 안에서 한 번에 한다.
+-- p_what: 'team' | 'room' | 'car'
+-- p_mode: 'fill' = 아직 안 정해진 사람만 정한다(이미 정해진 사람은 그대로)
+--         'all'  = 그 항목을 모두 비우고(admin_reset·admin_clear('room')·admin_clear_cars 와 같은 범위) 전원을 새로 정한다
+-- 넣을 수 없는 사람은 건너뛰고 돌려준다(reason):
+--   'no_gender' 방: 성별이 없음(pick_room 이 거절하는 사람)   'driver' 차량: 운전자(정원에 들지 않고 뽑지 않음)
+--   'full'      차량: 빈자리가 없음(정원을 숫자로 적어 자리가 모자랄 때)
+--   'name'      팀·방: 명단의 부서·이름이 정리된 꼴이 아님(SQL Editor 로 넣은 경우 등 — 그 사람은 로그인도 안 됨. 진행자 화면에서 한 번 고쳐 저장하면 됨)
+-- 돌려주는 값: {"what": p_what, "mode": p_mode, "cleared": 비운 사람 수('fill' 은 0), "assigned": 이번에 정해진 사람 수,
+--               "skipped": [{"id", "dept", "name", "reason"}] (이유·부서·이름 순)}
+-- 한 번의 호출이 한 트랜잭션이라 중간에 실패하면 아무것도 바뀌지 않는다. 두 번 불러도 괜찮다('fill' 이면 두 번째는 assigned 0).
+-- 마감(choices_closed())과 상관없이 된다(진행자용 — 차량도 마감 뒤에 쓸 수 있음).
+-- 차례: 1) 그 항목의 참가자 뽑기와 같은 잠금(팀 261112,1 · 방 261112,2 · 차량 261112,3)을 먼저 잡고
+--       2) 명단 표를 SHARE ROW EXCLUSIVE 로 잠근다 — 끝날 때까지 명단의 다른 쓰기(메뉴 고르기·진행자 저장·다른 섞기 등)는 잠깐 기다리고,
+--          읽기(board_state 등)는 기다리지 않는다. 표 잠금을 이 순서(뽑기 잠금 다음)로 잡아야 뽑기 차례를 쥔 참가자와 서로 기다리지 않는다.
+--       표 잠금 순서 규칙: people 에 쓴 뒤에 advisory 잠금을 잡는 트랜잭션이 있으면 교착이 날 수 있다(앱 RPC 는 해당 없음 — SQL Editor 에서 한 트랜잭션으로 choose_menu 를 부른 뒤 pick 을 부르는 식은 위험).
+--       섞는 동안 바뀌는 사람 줄을 무작위 순서로 하나씩 고치므로, 표 잠금이 없으면 진행자의 다른 여러 줄 고치기(admin_reset·admin_clear·
+--       다른 항목 섞기)와 동시에 돌 때 서로 상대 줄을 기다리는 교착(deadlock)이 날 수 있다. 표 잠금으로 이런 일이 생기지 않는다.
+create or replace function public.admin_shuffle(p_code text, p_what text, p_mode text) returns json
+language plpgsql security definer set search_path = public as $$
+declare
+  ids     bigint[];
+  drv     bigint[] := '{}';            -- 운전자 id(차량)
+  x       people;
+  v       text;
+  why     text;
+  full_   boolean := false;            -- 차량: 빈자리가 다 참
+  n_clear int := 0;
+  n_done  int;
+  skipped jsonb := '[]';
+  i int; j int; tmp bigint;
+begin
+  perform check_admin(p_code);
+  if p_what is null or p_what not in ('team', 'room', 'car') then
+    raise exception '바꿀 수 없는 항목이에요.';
+  end if;
+  if p_mode is null or p_mode not in ('fill', 'all') then
+    raise exception '보낸 내용이 올바르지 않아요. 새로고침한 뒤 다시 해 주세요.';
+  end if;
+
+  perform pg_advisory_xact_lock(261112, case p_what when 'team' then 1 when 'room' then 2 else 3 end);
+  lock table people in share row exclusive mode;
+
+  -- 전부 새로: 그 항목만 비운다(다른 칸은 그대로)
+  if p_mode = 'all' then
+    if p_what = 'team' then
+      update people set team = null, picked_at = null where team is not null or picked_at is not null;
+    elsif p_what = 'room' then
+      update people set room = null where room is not null;
+    else
+      update people set car = null, car_at = null where car is not null or car_at is not null;
+    end if;
+    get diagnostics n_clear = row_count;
+  end if;
+
+  if p_what = 'car' then
+    select coalesce(array_agg(c.driver), '{}') into drv from car_list() c where c.driver is not null;
+  end if;
+
+  -- 아직 정해지지 않은 사람을 무작위 순서로 줄 세운다(id 순으로 모은 뒤 섞음 — draw.js 의 shuffle 과 같은 방식)
+  select coalesce(array_agg(p.id order by p.id), '{}') into ids
+  from people p
+  where case p_what when 'team' then p.team is null when 'room' then p.room is null else p.car is null end;
+  for i in reverse coalesce(cardinality(ids), 0)..2 loop
+    j := 1 + floor(random() * i)::int;
+    tmp := ids[i]; ids[i] := ids[j]; ids[j] := tmp;
+  end loop;
+
+  -- 한 명씩 참가자 뽑기와 같은 함수로 정한다(그 함수가 앞사람까지 정해진 지금 명단으로 계획을 새로 세움)
+  for i in 1..coalesce(cardinality(ids), 0) loop
+    select * into x from people where id = ids[i];
+    why := case
+      when p_what = 'car' and x.id = any (drv) then 'driver'
+      when p_what = 'car' and full_ then 'full'
+      when p_what = 'room' and x.gender is null then 'no_gender'
+      -- pick·pick_room 은 부서·이름으로 사람을 찾으므로, 정리된 꼴로 저장된 사람만 부른다(다른 사람을 찾지 않게)
+      when p_what <> 'car' and (x.dept <> norm_dept(x.dept) or x.name <> norm_name(x.name)) then 'name'
+    end;
+    if why is null then
+      if p_what = 'team' then
+        perform pick(x.dept, x.name);
+      elsif p_what = 'room' then
+        perform pick_room(x.dept, x.name);
+      else
+        v := car_draw();
+        if v is null then
+          full_ := true;
+          why := 'full';
+        else
+          update people set car = v, car_at = clock_timestamp() where id = x.id and car is null;
+        end if;
+      end if;
+    end if;
+    if why is not null then
+      skipped := skipped || jsonb_build_object('id', x.id, 'dept', x.dept, 'name', x.name, 'reason', why);
+    end if;
+  end loop;
+
+  select count(*)::int into n_done
+  from people p
+  where p.id = any (ids)
+    and case p_what when 'team' then p.team is not null when 'room' then p.room is not null else p.car is not null end;
+  return json_build_object(
+    'what', p_what, 'mode', p_mode, 'cleared', n_clear, 'assigned', n_done,
+    'skipped', (select coalesce(jsonb_agg(e order by e->>'reason', e->>'dept', e->>'name'), '[]'::jsonb)
+                from jsonb_array_elements(skipped) e));
+end $$;
+revoke all on function public.admin_shuffle(text, text, text) from public;
+grant execute on function public.admin_shuffle(text, text, text) to anon, authenticated;
 notify pgrst, 'reload schema';  -- Supabase API(PostgREST)가 새 함수를 바로 알게 함
