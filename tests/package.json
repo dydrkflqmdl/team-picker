@@ -1,0 +1,15 @@
+{
+  "name": "draw-show-tests",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node run.mjs smoke",
+    "test:draw": "node run.mjs draw",
+    "db:up": "node run.mjs db-up",
+    "db:down": "node run.mjs db-down"
+  },
+  "devDependencies": {
+    "pg": "^8.13.0",
+    "playwright": "^1.49.0"
+  }
+}
