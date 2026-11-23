@@ -860,7 +860,7 @@
   // 파일 받기가 막힐 때를 위해 같은 내용을 복사하거나 직접 선택해 복사할 수 있게 상자에 보여 줌
   async function askBackup(what) {
     if (!people.length) return true; // 받아 둘 것이 없음
-    if (window.carBoard) await window.carBoard.refresh(); // 백업의 탑승 차량 칸을 지금 것으로(못 받아도 받아 둔 것으로)
+    const carsOk = window.carBoard ? await window.carBoard.refresh() : false; // 백업의 탑승 차량 칸을 지금 것으로(못 받으면 그 칸은 비움)
     const t = new Date(), two2 = (n) => String(n).padStart(2, '0');
     const name = `워크숍_백업_${what}전_${t.getMonth() + 1}월${t.getDate()}일_${two2(t.getHours())}${two2(t.getMinutes())}.csv`;
     const box = $('#backupBox'), ta = $('#bkText'), msg = $('#bkMsg');
@@ -869,7 +869,7 @@
       snap = JSON.stringify(people);
       text = csvText(ordered(people), true);
       ta.value = text;
-      $('#bkWhat').innerHTML = `명단 <b>${people.length}명</b>(팀·점심·조식·객실·자유시간·탑승 차량 포함)을 <b>${esc(name)}</b> 파일로 받으려고 했어요. 다운로드 폴더나 브라우저의 다운로드 목록에 이 이름의 파일이 있는지 확인해 주세요(같은 이름이 있으면 (1)이 붙어요).`;
+      $('#bkWhat').innerHTML = `명단 <b>${people.length}명</b>(팀·점심·조식·객실·자유시간${carsOk ? '·탑승 차량' : ''} 포함)을 <b>${esc(name)}</b> 파일로 받으려고 했어요.${carsOk ? '' : ' <b>탑승 차량 정보를 받지 못해 차량 칸은 비어 있어요.</b> 관리자 페이지 탑승 차량 칸의 <b>차량별 탑승자 복사</b>로 따로 적어 두세요.'} 다운로드 폴더나 브라우저의 다운로드 목록에 이 이름의 파일이 있는지 확인해 주세요(같은 이름이 있으면 (1)이 붙어요).`;
       return saveFile(text, name);
     };
     const opener = document.activeElement;
@@ -1461,7 +1461,7 @@ Day 3 · 12/19(토) — 함께 만드는 내년
   async function removePerson(id) {
     const p = personFor(id);
     const team = p.team ? `\n이미 ${TEAMS[p.team]}팀으로 뽑혀 있어서, 지우면 그 팀 인원이 1명 줄어요.` : '';
-    const car = window.carBoard ? window.carBoard.removeNote(id) : ''; // 탑승 차량 운전자·손님이면 그 사실(car-board.js)
+    const car = window.carBoard ? await window.carBoard.removeNote(id) : ''; // 탑승 차량 운전자·손님이면 그 사실(car-board.js, 새로 받아서)
     if (!confirm(`${p.name} 님을 명단에서 지울까요?${team}${car}`)) return;
     await rpc('admin_remove', { p_code: code, p_id: id });
     if (editing === id) editing = null; // 내가 지운 사람의 수정 줄은 알림 없이 닫음
@@ -1728,6 +1728,6 @@ Day 3 · 12/19(토) — 함께 만드는 내년
     autoRefresh();
   });
 </script>
-<script src="car-board.js?v=4"></script>
+<script src="car-board.js?v=5"></script>
 </body>
 </html>

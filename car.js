@@ -1,7 +1,7 @@
 // 탑승 차량 뽑기(참가자 화면). index.html 의 메인 단추(#goCar)와 차량 화면(#carCard)을 채운다.
 // index.html 의 인라인 스크립트보다 먼저 읽히므로, 거기서 만든 것(me·busy·call·screen·fill 등)은 함수가 불릴 때(나중에)만 쓴다.
 // 바깥에는 window.Car 하나만 내놓음(이름이 겹쳐 index.html 의 스크립트가 멈추지 않게 전체를 함수로 감쌈).
-//   Car.home(left, missed)  메인 단추·남은 것·마감돼서 못 한 것 목록을 채움(paintHome 이 부름). 차량 정보를 아직 모르면 true   Car.ensure()  아직 못 받았으면 받음
+//   Car.home(left, missed)  메인 단추·남은 것·마감돼서 못 한 것 목록을 채움(paintHome 이 부름). 차량 정보를 아직 모르면 'loading'·'failed'(알면 '')   Car.ensure()  아직 못 받았으면 받음
 //   Car.load()      car_state 를 새로 받음                            Car.reset()   로그아웃·로그인 화면에서 비움
 //   Car.paint()     차량 화면을 지금 상태로 다시 그림(마감 시각을 넘길 때 index.html 의 syncClosed 가 부름)
 // 마감: 점심·조식·자유시간과 같은 마감(index.html 의 choicesClosed() — common.js 의 CHOICE_DEADLINE + 서버가 마감이라고 답한 적)을 그대로 씀.
@@ -213,7 +213,8 @@
     fill($('#pvCar'), more);
     if (lapsed) missed.push('차량 뽑기');
     else if (todo) left.push('차량 뽑기');
-    return !st; // 차량 정보를 아직 모름(받는 중·못 받음): '남은 것'에 넣지 않고, paintHome 이 "다 끝났어요" 대신 확인 중이라고 보여 줌
+    // 차량 정보를 아직 모름: 'loading'(받는 중) / 'failed'(못 받음). '남은 것'에 넣지 않고, paintHome 이 "다 끝났어요" 대신 상태에 맞는 문구를 보여 줌
+    return st ? '' : err ? 'failed' : 'loading';
   }
 
   // ── 차량 화면 ──

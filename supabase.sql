@@ -1133,7 +1133,7 @@ end $$;
 --   오류는 기존 고르기와 같은 raise exception(P0001), 문구는 "탑승 차량 뽑기는 11월 25일(수) 15시에 마감됐어요. …"(화면은 common.js 의 CHOICE_CLOSED_ERR 로 알아봄).
 --   이미 뽑은 사람·운전자는 마감 뒤에도 자기 차량을 돌려받는다.
 --   car_state 와 진행자 함수(admin_set_car·admin_clear_cars·admin_set_cars)는 마감과 상관없이 된다.
---   choices_closed() 는 now()(요청이 시작된 시각) 기준이라, 마감 전에 눌러 차례를 기다린 사람은 마감을 조금 넘겨 배정돼도 받아들여진다(choose_lunch 등과 같은 기준).
+--   마감 직전에 눌러 차례를 기다린 사람은 받아들여진다(누른 시각 기준 — choices_closed() 가 now(), 즉 요청이 시작된 시각을 보므로. choose_lunch 등과 같음).
 create or replace function public.pick_car(p_dept text, p_name text) returns text
 language plpgsql security definer set search_path = public as $$
 declare
@@ -1163,7 +1163,8 @@ begin
   if me.car is not null then
     return me.car;
   end if;
-  -- 마감(choices_closed(), 점심·조식·자유시간과 같은 시각) 뒤에는 아직 차량이 없는 사람을 거절(빠른 거절. 최종 판단은 아래 차례 안에서 한 번 더).
+  -- 마감(choices_closed(), 점심·조식·자유시간과 같은 시각) 뒤에는 아직 차량이 없는 사람을 거절.
+  -- choices_closed() 는 now()(이 요청이 시작된 시각) 기준이라 차례를 기다린 뒤에 다시 봐도 값이 같으므로 여기서 한 번만 본다.
   -- 오류 코드는 기존 고르기와 같은 P0001(raise exception). 문구 "…뽑기는 …에 마감됐어요" 는 화면이 마감 거절로 알아봄(common.js 의 CHOICE_CLOSED_ERR)
   if choices_closed() then
     raise exception '탑승 차량 뽑기는 11월 25일(수) 15시에 마감됐어요. 차량은 진행자에게 말해 주세요.';
@@ -1183,10 +1184,6 @@ begin
   end if;
   if me.car is not null then
     return me.car;
-  end if;
-  -- 마감 최종 판단(차례 안). 이미 차량이 있는 사람·운전자는 위에서 자기 차량을 돌려받았으므로 여기까지 온 사람만 거절
-  if choices_closed() then
-    raise exception '탑승 차량 뽑기는 11월 25일(수) 15시에 마감됐어요. 차량은 진행자에게 말해 주세요.';
   end if;
 
   -- 차량별 남은 자리 = 지금 정원 - 지금 탄 인원(0 아래로는 안 내려감. 사람이 지워져 정원보다 많이 탄 차량은 0)

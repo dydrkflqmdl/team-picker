@@ -750,12 +750,13 @@ has "이미 넘은 차량의 정원을 더 줄이는 저장(차량 더하기 →
 eq "car_caps 와 car_caps_of(저장된 목록) 계산이 같음" "$(sql "select string_agg(id || ':' || seats, ',' order by ord) from car_caps()")" "$(sql "select string_agg(id || ':' || seats, ',' order by ord) from car_caps_of((select value::jsonb from config where key = 'cars'))")"
 
 # ── 마감(choices_closed) 전·후 ─────────────────────────────
-# 시험 안에서만 choices_closed() 를 t.closed_flag 표의 값으로 바꿔 쓴다(마감 시각 자체는 건드리지 않음). 끝나면 supabase.sql 의 원래 정의로 되돌린다.
+# 시험 안에서만 choices_closed() 의 '마감 시각'을 t.deadline 표의 값으로 바꿔 쓴다. 판단 방식(now() >= 마감 시각, now() = 요청이 시작된 시각)은
+# supabase.sql 과 같게 둔다. 끝나면 supabase.sql 의 원래 정의로 되돌린다(supabase.sql 의 마감 시각은 건드리지 않음).
 title "마감 전·후: 안 뽑은 사람 거절, 이미 뽑은 사람·운전자 그대로, 진행자는 계속"
-sql "create table if not exists t.closed_flag (v boolean); delete from t.closed_flag; insert into t.closed_flag values (false)" >/dev/null
-sql "create or replace function public.choices_closed() returns boolean language sql stable as \$\$ select coalesce((select v from t.closed_flag limit 1), false) \$\$" >/dev/null
-closed_on()  { sql "update t.closed_flag set v = true" >/dev/null; }
-closed_off() { sql "update t.closed_flag set v = false" >/dev/null; }
+sql "create table if not exists t.deadline (d timestamptz); delete from t.deadline; insert into t.deadline values (now() + interval '1 day')" >/dev/null
+sql "create or replace function public.choices_closed() returns boolean language sql stable as \$\$ select now() >= (select d from t.deadline limit 1) \$\$" >/dev/null
+closed_on()  { sql "update t.deadline set d = now() - interval '1 hour'" >/dev/null; }   # 마감 지남
+closed_off() { sql "update t.deadline set d = now() + interval '1 day'" >/dev/null; }    # 마감 전
 # 오류의 SQLSTATE 와 문구를 "코드|문구" 로(참가자 anon 으로 부름)
 errof() { anon "do \$\$ begin perform $1; raise notice 'OK'; exception when others then raise notice '%|%', sqlstate, sqlerrm; end \$\$" | sed -n 's/^NOTICE:  //p'; }
 CLOSED_MSG='탑승 차량 뽑기는 11월 25일(수) 15시에 마감됐어요. 차량은 진행자에게 말해 주세요.'
@@ -801,23 +802,28 @@ eq "마감 뒤: 비운 뒤에도 운전자는 자기 차량" "car1" "$(anon "sel
 closed_off
 eq "마감을 되돌리면(시험용) 다시 뽑기 됨" "ok" "$(oneof "$(anon "select pick_car('시험3팀', '김도윤')")" car1 car2)"
 
-title "마감을 넘기는 순간: 차례를 기다리던 10명(+운전자 1)이 기다리는 사이 마감됨"
+title "마감 직전에 눌러 차례를 기다린 10명: 기다리는 사이 마감이 지나도 받아들여짐(누른 시각 기준, choose_lunch 등과 같음)"
 sql "select t.seed(14)" >/dev/null
 DRV=$(idof 김가람)
 sql "select admin_set_cars('$CODE', '[{\"id\":\"car1\",\"name\":\"1호차\",\"driver\":$DRV},{\"id\":\"car2\",\"name\":\"2호차\"}]')" >/dev/null
 closed_off
 EARLY2=$(anon "select pick_car('시험2팀', '김나래')")
+# 시험용 마감 시각을 지금부터 4초 뒤로
+sql "update t.deadline set d = clock_timestamp() + interval '4 seconds'" >/dev/null
 rm -f "$OUT"/dl-*
-# 차례 잠금(261112, 3)을 먼저 쥔 세션: 10명이 그 잠금을 기다리면 마감을 켜고(커밋) 잠금을 푼다
+# 차례 잠금(261112, 3)을 먼저 쥔 세션: 10명이 그 잠금을 기다리면(이들의 요청은 마감 전에 시작됨) 마감 시각이 지날 때까지 더 쥐고 있다가 푼다
 $PSQL -At -c "select pg_advisory_lock(261112, 3)" \
-  -c "do \$\$ declare s timestamptz := clock_timestamp(); begin
+  -c "do \$\$ declare s timestamptz := clock_timestamp(); dl timestamptz := (select d from t.deadline); begin
         loop
           exit when (select count(*) from pg_locks where locktype = 'advisory' and classid = 261112 and objid = 3 and not granted) >= 10;
           if clock_timestamp() - s > interval '30 seconds' then raise exception '차례에 다 모이지 않음'; end if;
           perform pg_sleep(0.01);
-        end loop; end \$\$" \
-  -c "update t.closed_flag set v = true" -c "select pg_advisory_unlock(261112, 3)" >"$OUT/dl-hold.log" 2>&1 &
-HOLD_PID=$!
+        end loop;
+        if clock_timestamp() >= dl then raise exception '마감 전에 10명이 다 모이지 못함(시험 무효)'; end if;
+        perform pg_sleep(greatest(0, extract(epoch from dl - clock_timestamp())) + 0.3);
+        raise notice '푸는 시각이 마감 뒤: %', clock_timestamp() > dl;
+      end \$\$" \
+  -c "select pg_advisory_unlock(261112, 3)" >"$OUT/dl-hold.log" 2>&1 &
 i=0
 while [ "$(sql "select count(*) from pg_locks where locktype = 'advisory' and classid = 261112 and objid = 3 and granted")" != "1" ]; do
   i=$((i + 1)); [ $i -gt 500 ] && { ng "차례 잠금을 쥐지 못함" "$(cat "$OUT/dl-hold.log")"; break; }
@@ -828,9 +834,11 @@ worker_pick "dl-drv" "$(sql "select dept from people where id = $DRV")" "김가�
 worker_pick "dl-early" "시험2팀" "김나래" &
 wait
 eq "잠금을 쥔 세션 오류 없음" "" "$(grep -i error "$OUT/dl-hold.log")"
-eq "기다리던 10명 모두 마감 거절(차례 안에서 다시 판단), 배정 0" "10/0" "$(cat "$OUT"/dl-[0-9]*.err | grep -c '에 마감됐어요')/$(cat "$OUT"/dl-[0-9]*.out | grep -c '^R ')"
+has "잠금을 푼 것은 마감 시각 뒤" "푸는 시각이 마감 뒤: t" "$(cat "$OUT/dl-hold.log")"
+eq "마감 전에 눌러 기다린 10명은 마감 뒤에 차례가 와도 모두 배정, 마감 거절 0" "10/0" "$(cat "$OUT"/dl-[0-9]*.out | grep -c '^R ')/$(cat "$OUT"/dl-[0-9]*.err | grep -c '에 마감됐어요')"
 eq "운전자·이미 뽑은 사람은 기다리지 않고 자기 차량" "R car1/R $EARLY2" "$(grep '^R ' "$OUT/dl-drv.out")/$(grep '^R ' "$OUT/dl-early.out")"
-eq "DB 에도 새로 배정된 사람 없음(이미 뽑은 1명만)" "1" "$(sql "select count(*) from people where car is not null")"
+eq "DB: 11명 배정(이미 뽑은 1 + 기다린 10)" "11" "$(sql "select count(*) from people where car is not null")"
+eq "지금(마감 뒤) 새로 누른 사람은 거절" "P0001|$CLOSED_MSG" "$(errof "pick_car('$(sql "select dept from people where car is null and id <> $DRV order by id limit 1")', '$(sql "select name from people where car is null and id <> $DRV order by id limit 1")')")"
 
 # 시험용 choices_closed() 를 supabase.sql 의 원래 정의로 되돌림
 awk '/^create or replace function public.choices_closed\(\)/,/^\$\$;/' "$SQL_FILE" >"$OUT/choices_closed.sql"
