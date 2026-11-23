@@ -198,17 +198,14 @@
     #crewCard { margin-top: 16px; }
     /* 사람이 몰려 자동으로 다시 시도하는 중이라는 안내(오류 문구 바로 아래) */
     #retryNote { margin: 0 0 12px; }
-    /* 금요일 저녁 자유시간 고르기: 점심 고르기와 같은 사진 카드 둘(그림 위, 이름 아래, 카드를 누르면 선택). 카드 모양·고른 표시는 #actChoices 에 붙인 lunch-dishes 규칙을 그대로 씀.
-       그림은 움직이는 그림(GIF)을 9컷 가로 한 줄 그림으로 바꿔 CSS 로 넘김(free_ski.jpg · free_rest.jpg, 컷 하나 400x355). 원래 GIF 그대로 한 컷 0.33초, 9컷 2.97초를 계속 되풀이.
-       steps(9) 로 컷 사이를 섞지 않고 딱딱 넘기며, 마지막 값(112.5%)은 열 번째 자리라 보이지 않고 곧바로 처음으로 돌아감. 그림이 안 떠도 어두운 자리와 이름은 그대로 */
+    /* 금요일 저녁 자유시간 고르기: 큰 단추 둘(누르는 자리 높이 56px). 고른 쪽은 색이 차고 ✓ 가 붙음 */
     .acts[hidden] { display: none; }
-    .act-pic { display: block; aspect-ratio: 400 / 355; background: #1e2326 0 0 / 900% 100% no-repeat; animation: act-cuts 2.97s steps(9) infinite; }
-    @supports not (aspect-ratio: 1) { .act-pic { height: 0; padding-top: 88.75%; } } /* aspect-ratio 를 모르는 예전 브라우저용(355/400) */
-    .acts [data-act="ski"] .act-pic { background-image: url(free_ski.jpg); }
-    .acts [data-act="rest"] .act-pic { background-image: url(free_rest.jpg); }
-    @keyframes act-cuts { to { background-position: 112.5% 0; } }
-    @media (prefers-reduced-motion: reduce) { .act-pic { animation: none; } } /* 움직임 줄이기: 첫 컷만 멈춰 보임 */
-    #actCard .act-body { margin-bottom: 35px; } /* 예전 카드(안쪽 18 + 테두리 1 + 아래 16)가 만들던 아래 간격을 그대로 유지. 점심 화면의 #lunchNote 와 같은 값 */
+    .acts { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 0; }
+    .acts button { min-height: 56px; padding: 10px 8px; font-size: 17px; font-weight: 700; overflow-wrap: anywhere; }
+    .acts button[aria-pressed="true"] { background: var(--accent); color: var(--accent-text); border-color: transparent; }
+    .acts button[aria-pressed="true"]::before { content: '✓ '; }
+    .acts button:disabled { opacity: .6; }
+    .acts button[aria-pressed="true"]:disabled { opacity: 1; } /* 마감 뒤에도 고른 것은 또렷하게 */
     .act-note { margin: 10px 0 0; }
     #lunchNote { margin-bottom: 35px; } /* 점심은 카드가 없어서, 자유시간 화면(카드 안쪽 18 + 테두리 1 + 카드 아래 16 = 35px)과 같은 글~뒤로 가기 간격을 직접 줌 */
     /* 점심 고르기: 조식 카드(.dish-box)와 같은 모양의 단추. 사진은 메뉴마다 한 장(4:3, 카드 폭을 채움). 조식의 .dish-pics 는 건드리지 않고 점심 전용 .lunch-pic 을 따로 씀 */
@@ -468,21 +465,11 @@
     <div class="me">
       <button class="link back">메인으로 돌아가기</button>
     </div>
-    <div class="act-body">
+    <div class="card">
       <p class="act-state" id="actState" aria-live="polite"></p>
-      <div class="acts lunch-dishes" id="actChoices" role="group" aria-label="저녁 식사 뒤 자유시간 (하나만 고를 수 있어요)"><!-- 점심 카드 모양(lunch-dishes)을 그대로 씀 -->
-        <button type="button" data-act="ski" aria-pressed="false">
-          <span class="dish-box"><!-- 그림은 장식(낭독 안 함). 단추 이름은 아래 이름 -->
-            <span class="act-pic" aria-hidden="true"></span>
-            <span class="dish-name">⛷️ 스키</span>
-          </span>
-        </button>
-        <button type="button" data-act="rest" aria-pressed="false">
-          <span class="dish-box">
-            <span class="act-pic" aria-hidden="true"></span>
-            <span class="dish-name">🛋️ 휴식</span>
-          </span>
-        </button>
+      <div class="acts" id="actChoices" role="group" aria-label="저녁 식사 뒤 자유시간">
+        <button type="button" data-act="ski" aria-pressed="false">⛷️ 스키</button>
+        <button type="button" data-act="rest" aria-pressed="false">🛋️ 휴식</button>
       </div>
       <div class="warn-box" id="actWarn" role="alert" hidden>
         <b class="warn-title">🙅 18일 저녁 식사 때는 술 금지!</b>
