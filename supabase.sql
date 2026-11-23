@@ -1016,8 +1016,10 @@ begin
       return format('차량 이름 "%s" 가 두 번 있어요.', v_name);
     end if;
     -- 문구: 없거나 null 이면 빈 문구. 있으면 글자로 30자까지(앞뒤 공백은 빼고 셈)
-    if coalesce(jsonb_typeof(e->'label'), 'null') <> 'null'
-       and (jsonb_typeof(e->'label') <> 'string' or char_length(btrim(e->>'label')) > 30) then
+    if coalesce(jsonb_typeof(e->'label'), 'null') not in ('null', 'string') then
+      return format('"%s" 의 문구는 글자로 적어 주세요.', v_name);
+    end if;
+    if jsonb_typeof(e->'label') = 'string' and char_length(btrim(e->>'label')) > 30 then
       return format('"%s" 의 문구는 30자까지 적을 수 있어요.', v_name);
     end if;
     -- 정원: 없거나 null 이면 자동. 있으면 1~99 정수(숫자로 바꾸기 전에 모양부터 봐서 글자·소수·아주 큰 수를 거름)

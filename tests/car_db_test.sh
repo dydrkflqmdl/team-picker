@@ -343,7 +343,8 @@ bad "자리 음수" '[{"id":"a","name":"가","seats":-1}]' '의 정원은 비워
 bad "자리 글자 \"4\"" '[{"id":"a","name":"가","seats":"4"}]' '의 정원은 비워 두거나(자동) 1~99 사이의 정수여야 해요.'
 bad "자리 아주 큰 수" '[{"id":"a","name":"가","seats":1e30}]' '의 정원은 비워 두거나(자동) 1~99 사이의 정수여야 해요.'
 bad "자리 true" '[{"id":"a","name":"가","seats":true}]' '의 정원은 비워 두거나(자동) 1~99 사이의 정수여야 해요.'
-bad "문구가 글자가 아님" '[{"id":"a","name":"가","label":7}]' 'ERROR:  "가" 의 문구는 30자까지 적을 수 있어요.'
+bad "문구가 글자가 아님(숫자)" '[{"id":"a","name":"가","label":7}]' 'ERROR:  "가" 의 문구는 글자로 적어 주세요.'
+bad "문구가 글자가 아님(목록)" '[{"id":"a","name":"가","label":["x"]}]' 'ERROR:  "가" 의 문구는 글자로 적어 주세요.'
 bad "문구 31자" "[{\"id\":\"a\",\"name\":\"가\",\"label\":\"$(printf '가%.0s' $(seq 1 31))\"}]" '의 문구는 30자까지 적을 수 있어요.'
 eq "거절된 뒤 목록 그대로" "$OK_CARS" "$(sql "select value from config where key = 'cars'")"
 has "비밀번호 틀리면 거절" "ERROR:  관리자 비밀번호가 틀렸어요." "$(anon "select admin_set_cars('wrong', '[{\"id\":\"a\",\"name\":\"가\",\"seats\":4}]')")"
@@ -395,7 +396,7 @@ eq "깨진 글도 people_log 에 남김" "이건 JSON 아님" "$(sql "select old
 # 차량 두 대 목록 저장: $1 = 1호차에 더할 칸, $2 = 2호차에 더할 칸 (예: '"seats":4,"driver":12'). 비우면 정원 자동·운전자 없음
 # 문구는 지어낸 것(실제 호칭 아님)
 cars2() {
-  sql "select admin_set_cars('$CODE', '[{\"id\":\"car1\",\"name\":\"1호차\",\"label\":\"가온 이사님 차량\"${1:+,$1}},{\"id\":\"car2\",\"name\":\"2호차\",\"label\":\"다온 차장님 차량\"${2:+,$2}}]')"
+  sql "select admin_set_cars('$CODE', '[{\"id\":\"car1\",\"name\":\"1호차\",\"label\":\"가온님 차량\"${1:+,$1}},{\"id\":\"car2\",\"name\":\"2호차\",\"label\":\"다온님 차량\"${2:+,$2}}]')"
 }
 idof() { sql "select id from people where name = '$1'"; }
 deptof() { sql "select dept from people where name = '$1'"; }
@@ -409,7 +410,7 @@ D1N=$(sql "select name from people where id = $D1"); D1D=$(sql "select dept from
 D2N=$(sql "select name from people where id = $D2"); D2D=$(sql "select dept from people where id = $D2")
 eq "운전자 지정 저장" "" "$(cars2 "\"seats\":4,\"driver\":$D1" "\"seats\":4,\"driver\":$D2")"
 eq "저장 모양: id·name·label·seats·driver" \
-  "[{\"id\": \"car1\", \"name\": \"1호차\", \"label\": \"가온 이사님 차량\", \"seats\": 4, \"driver\": $D1}, {\"id\": \"car2\", \"name\": \"2호차\", \"label\": \"다온 차장님 차량\", \"seats\": 4, \"driver\": $D2}]" \
+  "[{\"id\": \"car1\", \"name\": \"1호차\", \"label\": \"가온님 차량\", \"seats\": 4, \"driver\": $D1}, {\"id\": \"car2\", \"name\": \"2호차\", \"label\": \"다온님 차량\", \"seats\": 4, \"driver\": $D2}]" \
   "$(sql "select value from config where key = 'cars'")"
 eq "운전자가 pick_car → 운전하는 차량(1호차)" "car1" "$(anon "select pick_car('$D1D', '$D1N')")"
 eq "운전자가 pick_car → 운전하는 차량(2호차)" "car2" "$(anon "select pick_car('$D2D', '$D2N')")"
@@ -432,7 +433,7 @@ eq "운전자 본인: members = 그 차량 손님 4명(운전자 없음)" "4/0" 
 eq "운전자 본인: 맨 위 열쇠 그대로(car, cars, members)" "car,cars,members" "$(anon "select string_agg(k, ',' order by k) from json_object_keys($SD) k")"
 eq "cars[].driver = 각 차량 운전자 이름" "$D1N,$D2N" "$(anon "select string_agg(e->'driver'->>'name', ',') from json_array_elements($SD->'cars') e")"
 eq "cars[].driver 열쇠 = dept, name, title" "dept,name,title" "$(anon "select string_agg(k, ',' order by k) from json_object_keys($SD->'cars'->0->'driver') k")"
-eq "cars[].label = 문구" "가온 이사님 차량" "$(anon "select $SD->'cars'->0->>'label'")"
+eq "cars[].label = 문구" "가온님 차량" "$(anon "select $SD->'cars'->0->>'label'")"
 eq "cars[].count 는 손님만(4·4)" "4,4" "$(anon "select string_agg(e->>'count', ',') from json_array_elements($SD->'cars') e")"
 eq "손님: car = 1호차, members 에 운전자 없음(나 포함 4명)" "car1/4/0" "$(anon "select ($SP->>'car') || '/' || json_array_length($SP->'members') || '/' || (select count(*) from json_array_elements($SP->'members') e where e->>'name' = '$D1N')")"
 eq "손님도 운전자 이름을 받음" "$D1N" "$(anon "select $SP->'cars'->0->'driver'->>'name'")"
@@ -659,11 +660,11 @@ eq "authenticated 도 pick_car 됨" "ok" "$(oneof "$(authd "select pick_car('시
 eq "새 함수는 모두 security definer + search_path 고정(안쪽 함수 제외)" "6/6" "$(sql "select count(*) filter (where prosecdef and proconfig::text like '%search_path=public%') || '/' || count(*) from pg_proc where pronamespace = 'public'::regnamespace and proname in ('pick_car', 'car_state', 'board_cars', 'admin_set_car', 'admin_clear_cars', 'admin_set_cars')")"
 
 # ── 기존 기능 회귀 ─────────────────────────────────────────
-title "기존 기능(로그인·팀 뽑기·방 뽑기·조식·자유시간 등)이 차량 추가 뒤에도 그대로"
+title "기존 기능(로그인·팀 뽑기·방 뽑기·조식·점심·자유시간 등)이 차량 추가 뒤에도 그대로"
 sql "select t.seed(12)" >/dev/null
 set_cars_44
 eq "departments()" "시험1팀,시험2팀,시험3팀" "$(anon "select string_agg(d, ',' order by d) from departments() d")"
-eq "login() 열쇠 그대로(차량 칸 안 늘어남)" "activity,dept,menu,name,room,team" "$(anon "select string_agg(k, ',' order by k) from json_object_keys(login('시험1팀', '김가람')) k")"
+eq "login() 열쇠 그대로(차량 칸 안 늘어남)" "activity,dept,lunch,menu,name,room,team" "$(anon "select string_agg(k, ',' order by k) from json_object_keys(login('시험1팀', '김가람')) k")"
 eq "login() 없는 사람 null" "t" "$(anon "select login('시험1팀', '없는사람') is null")"
 team=$(anon "select pick('시험1팀', '김가람')")
 eq "pick() 팀 뽑기" "ok" "$(oneof "$team" red blue yellow green)"
@@ -672,11 +673,19 @@ room=$(anon "select pick_room('시험1팀', '김가람')")
 eq "pick_room() 남자 방" "ok" "$(oneof "$room" m1 m2 m3 m4 m5)"
 room2=$(anon "select pick_room('시험2팀', '김나래')")
 eq "pick_room() 여자 방" "ok" "$(oneof "$room2" f1 f2)"
-eq "choose_menu()" "miyeok" "$(anon "select choose_menu('시험1팀', '김가람', 'miyeok')")"
-eq "choose_menu() 한 번만(바꾸지 않음)" "miyeok" "$(anon "select choose_menu('시험1팀', '김가람', 'ugeoji')")"
-eq "choose_activity()" "ski" "$(anon "select choose_activity('시험1팀', '김가람', 'ski')")"
+# 조식·점심·자유시간은 마감(choices_closed(), 11/25 15시) 전까지 고르고 바꿀 수 있고, 마감 뒤에는 서버가 거절한다(main 의 규칙).
+# 시험을 마감 뒤에 돌려도 맞게, 지금 마감인지 보고 기대값을 고른다
+if [ "$(sql "select choices_closed()")" = "f" ]; then
+  eq "choose_menu()" "miyeok" "$(anon "select choose_menu('시험1팀', '김가람', 'miyeok')")"
+  eq "choose_menu() 마감 전에는 바꿀 수 있음" "ugeoji" "$(anon "select choose_menu('시험1팀', '김가람', 'ugeoji')")"
+  eq "choose_lunch()" "spicy" "$(anon "select choose_lunch('시험1팀', '김가람', 'spicy')")"
+  eq "choose_activity()" "ski" "$(anon "select choose_activity('시험1팀', '김가람', 'ski')")"
+else
+  has "choose_menu() 마감 뒤 거절" "까지만 고르고 바꿀 수 있어요" "$(anon "select choose_menu('시험1팀', '김가람', 'miyeok')")"
+  sql "update people set menu = 'ugeoji', lunch = 'spicy', activity = 'ski' where name = '김가람'" >/dev/null
+fi
 car=$(anon "select pick_car('시험1팀', '김가람')")
-eq "login() 결과가 차량 뽑기 뒤에도 같음" "$team/miyeok/$room/ski" "$(anon "select (j->>'team') || '/' || (j->>'menu') || '/' || (j->>'room') || '/' || (j->>'activity') from login('시험1팀', '김가람') j")"
+eq "login() 결과가 차량 뽑기 뒤에도 같음" "$team/ugeoji/$room/ski/spicy" "$(anon "select (j->>'team') || '/' || (j->>'menu') || '/' || (j->>'room') || '/' || (j->>'activity') || '/' || (j->>'lunch') from login('시험1팀', '김가람') j")"
 eq "team_members()" "김가람" "$(anon "select string_agg(e->>'name', ',') from json_array_elements(team_members('시험1팀', '김가람')) e")"
 eq "board() 명단 전원" "12" "$(anon "select json_array_length(board('$CODE'))")"
 eq "board_state() 열쇠 그대로" "people,schedule" "$(anon "select string_agg(k, ',' order by k) from json_object_keys(board_state('$CODE')) k")"
@@ -686,6 +695,8 @@ anon "select admin_reset_all('$CODE')" >/dev/null
 eq "admin_reset_all()(팀·조식 지움)은 차량을 건드리지 않음" "/$car" "$(sql "select coalesce(team, '') || '/' || car from people where name = '김가람'")"
 anon "select admin_clear('$CODE', 'room')" >/dev/null
 eq "admin_clear('room')은 차량을 건드리지 않음" "$car" "$(sql "select car from people where name = '김가람'")"
+anon "select admin_clear('$CODE', 'lunch')" >/dev/null
+eq "admin_clear('lunch')은 차량을 건드리지 않음" "/$car" "$(sql "select coalesce(lunch, '') || '/' || car from people where name = '김가람'")"
 ID=$(sql "select id from people where name = '김가람'")
 anon "select admin_update('$CODE', $ID, '{\"dept\":\"시험1팀\",\"name\":\"김가람\",\"title\":\"과장\",\"gender\":\"남\"}')" >/dev/null
 eq "admin_update()은 차량을 건드리지 않음" "$car" "$(sql "select car from people where id = $ID")"
