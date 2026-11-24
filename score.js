@@ -11,7 +11,7 @@ const SCORE_CONFIG = {
   spinMs: 2000,            // 숫자가 도는 시간(처음 빠르고 끝에서 느려짐). 점수 변화가 아무리 커도 같음
   pollMs: 5000,            // 서버 점수·팀원 이름을 다시 받는 간격
   verifyMs: 1200,          // 저장 응답을 못 받은(저장됐는지 모르는) 뒤 서버 점수를 다시 읽어 보기까지의 시간
-  pendMs: 120000,          // 응답을 못 받은 요청의 번호를 기억해 두는 시간: 이 안에 같은 팀·같은 점수를 다시 누르면 같은 번호로 보내 서버가 두 번 더하지 않음
+  pendMs: 120000,          // 응답을 못 받은 요청의 번호를 기억해 두는 시간((팀, 점수)마다 따로): 이 안에 같은 팀·같은 점수를 다시 누르면(그 사이 다른 점수를 줬어도) 같은 번호로 보내 서버가 두 번 더하지 않음
   hitMs: 1300,             // 멈춘 뒤 강조(밝게/가라앉게)가 남는 시간
   tagMs: 2200,             // +50·−10 표시가 보이는 시간
   reducedSoundMs: 600,     // '움직임 줄이기'일 때 소리 길이(돌지 않으니 짧게 마무리 소리만)
@@ -240,9 +240,11 @@ window.__scoreAudio = { log: [], muted: false, started: false, state: 'none', cu
   }
   // 잠그기(또는 들어온 뒤 서버가 비밀번호를 거절함): 이 탭의 기억을 지우고, 화면에 남은 점수·이름 DOM 을 바로 없앤 뒤 페이지를 다시 불러 입구로.
   let locking = false;
+  let stopApp = () => {}; // startApp 이 정해 두는 '주기적 받기 멈추기'(잠그는 순간 5초 타이머를 지움)
   function lockNow(reason) {
     if (locking) return;
     locking = true;
+    stopApp();
     sess.clear();
     audio.cut();
     try { sessionStorage.setItem(GATE_NOTE_KEY, reason === 'lock' ? 'lock' : 'auth'); } catch {}
@@ -284,7 +286,7 @@ window.__scoreAudio = { log: [], muted: false, started: false, state: 'none', cu
       busy: false,         // 저장 요청이 서버에 나가 답을 기다리는 중 — 이때는 점수 단추·키가 잠김(중복 요청 방지)
       sending: null,       // 보내는 중인 {team, delta}
       verifying: null,     // 저장 응답을 못 받아 저장됐는지 모르는 상태: {team, delta, before}. 서버 점수를 다시 읽어 확인할 때까지 점수 단추 잠김
-      pend: null,          // 응답을 못 받아 서버에 들어갔는지 모르는 요청 {team, delta, req, until}. 같은 팀·같은 점수를 다시 누르면 같은 번호(req)로 보냄(늦게 도착한 원래 요청과 겹쳐도 한 번만 더해짐)
+      pend: new Map(),     // 응답을 못 받아 서버에 들어갔는지 모르는 요청들: '팀|점수' → {team, delta, req, until}. 같은 팀·같은 점수를 다시 누르면 같은 번호(req)로 보냄(늦게 도착한 원래 요청과 겹쳐도 한 번만 더해짐). 다른 점수를 줘도 지우지 않음
       last: null,          // 마지막으로 성공한 {team, delta} (되돌리기용)
       writes: 0,           // 저장 요청이 시작·끝날 때마다 +1: 새로 받기 도중에 저장이 끼었는지 알아봄
       people: first || [], // board_state 의 명단
@@ -298,6 +300,7 @@ window.__scoreAudio = { log: [], muted: false, started: false, state: 'none', cu
       alert: null,         // {kind: 'error'|'warn', msg, scope}
       status: '',
       tagN: 0,
+      soundNote: false,    // 지금 안내 줄이 '소리가 꺼져 있어서 안 들려요'인지
     };
     try { S.namesOff = sessionStorage.getItem('score-names-off') === '1'; } catch {}
     const calls = { board_state: 0, score_state: 0, score_add: 0 }; // 시험용: 입구 다음에 보낸 요청 수
@@ -491,7 +494,7 @@ window.__scoreAudio = { log: [], muted: false, started: false, state: 'none', cu
         }
         if (all) finishSpin(a);
       }
-      if (active.size) raf = requestAnimationFrame(frame);
+      if (active.size && !raf) raf = requestAnimationFrame(frame); // 끝난 연출이 다시 맞추려고 새 연출(startSpin)을 시작했으면 그쪽이 이미 루프를 잡아 둠: 둘이 되지 않게
     }
     const hitTimers = {};
     function hit(t, dir) { // 멈춘 순간 강조: 올라가면 밝게, 내려가면 가라앉게(움직임 줄이기에서는 색만)
@@ -557,8 +560,13 @@ window.__scoreAudio = { log: [], muted: false, started: false, state: 'none', cu
       return true;
     }
     // 서버 점수와 화면 점수가 다르고 그 팀이 돌고 있지 않으면 조용히 맞춘다
+    //   내가 준 것이 아닌 변화(다른 탭·관리자 초기화·늦게 반영된 요청)로 맞춰지는 팀이 '방금 준 것'(되돌리기용)의 팀이면 되돌리기를 비운다: 낡은 기록으로 점수를 깎지 않게
     function reconcile(t) {
-      if (S.server && !active.has(t) && S.server[t] !== S.shown[t]) setTarget(t, S.server[t], { sound: false });
+      if (S.server && !active.has(t) && S.server[t] !== S.shown[t]) {
+        if (S.last && S.last.team === t) S.last = null;
+        setTarget(t, S.server[t], { sound: false });
+        updateControls();
+      }
     }
 
     // ── 이름 ──────────────────────────────────────────────
@@ -579,7 +587,7 @@ window.__scoreAudio = { log: [], muted: false, started: false, state: 'none', cu
 
     // ── 안내(상태 줄·경고 상자) ───────────────────────────
     const announce = (text) => { $('#live').textContent = text; };
-    function setStatus(text, kind) { S.status = text || ''; $('#status').textContent = text || ''; $('#status').dataset.kind = kind || ''; $('#status').title = text || ''; }
+    function setStatus(text, kind) { S.soundNote = false; S.status = text || ''; $('#status').textContent = text || ''; $('#status').dataset.kind = kind || ''; $('#status').title = text || ''; }
     function showAlert(msg, kind, scope) { // kind: 'error'(안 됐어요, 빨강) | 'warn'(됐는지 몰라요, 노랑)
       S.alert = { kind, msg, scope: scope || '' };
       $('#alertMsg').textContent = msg;
@@ -620,11 +628,13 @@ window.__scoreAudio = { log: [], muted: false, started: false, state: 'none', cu
       if (Math.abs(delta) > C.maxStep) { setStatus(`한 번에 줄 수 있는 점수는 ${C.maxStep.toLocaleString('en-US')}점까지예요.`, 'warn'); return false; }
       audio.unlock(); // 누른 바로 이 순간(사용자 동작) 오디오를 깨움 — 답이 온 뒤 소리가 나게
       // 요청 번호: 응답을 못 받았던 요청과 같은 팀·같은 점수를 (기억 시간 안에) 다시 누르면 같은 번호를 다시 씀 → 늦게 도착한 원래 요청이 있어도 서버가 한 번만 더함.
-      //   다른 팀·다른 점수를 누르면 새 번호(이때는 옛 요청이 나중에 도착해 반영될 수 있음 — 안내 문구에 적혀 있음)
-      const p = S.pend;
-      const reuse = !!p && Date.now() < p.until && p.team === team && p.delta === delta;
+      //   번호는 (팀, 점수)마다 따로 기억하므로 그 사이 다른 점수를 줘도 남아 있다. 다른 팀·다른 점수를 누르면 새 번호(그 요청은 옛 요청과 별개).
+      //   다시 보낸 요청이 성공하면 그 번호만 지우고, 서버가 확실히 거절하면 그 번호를 지움(giveFailed). 기억 시간이 지난 번호는 정리
+      const key = `${team}|${delta}`;
+      pruneOld();
+      const p = S.pend.get(key);
+      const reuse = !!p;
       const req = reuse ? p.req : newReq();
-      S.pend = null;
       const base = S.server ? S.server[team] : null; // 이 요청을 보내기 전에 알던 서버 점수
       S.busy = true;
       S.sending = { team, delta };
@@ -639,6 +649,7 @@ window.__scoreAudio = { log: [], muted: false, started: false, state: 'none', cu
       S.busy = false;
       S.sending = null;
       if (err) return giveFailed(err, team, delta, req);
+      S.pend.delete(key); // 서버가 답함: 이 (팀, 점수)의 번호는 끝난 것(다른 번호는 그대로)
       S.server = { ...res };
       S.pollFails = 0;
       updateLink();
@@ -659,17 +670,19 @@ window.__scoreAudio = { log: [], muted: false, started: false, state: 'none', cu
       updateControls();
       return true;
     }
+    function pruneOld() { const now = Date.now(); for (const [k, v] of S.pend) if (now >= v.until) S.pend.delete(k); }
     function giveFailed(e, team, delta, req) {
       const msg = String((e && e.message) || '').trim() || '알 수 없는 오류';
       if (isAuthErr(e)) { lockNow('auth'); return false; }
       // 서버가 이유를 적어 거절한 오류(e.code 있음)면 확실히 안 들어간 것(요청 번호도 버림). 그 밖(시간 초과·통신 끊김·이상한 답)은 서버에 들어갔는지 모른다.
       const uncertain = !e.code || e.retryable;
       if (!uncertain) {
+        S.pend.delete(`${team}|${delta}`); // 확실히 안 들어갔으니 번호도 버림
         setStatus(`${label(team)} ${signed(delta)} 저장 안 됨`, 'warn');
         showAlert(`저장하지 못했어요: ${msg} 점수는 그대로예요. 다시 눌러 주세요.`, 'error', 'give');
         return false;
       }
-      S.pend = { team, delta, req, until: Date.now() + C.pendMs }; // 요청이 나중에 서버에 도착할 수도 있음: 번호를 기억해 두었다가 같은 점수를 다시 누르면 재사용
+      S.pend.set(`${team}|${delta}`, { team, delta, req, until: Date.now() + C.pendMs }); // 요청이 나중에 서버에 도착할 수도 있음: 번호를 기억해 두었다가 같은 점수를 다시 누르면 재사용
       S.verifying = { team, delta, before: S.shown[team] };
       setStatus('저장됐는지 서버 점수를 확인하는 중…', 'busy');
       showAlert(`${label(team)} ${signed(delta)} 저장 응답을 받지 못했어요(통신이 끊겼거나 너무 느렸어요). 서버에는 들어갔을 수도 있어서 같은 요청을 다시 보내지 않았어요. 서버 점수를 다시 읽어 화면을 맞출게요.`, 'warn', 'give');
@@ -685,16 +698,16 @@ window.__scoreAudio = { log: [], muted: false, started: false, state: 'none', cu
       const base = v.before == null ? now : v.before;
       let msg;
       if (now - base === v.delta) {
-        S.pend = null; // 들어간 것이 확인됨: 같은 점수를 또 누르면 새로 주는 것
+        S.pend.delete(`${v.team}|${v.delta}`); // 들어간 것이 확인됨: 같은 점수를 또 누르면 새로 주는 것
         S.last = { team: v.team, delta: v.delta };
         msg = `${label(v.team)} ${signed(v.delta)}은 저장돼 있었어요. 화면을 서버 점수(${fmt(now)}점)에 맞췄어요. 다시 누르지 않아도 돼요.`;
         showAlert(msg, 'warn', 'give');
       } else if (now === base) {
         // 아직 안 들어갔을 뿐, 요청이 늦게 도착해 반영될 수도 있음(요청 번호는 그대로 기억 중). 같은 점수를 다시 누르면 같은 번호라 두 번 들어가지 않음
-        msg = `${label(v.team)} ${signed(v.delta)}은 아직 반영되지 않았어요(점수 ${fmt(now)}점 그대로). 늦게 반영될 수도 있으니 점수가 맞는지 확인해 주세요. 같은 점수를 2분 안에 다시 누르면 두 번 들어가지 않아요.`;
+        msg = `${label(v.team)} ${signed(v.delta)}은 아직 반영되지 않았어요(점수 ${fmt(now)}점 그대로). 늦게 반영될 수도 있으니 점수가 맞는지 확인해 주세요. 같은 팀에 같은 점수를 2분 안에 다시 누르면(그 사이 다른 점수를 줘도) 두 번 들어가지 않아요.`;
         showAlert(msg, 'warn', 'give');
       } else {
-        msg = `서버 점수(${label(v.team)} ${fmt(now)}점)가 화면과 달라서 맞췄어요. ${signed(v.delta)}이 들어갔는지 점수를 확인한 뒤 필요하면 다시 눌러 주세요. 같은 점수를 2분 안에 다시 누르면 두 번 들어가지 않아요.`;
+        msg = `서버 점수(${label(v.team)} ${fmt(now)}점)가 화면과 달라서 맞췄어요. ${signed(v.delta)}이 들어갔는지 점수를 확인한 뒤 필요하면 다시 눌러 주세요. 같은 팀에 같은 점수를 2분 안에 다시 누르면(그 사이 다른 점수를 줘도) 두 번 들어가지 않아요.`;
         showAlert(msg, 'warn', 'give');
       }
       setStatus('', '');
@@ -712,7 +725,12 @@ window.__scoreAudio = { log: [], muted: false, started: false, state: 'none', cu
       if (n === null) { setStatus('점수는 숫자로 넣어 주세요(예: 30).', 'warn'); $('#customAmt').focus(); return false; }
       if (n === 0) { setStatus('0점은 줄 수 없어요.', 'warn'); $('#customAmt').focus(); return false; }
       if (!S.team) { setStatus('먼저 팀을 골라 주세요 (1~4)', 'warn'); nudgePick(); return false; }
-      return give(S.team, sign < 0 ? -Math.abs(n) : n).then((ok) => { if (ok) { $('#customAmt').value = ''; if (document.activeElement === $('#customAmt')) $('#customAmt').blur(); } return ok; });
+      const sent = $('#customAmt').value; // 보낸 값(입력 원문)
+      return give(S.team, sign < 0 ? -Math.abs(n) : n).then((ok) => {
+        // 요청이 오가는 사이 다음 숫자를 쳐 두었으면(칸의 값이 보낸 값과 다름) 지우지 않음
+        if (ok && $('#customAmt').value === sent) { $('#customAmt').value = ''; if (document.activeElement === $('#customAmt')) $('#customAmt').blur(); }
+        return ok;
+      });
     }
 
     // ── 서버 점수·이름 다시 받기(5초마다) ─────────────────
@@ -720,12 +738,14 @@ window.__scoreAudio = { log: [], muted: false, started: false, state: 'none', cu
     function updateLink() { $('#linkWarn').hidden = S.pollFails < 2; }
     async function refreshOnce() {
       if (PRACTICE) return true;
+      if (locking) return false;
       if (S.polling) { S.pollAgain = true; return false; }
       S.polling = true;
       const w0 = S.writes;
       let ok = false;
       try {
         const [sc, pe] = await Promise.allSettled([api.state(), api.people()]);
+        if (locking) return false; // 잠그는 사이 날아간 받기: 결과를 화면·상태에 반영하지 않음
         for (const r of [sc, pe]) if (r.status === 'rejected' && isAuthErr(r.reason)) return lockNow('auth');
         if (pe.status === 'fulfilled') { S.people = pe.value; renderNames(); }
         if (sc.status === 'rejected') {
@@ -746,10 +766,12 @@ window.__scoreAudio = { log: [], muted: false, started: false, state: 'none', cu
       } finally { S.polling = false; }
       return ok;
     }
+    stopApp = () => { clearTimeout(S.pollTimer); S.pollAgain = false; }; // 잠그는 순간: 다음 받기 예약을 지움
     function schedulePoll(ms) {
       if (PRACTICE || locking) return;
       clearTimeout(S.pollTimer);
       S.pollTimer = setTimeout(async () => {
+        if (locking) return;
         if (!document.hidden || S.verifying || !S.ready) await refreshOnce();
         if (locking) return;
         const again = S.pollAgain;
@@ -777,12 +799,13 @@ window.__scoreAudio = { log: [], muted: false, started: false, state: 'none', cu
     }
     function toggleSound() {
       audio.setMuted(!audio.muted);
+      if (!audio.muted && S.soundNote) setStatus('', ''); // 소리를 켜면 '소리가 꺼져 있어서 안 들려요' 안내만 지움(다른 안내는 그대로)
       updateControls();
     }
     function soundTest() {
       audio.unlock();
       audio.play('test');
-      if (audio.muted) setStatus('소리가 꺼져 있어서 안 들려요. ‘소리 켜짐’으로 바꿔 주세요.', 'warn');
+      if (audio.muted) { setStatus('소리가 꺼져 있어서 안 들려요. ‘소리 켜짐’으로 바꿔 주세요.', 'warn'); S.soundNote = true; }
       else setStatus('소리 시험: 올라가는 소리 → 내려가는 소리', '');
     }
     function toggleNames() {
@@ -875,11 +898,11 @@ window.__scoreAudio = { log: [], muted: false, started: false, state: 'none', cu
       const code = e.code;
       const digit = /^(?:Digit|Numpad)([1-4])$/.exec(code);
       if (digit) { selectTeam(TEAM_KEYS[Number(digit[1]) - 1]); return; }
+      if (e.repeat) { if (code === 'KeyF' || e.key === 'Enter') e.preventDefault(); return; } // 키를 누르고 있어 반복되는 입력은 모두 무시: 점수가 계속 들어가거나 소리·이름·전체 화면이 계속 바뀌지 않게
       if (code === 'KeyM') { toggleSound(); return; }
       if (code === 'KeyF') { e.preventDefault(); toggleFs(); return; }
       if (code === 'KeyH') { toggleNames(); return; }
       if (code === 'KeyR') { if (!PRACTICE) schedulePoll(0); return; }
-      if (e.repeat) return; // 키를 누르고 있어 반복되는 입력으로 점수가 계속 들어가지 않게
       if (code === 'KeyU') { undo(); return; }
       if (e.key === 'Enter') { e.preventDefault(); $('#customAmt').focus(); $('#customAmt').select(); return; } // Enter → 점수 칸으로. 숫자를 치고 Enter 로 주기
       const q = [...document.querySelectorAll('.quick')].find((b) => b.dataset.key === code);
@@ -921,6 +944,7 @@ window.__scoreAudio = { log: [], muted: false, started: false, state: 'none', cu
         errorKind: S.alert ? S.alert.kind : null,
         status: S.status,
         pollFails: S.pollFails,
+        pend: S.pend.size,             // 기억해 둔 요청 번호 수
         calls: Object.freeze({ ...calls }),
       });
     }

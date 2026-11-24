@@ -4,7 +4,7 @@
 //   3 연달아 주기(연타·Enter 두 번·연출 중 같은 팀·다른 팀 바로 이어서·마지막 값으로 정확히 멈춤·연출 길이)
 //   4 새로 고침 뒤 유지(연출 중·저장 중 포함)   5 두 브라우저(다른 쪽 점수 5초 안 반영·동시에 줘도 합산·연출 중 폴링이 안 덮음)
 //   6 저장 실패(서버 거절·응답 끊김·서버엔 반영된 채 응답만 끊김)
-//   6.1 응답이 끊긴 요청이 늦게 서버에 도착해도 같은 점수를 다시 누르면 한 번만(요청 번호 p_req)   6.2 요청을 23초 붙잡았다가 보냄(20초 시간 초과 뒤 도착)
+//   6.1 응답이 끊긴 요청이 늦게 서버에 도착해도 같은 점수를 다시 누르면 한 번만(요청 번호 p_req, (팀, 점수)마다 따로 기억 — 그 사이 다른 점수를 줘도 남음)   6.2 요청을 23초 붙잡았다가 보냄(20초 시간 초과 뒤 도착)
 //   6.3 DB 직접: score_add 요청 번호(동시·한도 실패·형식·24시간 정리·초기화로 안 지움·다시 적용)   6.4 +N 표시·소리·방향은 준 점수 기준   6.5 직접 입력 부호(빼기는 늘 −)·입력 칸 길이
 //   7 연습 모드   8 관리자 페이지 초기화가 점수판에 반영
 //   9 움직임 줄이기   10 1920×1080·1280×720 화면 안에 네 팀·네 점수(처음·도는 중·큰 점수·오류 상자·긴 이름·이름 숨김)
@@ -310,6 +310,21 @@ export async function scoreTests(only = []) {
       s.eq(await page.evaluate(() => [document.getElementById('loginErr').dataset.kind, sessionStorage.getItem('score-gate')]), ['wrong', null], '[비밀번호 바뀜] 새로 고침 → 입구 · 기억 지움');
       s.ok(/바뀌었어요/.test(await page.locator('#loginErr').innerText()), '[비밀번호 바뀜] 안내');
     } finally { await db.query(`update public.config set value = '${ADMIN_CODE}' where key = 'admin_code'`); }
+    // 잠그는 순간 5초 받기를 멈춤: 새로 불러오기가 느려(여기서는 10초 붙잡음) 옛 화면이 한동안 남아 있어도 score_state·board_state 가 더 안 나감
+    await enterGate(page); await waitBoard(page);
+    const pn = (await sc(page)).calls.score_state;
+    await wait(page, (n) => window.__score.calls.score_state > n, pn, 9000); await sleep(300); // 5초 받기가 한 번 끝나 다음 받기가 예약된 상태에서 잠금
+    await page.route(/\/score\.html/, async (r) => { await sleep(10000); await r.fallback().catch(() => {}); });
+    await page.locator('#lockBtn').click();
+    await page.locator('#dlgOk').click({ noWaitAfter: true }); // 새 화면이 올 때까지 기다리지 않음
+    await sleep(600); // 이미 날아간 받기가 있어도 도착할 시간
+    const pollN = () => calls('score_state').length + calls('board_state').length + page.nrpc('score_state') + page.nrpc('board_state'); // 서버가 받은 수 + 브라우저가 보낸 수(중간에 끊겨도 셈)
+    const poll0 = pollN();
+    await sleep(7000);
+    s.eq(pollN(), poll0, '[잠근 뒤] 7초(5초 받기 주기보다 길게) 동안 score_state·board_state 요청이 늘지 않음');
+    await gateIdle(page);
+    s.eq((await sc(page)).view, 'login', '[잠근 뒤] 새로 불러온 뒤에도 입구');
+    await page.unroute(/\/score\.html/);
     s.eq(calls('score_add').length + calls('admin_clear').length, 0, '입구를 시험하는 동안 점수 쓰기 요청 0건');
   });
 
@@ -502,6 +517,13 @@ export async function scoreTests(only = []) {
   await scenario(5, '두 브라우저: 다른 쪽 점수가 5초 안에 반영(소리 없음), 동시에 줘도 합산, 연출 도중 폴링이 안 덮음', async (s) => {
     await clean(); await resetRoster(db, { picked: true }); resetCalls();
     const A = await newCtx(); const B = await newCtx(REDUCED);
+    // 프레임 루프 감시: 아직 안 불린 requestAnimationFrame 예약이 연출 중에 늘 1개 이하인지(연출 끝에서 다시 맞추는 새 연출이 루프를 하나 더 만들지 않음)
+    await A.page.addInitScript(() => {
+      const raw = window.requestAnimationFrame.bind(window);
+      const w = (window.__raf = { pending: 0, max: 0, spins: 0, was: false });
+      window.requestAnimationFrame = (cb) => { w.pending++; return raw((t) => { w.pending--; cb(t); }); };
+      setInterval(() => { const a = !!(window.__score && window.__score.animating); if (a && !w.was) w.spins++; w.was = a; if (a) w.max = Math.max(w.max, w.pending); }, 15);
+    });
     await login(A.page); await login(B.page);
     s.eq(await A.page.evaluate(() => document.hidden), false, '준비: 시험 창이 숨김 상태가 아님(숨김이면 새로 받기를 쉼)');
     // B 가 주면 A 가 따라옴
@@ -532,6 +554,11 @@ export async function scoreTests(only = []) {
     await wait(A.page, () => window.__score.shown.blue === 57 && !window.__score.animating, null, 8000);
     await idle(A.page);
     await consistent(A.page, s, '연출이 끝난 뒤 서버 값에 맞춤', { ...ZERO, red: 120, blue: 57 });
+    const rf = await A.page.evaluate(() => ({ ...window.__raf }));
+    s.ok(rf.spins >= 3 && rf.max === 1, `[프레임 루프] 연출이 도는 내내(연출 ${rf.spins}번, 끝에서 다시 맞추는 연출 포함) 예약된 프레임 요청은 최대 1개(실제 ${rf.max}개)`);
+    // 내가 준 것(파랑 +50)이 아닌 변화(+7)로 파랑이 맞춰졌으니 '방금 준 것 되돌리기'는 비워짐
+    const lastB = await sc(A.page);
+    s.eq([lastB.last, await A.page.locator('#undoBtn').isDisabled(), (await A.page.locator('#undoWhat').innerText()).trim()], [null, true, ''], '[되돌리기] 연출이 끝나며 다른 곳의 변화(+7)로 맞춰진 팀(파랑)의 되돌리기 기록은 비워짐(단추 꺼짐·글자 없음)');
     s.eq(await A.page.evaluate(() => window.__scoreAudio.log.map((x) => x.dir)), ['up', 'up'], '[소리] A 의 소리 요청은 직접 준 2번(빨강·파랑)뿐 — 다른 곳 점수(+7)로 맞춘 것은 소리 없음');
   });
 
@@ -575,7 +602,7 @@ export async function scoreTests(only = []) {
     s.eq(v.locked, true, '[끊김] 확인하는 동안 점수 단추는 잠김(같은 점수를 또 주지 않게)');
     await wait(page, () => !window.__score.verifying && window.__score.errorKind === 'warn' && /아직 반영되지 않았어요/.test(window.__score.error || ''), null, 10000);
     const v2 = await sc(page);
-    s.ok(/아직 반영되지 않았어요\(점수 0점 그대로\)/.test(v2.error) && /늦게 반영될 수도 있으니 점수가 맞는지 확인해 주세요/.test(v2.error) && /다시 누르면 두 번 들어가지 않아요/.test(v2.error) && !/저장되지 않았어요/.test(v2.error), `[끊김·서버에 안 닿음] 서버 점수를 읽어 단정하지 않고 "아직 반영되지 않았어요, 늦게 반영될 수도 있어요": ${v2.error}`);
+    s.ok(/아직 반영되지 않았어요\(점수 0점 그대로\)/.test(v2.error) && /늦게 반영될 수도 있으니 점수가 맞는지 확인해 주세요/.test(v2.error) && /같은 팀에 같은 점수를 2분 안에 다시 누르면\(그 사이 다른 점수를 줘도\) 두 번 들어가지 않아요/.test(v2.error) && !/저장되지 않았어요/.test(v2.error), `[끊김·서버에 안 닿음] 서버 점수를 읽어 단정하지 않고 "아직 반영되지 않았어요, 늦게 반영될 수도 있어요": ${v2.error}`);
     s.eq([v2.shown.blue, (await dbScores()).blue, page.nrpc('score_add') - sendsBefore, calls('score_add').length - base1], [0, 0, 1, 0], '[끊김·서버에 안 닿음] 점수 그대로 · score_add 는 브라우저가 한 번만 보냄(재시도 없음)');
     await sleep(1500);
     s.eq(page.nrpc('score_add') - sendsBefore, 1, '[끊김] 기다려도 score_add 를 다시 보내지 않음');
@@ -617,7 +644,7 @@ export async function scoreTests(only = []) {
   const waitDb = async (fn, ms = 10000) => { const end = Date.now() + ms; while (Date.now() < end) { if (fn(await dbScores())) return true; await sleep(100); } return false; };
   const scoreAddCalls = () => calls('score_add');
 
-  await scenario(6.1, '응답이 끊긴 요청이 늦게 서버에 도착: 안내 뒤 같은 점수를 다시 눌러도 한 번만(같은 요청 번호), 다른 점수면 새 번호, 서버가 거절하면 번호 버림', async (s) => {
+  await scenario(6.1, '응답이 끊긴 요청이 늦게 서버에 도착: 안내 뒤 같은 점수를 다시 눌러도 한 번만(같은 요청 번호 — 그 사이 다른 점수를 줘도 번호가 남음), 다른 (팀, 점수)면 새 번호, 서버가 거절하면 번호 버림', async (s) => {
     await clean(); resetCalls();
     const { page } = await newCtx(REDUCED);
     await login(page);
@@ -630,7 +657,7 @@ export async function scoreTests(only = []) {
       await wait(page, () => window.__score.verifying, null, 8000);
       await notYet(page);
       const st = await sc(page);
-      s.ok(st.errorKind === 'warn' && /늦게 반영될 수도 있으니 점수가 맞는지 확인해 주세요/.test(st.error) && /같은 점수를 2분 안에 다시 누르면 두 번 들어가지 않아요/.test(st.error) && /점수 0점 그대로/.test(st.error), `[A] 단정하지 않는 안내: ${st.error}`);
+      s.ok(st.errorKind === 'warn' && /늦게 반영될 수도 있으니 점수가 맞는지 확인해 주세요/.test(st.error) && /같은 팀에 같은 점수를 2분 안에 다시 누르면\(그 사이 다른 점수를 줘도\) 두 번 들어가지 않아요/.test(st.error) && /점수 0점 그대로/.test(st.error), `[A] 단정하지 않는 안내: ${st.error}`);
       s.eq((await dbScores()).red, 0, '[A] 안내가 뜰 때 서버 점수는 0(요청이 아직 서버에 안 닿음)');
       s.ok(await waitDb((d) => d.red === 50), '[A] 늦은 요청이 4초쯤 뒤 서버에 도착해 +50 이 반영됨');
       await page.unroute(/\/rpc\/score_add$/);
@@ -675,7 +702,7 @@ export async function scoreTests(only = []) {
       await wait(page, () => window.__score.shown.yellow === 30, null, 15000);
       s.eq((await sc(page)).shown.yellow, 30, '[C] 점수판은 늦게 반영된 값(30)을 따라감');
     }
-    // D. 다른 팀을 누르면 새 번호, 그 다음 처음 팀으로 돌아와도 옛 번호는 이미 버려짐
+    // D. 다른 팀을 누르면 그 팀은 새 번호. 처음 팀으로 돌아와 같은 점수를 누르면 (번호가 남아 있어) 옛 번호
     {
       await clean(); resetCalls(); await page.reload(); await enterGate(page); await waitBoard(page);
       const late = [];
@@ -687,9 +714,58 @@ export async function scoreTests(only = []) {
       await give(page, 'red', 15);
       await give(page, 'green', 15);
       const cs = scoreAddCalls();
-      s.ok(cs.length >= 2 && cs[0].args.p_req !== late[0].p_req && cs[1].args.p_req !== late[0].p_req, `[D] 다른 팀을 누른 뒤에는 처음 팀 같은 점수도 새 번호: ${cs.map((c) => c.args.p_team + c.args.p_req.slice(0, 4)).join(', ')} / 옛 ${late[0].p_req.slice(0, 4)}`);
+      s.ok(cs.length >= 2 && cs[0].args.p_team === 'red' && cs[0].args.p_req !== late[0].p_req, `[D] 다른 팀(빨강 +15)은 새 번호: ${cs.map((c) => c.args.p_team + c.args.p_req.slice(0, 4)).join(', ')} / 옛 ${late[0].p_req.slice(0, 4)}`);
+      s.ok(cs.length >= 2 && cs[1].args.p_team === 'green' && cs[1].args.p_req === late[0].p_req, '[D] 그 사이 다른 팀을 눌렀어도 처음 팀(초록 +15)을 다시 누르면 같은 번호');
       await waitDb(() => scoreAddCalls().length >= 3, 12000); await sleep(300);
+      s.eq([await dbScores().then((d) => [d.red, d.green]), new Set(scoreAddCalls().map((c) => c.args.p_req)).size], [[15, 15], 2], '[D] 늦은 요청이 도착해도 초록은 +15 한 번만(DB 빨강 15·초록 15) · 번호는 두 개뿐');
       await page.reload(); await enterGate(page); await waitBoard(page); // 늦은 요청까지 끝난 뒤 정리
+    }
+    // F. 응답 못 받은 요청(+50, −10 둘 다)이 늦게 도착하는 사이 다른 점수를 줘도 번호가 남음: 다시 누른 요청이 먼저 서버에 도착하는 순서
+    {
+      await clean(); resetCalls(); await page.reload(); await enterGate(page); await waitBoard(page);
+      const late = [];
+      await lateArrival(page, 8000, late);
+      await give(page, 'red', 50, { wait: false });
+      await wait(page, () => window.__score.verifying, null, 8000);
+      await notYet(page);
+      await give(page, 'red', -10, { wait: false }); // 다른 점수도 끊김 → 두 번호를 함께 기억
+      await wait(page, () => window.__score.verifying, null, 8000);
+      await notYet(page);
+      s.eq([(await sc(page)).pend, late.length, new Set(late.map((x) => x.p_req)).size], [2, 2, 2], '[F] 응답을 못 받은 (빨강 +50)·(빨강 −10) 두 요청의 번호를 따로 기억(pend 2)');
+      await page.unroute(/\/rpc\/score_add$/);
+      await give(page, 'red', 50); // 사이에 −10 을 줬어도 +50 은 옛 번호
+      await give(page, 'red', -10);
+      const cs = scoreAddCalls();
+      s.ok(cs.length === 2 && cs[0].args.p_delta === 50 && cs[0].args.p_req === late[0].p_req && cs[1].args.p_delta === -10 && cs[1].args.p_req === late[1].p_req, `[F] 사이에 다른 점수를 줘도 +50 은 +50 의 옛 번호, −10 은 −10 의 옛 번호로 나감: ${cs.map((c) => c.args.p_delta + ':' + c.args.p_req.slice(0, 4)).join(', ')}`);
+      s.eq([(await dbScores()).red, (await sc(page)).pend], [40, 0], '[F] 다시 보낸 요청이 성공하면 그 번호만 지워짐(pend 0) · DB 40(+50 −10)');
+      s.ok(await waitDb(() => scoreAddCalls().length >= 4, 20000) || scoreAddCalls().length >= 4, '[F] 끊겼던 두 요청이 8초쯤 뒤 서버에 도착');
+      await sleep(300);
+      s.eq([(await dbScores()).red, scoreAddCalls().slice(0, 4).map((c) => c.status), new Set(scoreAddCalls().map((c) => c.args.p_req)).size], [40, [200, 200, 200, 200], 2], '[F] 늦게 도착한 두 요청은 더해지지 않음(DB 40 그대로) · 번호는 두 개뿐');
+      await give(page, 'red', 50); await idle(page); // 번호가 지워진 뒤 새로 누른 +50 은 새 번호로 정상 반영
+      const last = scoreAddCalls().at(-1);
+      s.ok(last.args.p_delta === 50 && last.args.p_req !== late[0].p_req, '[F] 번호가 지워진 뒤 새로 누른 +50 은 새 번호');
+      s.eq((await dbScores()).red, 90, '[F] 새 +50 은 정상 반영(90)');
+    }
+    // G. 같은 일이지만 늦은 요청이 먼저 서버에 도착하고 그 뒤 다시 누름
+    {
+      await clean(); resetCalls(); await page.reload(); await enterGate(page); await waitBoard(page);
+      const late = [];
+      await lateArrival(page, 3500, late);
+      await give(page, 'red', 50, { wait: false });
+      await wait(page, () => window.__score.verifying, null, 8000);
+      await notYet(page);
+      await page.unroute(/\/rpc\/score_add$/);
+      s.ok(await waitDb((d) => d.red === 50, 8000), '[G] 늦은 +50 이 먼저 서버에 도착해 반영됨');
+      await give(page, 'red', -10); // 다른 점수(새 번호) → 40
+      await give(page, 'red', 50);  // 옛 번호 그대로 → 서버가 이미 처리한 요청이라 더하지 않음
+      const cs = scoreAddCalls();
+      s.ok(cs.length === 3 && cs[2].args.p_delta === 50 && cs[2].args.p_req === late[0].p_req && cs[1].args.p_req !== late[0].p_req, `[G] 사이에 −10 을 줬어도 +50 은 옛 번호: ${cs.map((c) => c.args.p_delta + ':' + c.args.p_req.slice(0, 4)).join(', ')}`);
+      await idle(page);
+      const g = await sc(page);
+      s.eq([(await dbScores()).red, g.shown.red, g.pend], [40, 40, 0], '[G] DB 는 50 −10 = 40(+50 이 두 번 들어가지 않음) · 화면 40 · 다시 보낸 요청이 응답을 받아 번호 지워짐');
+      s.ok(/이미 반영된 요청이라 다시 더하지 않았어요/.test(g.status), `[G] 안내: ${g.status}`);
+      await give(page, 'red', 50); await idle(page);
+      s.eq([(await dbScores()).red, scoreAddCalls().at(-1).args.p_req !== late[0].p_req], [90, true], '[G] 번호가 지워진 뒤 새 +50 은 새 번호로 정상 반영(90)');
     }
     // E. 서버가 이유를 적어 거절한 요청의 번호는 버림: 다시 누르면 새 번호
     {
@@ -817,6 +893,7 @@ export async function scoreTests(only = []) {
     s.eq([(await sc(page)).spinning.red, (await sc(page)).shown.red, await tags('red'), await audioLog()], ['up', 160, ['+50'], ['up']], '[위] 다른 곳에서 +10 된 직후 +50: +50 표시 · 위로 돎 · 올라가는 소리 1번 · 목표는 서버 값 160');
     await idle(page);
     s.eq([await textOf(page, 'red'), (await dbScores()).red, await page.locator('#status').innerText()], ['160', 160, '빨강 팀 +50 → 160점'], '[위] 최종 점수는 서버 값 160 · 상태 줄 "+50 → 160점"');
+    s.eq([(await sc(page)).last, await page.locator('#undoBtn').isDisabled(), (await page.locator('#undoWhat').innerText()).trim()], [{ team: 'red', delta: 50 }, false, '빨강 +50'], '[위] 내가 준 요청의 응답으로 맞춘 것은 되돌리기를 비우지 않음(빨강 +50 되돌릴 수 있음)');
     await settled(page);
     // 화면 100, 서버가 다른 곳에서 크게 올라 300 인데 이 탭에서 −10 → 표시 −10, 소리 down, 아래로 돎(화면 100 → 서버 290 이라 값만 보면 올라가는 것처럼 보이는 경우), 최종 290
     await setScores({ red: 160, blue: 300 }); // blue: 화면 200, 서버 300(다른 탭이 +100)
@@ -864,6 +941,20 @@ export async function scoreTests(only = []) {
     const n2 = scoreAddCalls().length;
     await page.locator('#customAmt').fill('-1,000,001'); await page.locator('#subBtn').click();
     s.ok(/1,000,000점까지/.test(await page.locator('#status').innerText()) && scoreAddCalls().length === n2, '−1,000,001 은 요청 없이 한도 안내');
+    // 저장 성공 뒤 칸 비우기: 요청이 오가는 사이 다음 숫자를 쳐 두었으면 그대로 두고, 보낸 값 그대로면 비움
+    await page.locator('#customAmt').fill(''); await idle(page);
+    await slowAdd(page, 900);
+    const k2 = scoreAddCalls().length;
+    await page.locator('#customAmt').fill('5'); await page.locator('#addBtn').click();
+    await wait(page, () => window.__score.busy);
+    await page.locator('#customAmt').fill('7'); // 저장 중에 다음 숫자를 쳐 둠
+    await notBusy(page);
+    s.eq([scoreAddCalls().length - k2, scoreAddCalls().at(-1).args.p_delta, await page.locator('#customAmt').inputValue()], [1, 5, '7'], '[칸] 저장 중에 쳐 둔 다음 숫자(7)는 저장이 끝나도 남음(보낸 값은 5)');
+    await page.locator('#customAmt').fill('9'); await page.locator('#addBtn').click();
+    await wait(page, () => window.__score.busy);
+    await notBusy(page);
+    s.eq([scoreAddCalls().at(-1).args.p_delta, await page.locator('#customAmt').inputValue()], [9, ''], '[칸] 보낸 값 그대로면 저장이 끝난 뒤 비워짐');
+    await page.unroute(/\/rpc\/score_add$/);
   });
 
   await scenario(7, '연습 모드: 입구 확인 말고는 DB 요청 0건, 점수·연출·소리는 그대로, 새로 고치면 처음으로', async (s) => {
@@ -932,6 +1023,27 @@ export async function scoreTests(only = []) {
     // 초기화 뒤 다시 점수를 주면 0 에서 시작
     await give(A.page, 'red', 10); await idle(A.page);
     s.eq((await dbScores()).red, 10, '초기화 뒤 다시 주면 0 에서 시작(+10 → 10)');
+    // 낡은 되돌리기: 내가 준 것(빨강 +10)이 있는 채로 다른 변화가 있으면
+    await idle(A.page);
+    const undoUi = async () => ({ last: (await sc(A.page)).last, off: await A.page.locator('#undoBtn').isDisabled(), what: (await A.page.locator('#undoWhat').innerText()).trim() });
+    s.eq(await undoUi(), { last: { team: 'red', delta: 10 }, off: false, what: '빨강 +10' }, '[되돌리기] 내가 준 요청 직후엔 되돌리기가 켜져 있고 "빨강 +10"');
+    await db.query("update team_scores set score = 77, updated_at = now() where team = 'blue'"); // 다른 팀(파랑)이 다른 곳에서 바뀜
+    await wait(A.page, () => window.__score.shown.blue === 77, null, 12000); await idle(A.page);
+    s.eq(await undoUi(), { last: { team: 'red', delta: 10 }, off: false, what: '빨강 +10' }, '[되돌리기] 다른 팀(파랑)의 변화로는 빨강의 되돌리기가 안 지워짐');
+    resetCalls();
+    await db.query("update team_scores set score = 0, updated_at = now() where team = 'red'"); // 관리자가 빨강을 0 으로(점수 초기화와 같은 결과)
+    await wait(A.page, () => window.__score.shown.red === 0, null, 12000); await idle(A.page);
+    s.eq(await undoUi(), { last: null, off: true, what: '' }, '[되돌리기] 빨강이 다른 곳에서 0 으로 맞춰지면 되돌리기 단추가 꺼지고 "빨강 +10" 글자도 사라짐');
+    await A.page.keyboard.press('KeyU'); await sleep(250);
+    await A.page.locator('#undoBtn').click({ force: true, timeout: 1000 }).catch(() => {});
+    s.eq([calls('score_add').length, (await dbScores()).red, (await sc(A.page)).shown.red], [0, 0, 0], '[되돌리기] U 키를 눌러도(단추를 눌러도) 요청 0건 · 빨강 0 그대로(낡은 기록으로 −10 이 안 들어감)');
+    // 관리자 페이지의 점수 초기화로 같은 팀이 맞춰지는 경우도 같음
+    await give(A.page, 'green', 20); await idle(A.page);
+    s.eq((await undoUi()).what, '초록 +20', '[되돌리기] 초록 +20 을 주면 다시 켜짐');
+    await B.page.locator('#resetScore').click();
+    await wait(B.page, () => /점수 초기화를 마쳤어요/.test(document.querySelector('#resetMsg').textContent), null, 15000);
+    await wait(A.page, () => Object.values(window.__score.shown).every((v) => v === 0), null, 12000); await idle(A.page);
+    s.eq(await undoUi(), { last: null, off: true, what: '' }, '[되돌리기] 관리자 페이지 점수 초기화로 초록이 0 이 되면 되돌리기도 비워짐');
   });
 
   await scenario(9, '움직임 줄이기(reducedMotion): 숫자띠가 안 생기고 바로 새 점수', async (s) => {
@@ -1096,6 +1208,16 @@ export async function scoreTests(only = []) {
     a = await au();
     s.eq([a.log.at(-1).dir, a.log.at(-1).played], ['test', false], '[끄기] 소리 시험도 꺼져 있으면 played=false');
     s.ok(/소리가 꺼져 있어서 안 들려요/.test(await page.locator('#status').innerText()), '[끄기] 소리 시험을 누르면 꺼져 있다고 안내');
+    // 소리를 켜면 그 안내만 지움(다른 안내는 그대로)
+    await page.locator('#soundBtn').click();
+    s.eq([(await sc(page)).muted, await page.locator('#status').innerText()], [false, ''], '[안내] 소리를 켜면 "소리가 꺼져 있어서 안 들려요" 안내가 지워짐');
+    await page.locator('#soundBtn').click(); await page.locator('#soundTestBtn').click();
+    s.ok(/소리가 꺼져 있어서 안 들려요/.test(await page.locator('#status').innerText()), '[안내] 다시 끄고 시험하면 안내가 다시 뜸');
+    await give(page, 'red', 5); await idle(page);
+    const stGive = await page.locator('#status').innerText();
+    await page.locator('#soundBtn').click();
+    s.eq([(await sc(page)).muted, await page.locator('#status').innerText(), /→/.test(stGive)], [false, stGive, true], '[안내] 다른 안내(점수를 준 뒤 상태 줄)는 소리를 켜도 지워지지 않음');
+    await page.locator('#soundBtn').click(); // 다시 끔(아래 새로 고침 시험이 끈 상태를 기대)
     await idle(page);
     await page.reload(); await enterGate(page); await waitBoard(page);
     s.eq(await au().then((x) => [x.muted, x.log.length]), [true, 0], '[끄기] 새로 고쳐도 소리 끔이 유지됨(기록은 새로 시작)');
@@ -1161,6 +1283,21 @@ export async function scoreTests(only = []) {
     await page.evaluate(() => { for (const c of ['KeyW', 'KeyU', 'Enter']) for (let i = 0; i < 3; i++) document.dispatchEvent(new KeyboardEvent('keydown', { code: c, key: c === 'Enter' ? 'Enter' : c.slice(3).toLowerCase(), repeat: true, bubbles: true })); });
     await sleep(250);
     s.eq([page.nrpc('score_add') - nreq, await page.evaluate(() => document.activeElement.id !== 'customAmt')], [0, true], '[키 반복] W·U·Enter 를 누르고 있어도(repeat) 점수·되돌리기·입력 이동 없음');
+    // 키를 누르고 있어(keyboard.down 을 거듭해 repeat 가 됨) 소리·이름이 계속 바뀌지 않음: 한 번만
+    const hold = async (code, n = 4) => { for (let i = 0; i < n; i++) await page.keyboard.down(code); await page.keyboard.up(code); };
+    const m0 = (await sc(page)).muted;
+    await hold('KeyM');
+    s.eq((await sc(page)).muted, !m0, '[키 반복] M 을 누르고 있어도(처음 1번 + repeat 3번 = 짝수 번) 소리 켜짐/꺼짐은 한 번만 바뀜');
+    await hold('KeyM');
+    s.eq((await sc(page)).muted, m0, '[키 반복] M 을 다시 누르고 있으면 한 번 더 바뀜(처음 상태)');
+    const h0 = (await sc(page)).namesHidden;
+    await hold('KeyH');
+    s.eq((await sc(page)).namesHidden, !h0, '[키 반복] H 를 누르고 있어도 이름 숨김은 한 번만 바뀜');
+    await hold('KeyH');
+    s.eq((await sc(page)).namesHidden, h0, '[키 반복] H 를 다시 누르고 있으면 한 번 더 바뀜');
+    const rs = (await sc(page)).calls.score_state;
+    await hold('KeyR', 6); await sleep(300);
+    s.ok((await sc(page)).calls.score_state - rs <= 1, '[키 반복] R 을 누르고 있어도 점수 새로 받기는 한 번만');
     await page.keyboard.press('KeyM');
     s.eq(await page.evaluate(() => [window.__score.muted, document.getElementById('soundBtn').getAttribute('aria-pressed')]), [true, 'false'], '[키] M → 소리 끔');
     await page.keyboard.press('KeyM');
