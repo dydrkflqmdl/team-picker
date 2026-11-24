@@ -5,8 +5,7 @@
 .mb-car { flex: none; width: 26px; height: 46px; }
 
 /* 차량 화면 */
-#carCard > .card { padding: 14px 10px 16px; }
-#carBtn, #roomBtn, #randomBtn { margin-bottom: 4px; }
+#carBtn, #roomBtn, #randomBtn { margin-bottom: 12px; } /* 뽑기 단추 아래에 늘 있는 "메인으로 돌아가기"(#carHomeBtn·#roomHomeBtn·#homeBtn)와의 간격(숨 쉬는 테두리 6px이 안 닿게) */
 #carHomeBtn { min-height: 56px; }
 #carCrewCard { margin-top: 16px; }
 .car-stage[hidden] { display: none; }

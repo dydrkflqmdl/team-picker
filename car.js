@@ -233,7 +233,7 @@
     $('#carSub').textContent = has ? (driving(st) ? '운전하는 차량이에요. 뽑지 않아도 돼요.' : '한 번 뽑은 차량은 바꿀 수 없어요.')
       : lapsed ? '마감됐어요.' : '누구와 같은 차를 탈지 완전 랜덤으로 정해져요';
     $('#carBtn').hidden = !st || has || lapsed;
-    $('#carHomeBtn').hidden = !(has || !st || lapsed);
+    $('#carHomeBtn').classList.toggle('primary', has || lapsed); // 늘 보임: 뽑았거나(운전자 포함) 마감돼서 더 할 일이 없으면 보라, 아직이면 흰색
     $('#carRetry').hidden = !!st || !err;
     $('#carCrewCard').hidden = !has;
     if (!st) {
