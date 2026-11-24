@@ -1121,8 +1121,8 @@
     }
     $('#menuConfirmHint').textContent = `${CHOICE_DEADLINE_LABEL}까지는 다시 바꿀 수 있어요.`;
     // 고르는 중: 아직 안 골랐으면 안내, 이미 정해 둔 게 있으면(바꾸는 중) 저장된 것을 보여 주고 바꿀 메뉴를 하나만 고르라고 함
-    fill($('#menuState'), has ? `지금 고른 것: <b>${esc(MENUS[me.menu])}</b> ✓${choiceTags(false, true, [['바꿀 메뉴를 하나만 골라 주세요']])}`
-      : `아직 안 골랐어요. 셋 중 하나를 눌러 주세요.${choiceTags(false, false)}`);
+    fill($('#menuState'), has ? `지금 정해진 것: <b>${esc(MENUS[me.menu])}</b>${choiceTags(false, true, [['바꿀 메뉴를 하나만 골라 주세요']])}`
+      : `아직 안 정했어요. 하나를 골라 정해 주세요.${choiceTags(false, false)}`);
     if (!$('#dishes').children.length) { // 음식 그림은 이 화면이 처음 필요할 때 받음
       $('#dishes').innerHTML = MENU_KEYS.map((key) => `
         <label class="dish">
