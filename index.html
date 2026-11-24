@@ -324,7 +324,7 @@
   </header>
   <header id="headAct" class="with-who" hidden>
     <h1 tabindex="-1">18일 자유시간</h1>
-    <p class="sub" id="actSub">12/18(금) 저녁 식사 뒤 자유시간 · 20:00</p>
+    <p class="sub" id="actSub">12월 18일 금요일 · 저녁 식사 뒤 20:00</p>
   </header>
   <header id="headLunch" class="with-who" hidden>
     <h1 tabindex="-1">18일 점심 메뉴</h1>
@@ -546,7 +546,7 @@
   </section>
 </main>
 
-<script src="car.js?v=9"></script><!-- 탑승 차량 뽑기(아래 스크립트가 쓰는 Car). 이 파일은 아래 스크립트보다 먼저 -->
+<script src="car.js?v=10"></script><!-- 탑승 차량 뽑기(아래 스크립트가 쓰는 Car). 이 파일은 아래 스크립트보다 먼저 -->
 <script>if (!window.Car) { window.Car = { home() { const b = document.querySelector('#goCar'); if (b) b.hidden = true; }, load() {}, ensure() {}, reset() {}, paint() {} }; }</script><!-- car.js 를 못 받았으면 차량 단추만 숨기고(막대·남은 것에서도 빠짐) 나머지는 그대로 -->
 <script>
   const ME_KEY = 'team-picker-me';
@@ -634,11 +634,12 @@
   const ACT_SUB = $('#actSub').textContent, LUNCH_SUB = $('#lunchSub').textContent, MENU_SUB = $('#menuSub').textContent; // 소제목 원래 글(마감까지 못 골랐을 때만 바뀜)
   // 고르기 세 화면(아침 메뉴·점심·자유시간)의 상태 한 줄(.act-state) 아래 꼬리표. 차량 화면의 .car-tag 모양. 화면 읽기에는 마침표로 끊어 한 문장씩 읽히게
   const tags = (...list) => `<span class="car-tags state-tags">${list.map(([text, due]) => `<span class="car-tag${due ? ' car-tag-due' : ''}">${esc(text)}</span><span class="sr-only">. </span>`).join('')}</span>`;
-  const DUE_TAG = [`${DEADLINE_SHORT}까지 바꿀 수 있어요`, true];
+  // 안 골랐으면 "고를 수 있어요", 골랐으면 "바꿀 수 있어요"(has = 저장된 값이 있는지)
+  const dueTag = (has) => [`${DEADLINE_SHORT}까지 ${has ? '바꿀' : '고를'} 수 있어요`, true];
   // 마감 전: 마감 꼬리표(+ 이미 골랐으면 바꾸는 법, extra). 마감 뒤: 마감됐다는 꼬리표 + 진행자에게 말하라는 꼬리표(골랐으면 "바꾸려면", 못 골랐으면 "고르려면")
   const choiceTags = (closed, has, extra = []) => (closed
     ? tags([`${DEADLINE_SHORT}에 마감됐어요`], [has ? '바꾸려면 진행자에게 말해 주세요' : '고르려면 진행자에게 말해 주세요'])
-    : tags(DUE_TAG, ...(has ? extra : [])));
+    : tags(dueTag(has), ...(has ? extra : [])));
   // 서버 오류가 "마감됐다"는 거절이면 마감 표시를 켜고 true
   const markClosed = (e) => { if (CHOICE_CLOSED_ERR.test(e && e.message)) { serverClosed = true; return true; } return false; };
   const person = () => (me ? `${me.dept}\n${me.name}` : '');
