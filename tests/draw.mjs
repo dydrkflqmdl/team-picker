@@ -1,4 +1,5 @@
 // 발표용 뽑기 화면(draw.html) 통합 시험.  실행: cd tests && node run.mjs draw [시나리오 번호 ...]   (예: node run.mjs draw 1 5)
+//   30~30.4: 부서 숨김(모든 공개 화면에 부서 문자열 없음·같은 이름 구분 표시·이름 글자 크기·넘침)
 //   1~12·16~19: 기본 진행 '전체 한 번에'(unit=all) · 13~15: 권한·관리자 페이지·키 · 21~29: 남겨 둔 '한 팀·한 방씩'(?unit=group)·'한 명씩'(?unit=person) 회귀
 //   npm run test:draw  도 같음.  캡처 폴더: 환경변수 DRAW_SHOTS (기본 tests/.out/draw-shots). 전환 연속 캡처는 그 아래 transition-team/ · transition-room/
 // 운영 DB 에는 닿지 않는다: 모든 browser context 에 guardNetwork 를 걸고, 시나리오 끝마다 막힌 외부 요청이 0건인지 확인한다.
@@ -1495,6 +1496,257 @@ export async function drawTests(only = []) {
     s.eq(rs.filter((x) => x.team).length, 29, '[한 명씩] DB 전원 팀');
     s.ok(spread(counts(rs, 'team', TEAM_ORDER)) <= 1, `[한 명씩] 인원 차이 ≤1`);
     s.note(`[한 명씩] 움직임 줄이기 진행 ${((Date.now() - t0) / 1000).toFixed(1)}초`);
+  });
+
+  // ══ 30. 부서 숨김: 발표 화면의 모든 공개 자리에 부서가 안 보임(같은 이름인 사람의 구분 표시만 예외) ══════════
+  // 시험 명단: 견본 29명 + '견본다'(시험영업부) 한 명 = 이름이 같은 두 사람(id 3 은 시험생산부) + 긴 이름 6개(LONG).
+  const DEPTS = ['시험영업부', '시험개발부', '시험생산부', '시험품질부', '시험관리부', '시험기획부'];
+  const PRACTICE_DEPTS = ['연습부 가', '연습부 나', '연습부 다', '연습부 라', '연습부 마', '연습부 바'];
+  async function seedDupLong() {
+    await resetRoster(db);
+    await db.query("insert into public.people (dept, name, title, gender) values ('시험영업부', '견본다', '사원', '남')");
+    await longNames();
+  }
+  /** 지금 화면에서 부서 문자열이 보이는 글자(innerText, 화면 읽기용 #live 포함)에 있는지 + 구분 표시가 같은 이름인 사람에게만 붙었는지 */
+  async function deptCheck(s, page, label, { depts = DEPTS, dupNames = ['견본다'], dupDepts = ['시험영업부', '시험생산부'], expectTags = null } = {}) {
+    const r = await page.evaluate(({ depts, dupNames, dupDepts }) => {
+      let t = document.body.innerText;
+      for (const d of dupDepts) t = t.split(`(${d})`).join(''); // 같은 이름 구분 표시 '(부서)'는 예외
+      const leaks = depts.filter((d) => t.includes(d));
+      const bad = []; let tags = 0;
+      for (const li of document.querySelectorAll('#stage .grp li, #stage .group-box li')) {
+        if (li.offsetParent === null) continue; // 숨겨진 화면(예: 마지막 장면일 때 뽑는 화면의 옆 결과판)은 안 보이므로 제외
+        const nm = li.querySelector('.nm'); const sm = li.querySelector('small');
+        const isDup = dupNames.includes(nm.textContent);
+        if (sm) { tags++; if (!isDup || !sm.classList.contains('dup') || !/^\(.+\)$/.test(sm.textContent)) bad.push(`표시가 붙은 칸 ${nm.textContent}${sm.textContent}`); }
+        else if (isDup) bad.push(`같은 이름인데 구분 표시 없음: ${nm.textContent}`);
+        if (li.textContent.replace(nm.textContent, '').trim() && !sm) bad.push(`이름 말고 다른 글이 있음: ${li.textContent}`);
+      }
+      const slot = document.getElementById('slot');
+      if (slot && !slot.hidden) {
+        const n = document.getElementById('slotName').textContent; const g = (document.getElementById('slotTag') || { textContent: '' }).textContent;
+        if (dupNames.includes(n)) { if (!/^\(.+\)$/.test(g)) bad.push(`룰렛 칸 같은 이름 '${n}'인데 구분 표시 '${g}'`); }
+        else if (g && n !== '결과 공개!') bad.push(`룰렛 칸 '${n}'에 구분 표시도 아닌 글 '${g}'`);
+      }
+      return { leaks, bad, tags };
+    }, { depts, dupNames, dupDepts });
+    s.eq(r.leaks, [], `${label}: 보이는 글자에 부서 없음`);
+    s.eq(r.bad, [], `${label}: 구분 표시는 같은 이름인 사람에게만`);
+    if (expectTags != null) s.eq(r.tags, expectTags, `${label}: 구분 표시 개수`);
+    return r;
+  }
+  /** 같은 칸 안 이름 글자 크기가 모두 같은지, 이름·구분 표시가 칸 밖으로 넘치거나 잘리지 않는지. 크기(px)를 돌려줌 */
+  async function sizeCheck(s, page, label, { board = false } = {}) {
+    await settle(page); // 칸이 차례로 들어오는 연출이 끝난 뒤에 잼
+    const r = await page.evaluate(() => {
+      const out = { cards: [], over: [], all: [] };
+      for (const card of document.querySelectorAll('#stage .grp, #stage .group-box')) {
+        if (card.closest('[hidden]') || card.offsetParent === null) continue;
+        const sizes = [];
+        const cr = card.getBoundingClientRect();
+        for (const li of card.querySelectorAll('li')) {
+          const nm = li.querySelector('.nm'); const sm = li.querySelector('small');
+          const px = parseFloat(getComputedStyle(nm).fontSize); sizes.push(px); out.all.push(px);
+          const a = nm.getBoundingClientRect(); const b = li.getBoundingClientRect();
+          if (li.scrollWidth > li.clientWidth + 1 || a.right > b.right + 1 || a.right > cr.right + 1 || a.bottom > cr.bottom + 1) out.over.push(`이름 넘침/잘림 '${nm.textContent}'`);
+          if (sm && sm.scrollWidth > sm.clientWidth + 1) out.over.push(`구분 표시 잘림 '${nm.textContent}${sm.textContent}'`);
+        }
+        if (sizes.length) out.cards.push({ min: Math.min(...sizes), max: Math.max(...sizes), n: sizes.length });
+      }
+      const u = document.getElementById('stage').getBoundingClientRect().width / 100;
+      const b = document.getElementById('finaleBoard');
+      if (b && !b.closest('[hidden]') && (b.scrollHeight > b.clientHeight + 1 || [...b.querySelectorAll('.grp')].some((g) => g.scrollHeight > g.clientHeight + 1))) out.over.push('결과판 세로 넘침');
+      return { ...out, u };
+    });
+    s.eq(r.over, [], `${label}: 넘치거나 잘린 이름 없음`);
+    const uneven = r.cards.filter((c) => c.max - c.min > 0.01);
+    s.eq(uneven, [], `${label}: 같은 칸 안 이름 글자 크기 같음(${r.cards.length}칸)`);
+    if (board && r.all.length) s.ok(Math.max(...r.all) - Math.min(...r.all) <= 0.01, `${label}: 결과판 전체 이름 글자 크기 같음(${Math.min(...r.all).toFixed(2)}~${Math.max(...r.all).toFixed(2)}px)`);
+    return { px: r.all.length ? Math.min(...r.all) : 0, pct: r.all.length ? Math.min(...r.all) / r.u : 0, maxPx: r.all.length ? Math.max(...r.all) : 0, maxPct: r.all.length ? Math.max(...r.all) / r.u : 0, n: r.all.length };
+  }
+  /** 룰렛이 도는 동안(저장 중) 여러 번 표본을 떠서 부서 글자가 없는지 */
+  async function sampleSpin(s, page, label, n = 8, opt = {}) {
+    for (let i = 0; i < n; i++) { await deptCheck(s, page, `${label} #${i + 1}`, opt); await sleep(150); }
+  }
+
+  for (const [w, h] of [[1920, 1080], [1280, 720]]) {
+    await scenario(30, `[부서 숨김] ${w}×${h}: 전체 결과(팀·방)·룰렛 중, 같은 이름·긴 이름`, async (s) => {
+      const vp = String(w);
+      const viewport = { width: w, height: h };
+      await seedDupLong();
+      const { page } = await newCtx({ viewport, code: true });
+      await delayPicks(page, 120);
+      await openLive(page); await chooseKind(page, 'team');
+      s.ok(!(await page.locator('body').innerText()).match(/시험(영업|개발|생산|품질|관리|기획)부/), '시작 화면에 부서 없음');
+      await startBtn(page);
+      await page.keyboard.press('Space');
+      await wait(page, () => window.__draw.phase === 'saving');
+      await sleep(400);
+      await sampleSpin(s, page, '룰렛 중(팀)', 10);
+      await wait(page, () => window.__draw.phase === 'landing');
+      await sampleSpin(s, page, '룰렛 느려지는 중(팀)', 4);
+      await waitFinale(page);
+      await shot(page, vp, 'n01_finale_team');
+      await deptCheck(s, page, '팀 전체 결과', { expectTags: 2 });
+      const t = await sizeCheck(s, page, '팀 전체 결과');
+      s.note(`${vp} 팀(30명·긴 이름 포함) 이름 글자: 보통 ${t.maxPx.toFixed(1)}px(무대 ${t.maxPct.toFixed(2)}%), 가장 작은(긴 이름이 든 칸) ${t.px.toFixed(1)}px(${t.pct.toFixed(2)}%)`);
+      s.ok(t.pct >= 1.4, `팀 전체 결과 글자가 읽힐 만큼 큼(${t.pct.toFixed(2)}% ≥ 1.4%)`);
+      // 방
+      await unguard(page);
+      await tid(page, 'draw-next-kind').click(); await waitView(page, 'intro');
+      await startBtn(page); await page.keyboard.press('Space');
+      await wait(page, () => window.__draw.phase === 'saving'); await sleep(400);
+      await sampleSpin(s, page, '룰렛 중(방)', 6);
+      await waitFinale(page);
+      await shot(page, vp, 'n02_finale_room');
+      await deptCheck(s, page, '방 전체 결과', { expectTags: 2 });
+      const rm = await sizeCheck(s, page, '방 전체 결과');
+      s.note(`${vp} 방(30명·긴 이름 포함) 이름 글자: 보통 ${rm.maxPx.toFixed(1)}px(무대 ${rm.maxPct.toFixed(2)}%), 가장 작은(긴 이름이 든 칸) ${rm.px.toFixed(1)}px(${rm.pct.toFixed(2)}%)`);
+      s.ok(rm.pct >= 1.4, `방 전체 결과 글자가 읽힐 만큼 큼(${rm.pct.toFixed(2)}% ≥ 1.4%)`);
+    });
+
+    await scenario(30.1, `[부서 숨김] ${w}×${h}: 견본 명단(긴 이름 없음)·이미 뽑은 사람 섞임 전체 결과의 이름 크기`, async (s) => {
+      const vp = String(w);
+      await resetRoster(db, { picked: true });
+      const { page } = await newCtx({ viewport: { width: w, height: h }, code: true });
+      await openLive(page); await chooseKind(page, 'team');
+      await tid(page, 'draw-keep').click(); await waitView(page, 'play');
+      await runAll(page);
+      await shot(page, vp, 'n03_finale_team_plain');
+      await deptCheck(s, page, '견본 팀 결과', { dupNames: [], dupDepts: [], expectTags: 0 });
+      const t = await sizeCheck(s, page, '견본 팀 결과', { board: true });
+      await unguard(page);
+      await tid(page, 'draw-next-kind').click(); await waitView(page, 'intro');
+      await tid(page, 'draw-keep').click(); await waitView(page, 'play');
+      await runAll(page);
+      await shot(page, vp, 'n04_finale_room_plain');
+      await deptCheck(s, page, '견본 방 결과', { dupNames: [], dupDepts: [], expectTags: 0 });
+      const rm = await sizeCheck(s, page, '견본 방 결과', { board: true });
+      s.note(`${vp} 견본 29명 이름 글자: 팀 ${t.px.toFixed(1)}px(무대 ${t.pct.toFixed(2)}%), 방 ${rm.px.toFixed(1)}px(무대 ${rm.pct.toFixed(2)}%)`);
+      s.ok(t.pct >= 2.2 && rm.pct >= 2.0, `견본 29명 이름이 충분히 큼(팀 ${t.pct.toFixed(2)}% ≥ 2.2%, 방 ${rm.pct.toFixed(2)}% ≥ 2.0%)`);
+    });
+
+    await scenario(30.2, `[부서 숨김] ${w}×${h}: 한 팀씩·한 방씩 공개 칸과 옆 결과판`, async (s) => {
+      const vp = String(w);
+      await seedDupLong();
+      const { page } = await newCtx({ viewport: { width: w, height: h }, code: true });
+      for (const kind of ['team', 'room']) {
+        if (kind === 'team') await openLive(page, G); else { await unguard(page); await tid(page, 'draw-next-kind').click(); await waitView(page, 'intro'); }
+        if (kind === 'team') await chooseKind(page, 'team');
+        await startBtn(page);
+        let shown = 0;
+        for (let i = 0; i < 12; i++) {
+          await wait(page, () => { const d = window.__draw; return d && !d.busy && (d.view === 'finale' || d.phase === 'ready'); });
+          const d = await st(page);
+          if (d.view === 'finale') break;
+          if (d.last && d.last.group) {
+            shown++;
+            await deptCheck(s, page, `한 ${kind === 'team' ? '팀' : '방'}씩 ${d.last.group}`, { dupDepts: ['시험영업부', '시험생산부'] });
+            await sizeCheck(s, page, `한 ${kind === 'team' ? '팀' : '방'}씩 ${d.last.group}`);
+            if (shown <= 2) await shot(page, vp, `n05_group_${kind}_${d.last.group}`);
+          }
+          await page.keyboard.press('Space');
+        }
+        await waitFinale(page);
+        await deptCheck(s, page, `한 ${kind === 'team' ? '팀' : '방'}씩 마지막 장면`, { expectTags: 2 });
+        await sizeCheck(s, page, `한 ${kind === 'team' ? '팀' : '방'}씩 마지막 장면`);
+        s.ok(shown >= 4, `${kind}: 팀(방)을 하나씩 ${shown}번 공개`);
+      }
+    });
+
+    await scenario(30.3, `[부서 숨김] ${w}×${h}: 한 명씩(이름 섞이는 중·공개·옆 결과판·모두 공개)`, async (s) => {
+      const vp = String(w);
+      await seedDupLong();
+      const { page } = await newCtx({ viewport: { width: w, height: h }, code: true });
+      await openLive(page, '?unit=person'); await chooseKind(page, 'team'); await startBtn(page);
+      for (let i = 0; i < 4; i++) {
+        await page.keyboard.press('Space');
+        await wait(page, () => window.__draw.phase === 'spinning');
+        await sampleSpin(s, page, `한 명씩 ${i + 1}번째 섞는 중`, 5);
+        await waitReady(page, 30000);
+        await deptCheck(s, page, `한 명씩 ${i + 1}번째 공개`);
+        if (i === 0) await shot(page, vp, 'n06_person_reveal');
+        await sizeCheck(s, page, `한 명씩 ${i + 1}번째 옆 결과판`);
+      }
+      await tid(page, 'draw-all').click(); await wait(page, () => window.__draw.dialog === 'all');
+      await tid(page, 'draw-dialog-ok').click();
+      await wait(page, () => window.__draw.phase === 'bulk'); await sampleSpin(s, page, '모두 공개 중', 4);
+      await waitFinale(page, 90000);
+      await deptCheck(s, page, '한 명씩 마지막 장면', { expectTags: 2 });
+      await sizeCheck(s, page, '한 명씩 마지막 장면');
+    });
+
+    await scenario(30.4, `[부서 숨김] ${w}×${h}: 연습 모드(전체·한 팀씩·한 명씩)`, async (s) => {
+      const vp = String(w);
+      const opt = { depts: PRACTICE_DEPTS, dupNames: [], dupDepts: [] };
+      const { page } = await newCtx({ viewport: { width: w, height: h } });
+      await page.goto(`${server.url}/draw.html?practice=1`); await waitView(page, 'menu');
+      await chooseKind(page, 'team'); await startBtn(page);
+      await page.keyboard.press('Space');
+      await wait(page, () => window.__draw.phase === 'saving'); await sleep(300);
+      await sampleSpin(s, page, '연습 룰렛 중', 5, opt);
+      await waitFinale(page);
+      await shot(page, vp, 'n07_practice_finale_team');
+      await deptCheck(s, page, '연습 팀 전체 결과', { ...opt, expectTags: 0 });
+      await sizeCheck(s, page, '연습 팀 전체 결과', { board: true });
+      await page.goto(`${server.url}/draw.html?practice=1&unit=group`); await waitView(page, 'menu');
+      await chooseKind(page, 'team'); await startBtn(page);
+      await page.keyboard.press('Space'); await waitReady(page);
+      await deptCheck(s, page, '연습 한 팀씩', { ...opt, expectTags: 0 });
+      await sizeCheck(s, page, '연습 한 팀씩');
+      await page.goto(`${server.url}/draw.html?practice=1&unit=person`); await waitView(page, 'menu');
+      await chooseKind(page, 'team'); await startBtn(page);
+      await page.keyboard.press('Space'); await wait(page, () => window.__draw.phase === 'spinning');
+      await sampleSpin(s, page, '연습 한 명씩 섞는 중', 4, opt);
+      await waitReady(page, 30000);
+      await deptCheck(s, page, '연습 한 명씩 공개', opt);
+    });
+  }
+
+  // 같은 이름 구분 표시가 룰렛·한 명씩 이름 칸에도 실제로 나오는지(명단을 5명으로 줄여 같은 이름이 자주 나오게)
+  await scenario(30.5, '[부서 숨김] 룰렛·한 명씩 이름 칸: 같은 이름인 사람에게만 (부서) 표시', async (s) => {
+    for (const unit of ['', '?unit=person']) {
+      await seedDupLong();
+      await db.query('delete from public.people where id not in (1, 2, 3, 4, 30)');
+      const { page } = await newCtx({ code: true });
+      await delayPicks(page, 500);
+      await openLive(page, unit); await chooseKind(page, 'team'); await startBtn(page);
+      await page.keyboard.press('Space');
+      await wait(page, () => ['saving', 'spinning'].includes(window.__draw.phase));
+      const seen = { tag: 0, plain: 0 };
+      for (let i = 0; i < 24; i++) {
+        const o = await page.evaluate(() => ({ n: document.getElementById('slotName').textContent, t: document.getElementById('slotTag').textContent, sh: !document.getElementById('slot').hidden }));
+        if (o.sh && o.n === '견본다') { seen.tag++; s.ok(/^\((시험영업부|시험생산부)\)$/.test(o.t), `같은 이름 표시 모양: '${o.t}'`); }
+        else if (o.sh && o.n && o.n !== '결과 공개!') { seen.plain++; s.eq(o.t, '', `다른 이름 '${o.n}'에는 표시 없음`); }
+        await sleep(110);
+      }
+      s.ok(seen.tag > 0 && seen.plain > 0, `${unit || '전체'}: 같은 이름 ${seen.tag}번·다른 이름 ${seen.plain}번 표본`);
+      await deptCheck(s, page, `${unit || '전체'} 이름 칸`);
+    }
+  });
+
+  // 진행자 안내: 같은 이름인 사람이 오류로 멈추면 '이름(부서)', 이름이 하나뿐인 사람이 멈추면 이름만. 성별 없는 사람 안내도 같은 규칙
+  await scenario(30.6, '[부서 숨김] 진행자 안내(오류로 멈춤·성별 없음·아직 안 뽑음): 같은 이름만 이름(부서)', async (s) => {
+    await seedDupLong();
+    await db.query('delete from public.people where id not in (3, 30, 4)'); // 견본다 둘(시험생산부·시험영업부) + 견본라
+    await db.query("update public.people set gender = null where id = 4"); // 견본라: 성별 없음(이름이 하나뿐)
+    const { page } = await newCtx({ code: true });
+    await openLive(page); await chooseKind(page, 'room');
+    const ng = await text(page, 'draw-nogender');
+    s.ok(/견본라(?!\()/.test(ng) && !/견본라\(/.test(ng), `성별 없음 안내: 이름이 하나뿐인 사람은 이름만: ${ng}`);
+    await db.query("update public.people set gender = '남' where id = 4"); // 아래는 팀 뽑기로
+    await page.goto(`${server.url}/draw.html`); await waitView(page, 'menu'); await chooseKind(page, 'team');
+    await startBtn(page);
+    const g = await failPicks(page);
+    g.arm(40); // 저장 요청이 계속 실패 → 오류 상자
+    await page.keyboard.press('Space'); await waitErr(page, 60000);
+    const cur = (await st(page)).current;
+    const msg = await text(page, 'draw-msg');
+    const want = cur.name === '견본다' ? `견본다(${cur.dept})` : cur.name;
+    s.ok(msg.includes(want + ' 님'), `오류 안내가 '${want}'로 나옴: ${msg}`);
+    if (cur.name !== '견본라') s.ok(!/견본라\(/.test(msg), '이름이 하나뿐인 사람에게는 부서가 안 붙음');
+    await deptCheck(s, page, '오류 상자', { dupNames: ['견본다'], dupDepts: ['시험영업부', '시험생산부'] });
+    s.ok(await visible(page, 'draw-error'), '오류 상자 보임');
   });
 
   // ── 정리 · 보고 ──────────────────────────────────────
