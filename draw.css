@@ -73,7 +73,7 @@ body.draw { margin: 0; overflow: hidden; display: flex; align-items: center; jus
 .gate-acts .btn { flex: 1 1 auto; }
 .btn:disabled { opacity: .45; cursor: default; }
 .panel .info { color: var(--dim); font-size: calc(var(--u) * 1.5); }
-.panel .err[data-kind="offline"] { color: var(--gold); }
+.panel .err[data-kind="offline"], .panel .err[data-kind="server"] { color: var(--gold); }
 
 /* 첫 화면: 무엇을 뽑을지 */
 .choices { display: flex; gap: calc(var(--u) * 2.4); }

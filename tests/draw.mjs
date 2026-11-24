@@ -121,7 +121,8 @@ export async function drawTests(only = []) {
     return true;
   }
   async function openLive(page, query = '') { await page.goto(`${server.url}/draw.html${query}`); await enterGate(page); await waitView(page, 'menu'); }
-  async function chooseKind(page, kind) { await page.keyboard.press(kind === 'team' ? 'Digit1' : 'Digit2'); await waitView(page, 'intro'); }
+  // 첫 화면 숫자 키는 화면이 막 열린 직후(보호 시간) 무시되므로 보호가 끝난 뒤 누름
+  async function chooseKind(page, kind) { await unguard(page); await page.keyboard.press(kind === 'team' ? 'Digit1' : 'Digit2'); await waitView(page, 'intro'); }
   async function startBtn(page) { // 시작 화면의 주 단추(시작하기/그대로 두고…/결과 보기 등)
     const b = page.locator('#introActs .primary').first();
     await b.click();
@@ -1062,10 +1063,12 @@ export async function drawTests(only = []) {
     const fs2 = await page.evaluate(() => !!document.fullscreenElement);
     if (fs1 && !fs2) s.ok(true, 'F: 전체 화면 켜고 끄기');
     else s.note(`F: 헤드리스 Chrome 에서 전체 화면 전환을 확인하지 못함(켬 ${fs1}, 끔 ${!fs2}) — 실제 노트북에서 직접 확인 필요`);
-    await page.keyboard.press('Digit2'); await waitView(page, 'intro');
+    await unguard(page); await page.keyboard.press('Digit2'); await waitView(page, 'intro');
     s.eq((await st(page)).kind, 'room', '2: 방 배정 뽑기');
     await tid(page, 'draw-back').click(); await waitView(page, 'menu');
-    await page.keyboard.press('Digit1'); await waitView(page, 'intro');
+    await page.keyboard.press('Digit1'); await sleep(100);
+    s.eq((await st(page)).view, 'menu', '첫 화면으로 돌아온 직후(보호 시간) 1 은 무시');
+    await unguard(page); await page.keyboard.press('Digit1'); await waitView(page, 'intro');
     s.eq((await st(page)).kind, 'team', '1: 팀 뽑기');
     await startBtn(page);
     s.ok(await visible(page, 'draw-home'), '뽑는 화면에 처음 화면 단추');
@@ -1986,6 +1989,30 @@ export async function drawTests(only = []) {
     const wrongMsg = await text(page, 'draw-login-error');
     s.ok(wrongMsg !== offMsg && /맞지 않아요/.test(wrongMsg), `틀림 안내: ${wrongMsg}`);
     s.ok(!(await visible(page, 'draw-reconnect')), "틀리면 '다시 연결' 없음");
+    // 서버 오류(500, 통신은 됨): 인터넷 안내가 아닌 '서버가 확인하지 못했어요' + 다시 연결
+    let fail500 = 1;
+    await page.route(/\/rpc\/board_state$/, async (r) => {
+      if (fail500 > 0) { fail500--; return r.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ message: 'internal error', code: 'XX000' }) }); }
+      return r.fallback();
+    });
+    await tid(page, 'draw-code').fill(ADMIN_CODE); await tid(page, 'draw-code').press('Enter'); await gateIdle(page);
+    const srvMsg = await text(page, 'draw-login-error');
+    s.eq(await gateState(page), 'server', '[500] 서버 오류 상태(통신 오류·틀림과 다름)');
+    s.ok(/서버가 확인하지 못했어요/.test(srvMsg) && !/인터넷/.test(srvMsg) && !/맞지 않아요/.test(srvMsg), `[500] 안내: ${srvMsg}`);
+    s.ok(await visible(page, 'draw-reconnect'), "[500] '다시 연결' 단추");
+    s.eq(await gateLeak(page), NO_LEAK, '[500] 화면·명단 DOM 없음');
+    await tid(page, 'draw-reconnect').click(); await waitView(page, 'menu');
+    s.ok(true, "[500] '다시 연결'로 들어감");
+    // 들어온 상태에서 새로 고침 때 500: 기억은 그대로, 다시 연결로 들어감
+    fail500 = 1;
+    await page.reload(); await gateIdle(page);
+    s.eq(await gateState(page), 'server', '[새로 고침·500] 서버 오류 안내');
+    s.eq(await page.evaluate(() => sessionStorage.getItem('draw-gate')), ADMIN_CODE, '[새로 고침·500] 기억 유지');
+    await tid(page, 'draw-reconnect').click(); await waitView(page, 'menu');
+    await page.unroute(/\/rpc\/board_state$/);
+    await page.route(/\/rpc\/board_state$/, async (r) => { if (down > 0) { down--; return r.abort('failed'); } return r.fallback(); });
+    await page.evaluate(() => sessionStorage.removeItem('draw-gate'));
+    await page.reload(); await gateIdle(page);
     // 다시 통신 오류 → 다시 연결로 들어감
     down = 1;
     await tid(page, 'draw-code').fill(ADMIN_CODE); await tid(page, 'draw-code').press('Enter'); await gateIdle(page);
@@ -2070,6 +2097,18 @@ export async function drawTests(only = []) {
     await unguard(p2);
     await p2.locator('#pickTeam').click(); await waitView(p2, 'intro');
     s.ok(true, '보호 시간 뒤에는 첫 화면 단추가 눌림');
+    // 통과 직후 보호 중 숫자 키 1·2 → 첫 화면 그대로
+    const p3 = await page.context().newPage();
+    await p3.goto(`${server.url}/draw.html`); await gateIdle(p3);
+    resetCalls();
+    await tid(p3, 'draw-code').fill(ADMIN_CODE); await tid(p3, 'draw-code').press('Enter');
+    await wait(p3, () => window.__draw && window.__draw.view === 'menu');
+    let digits = 0;
+    const m0 = Date.now();
+    while (Date.now() - m0 < 600 && (await st(p3)).guarded) { await p3.keyboard.press(digits % 2 ? 'Digit2' : 'Digit1'); digits++; } // 보호 시간(1초)이 끝나기 한참 전까지만
+    await sleep(300);
+    s.ok(digits >= 2 && (await st(p3)).view === 'menu', `통과 직후 보호 중 1·2 를 ${digits}번 눌러도 첫 화면 그대로`);
+    s.eq(server.calls.map((c) => c.fn), ['board_state'], '보호 중 숫자 키로 명단 다시 받기·뽑기 요청 없음');
   });
 
   await scenario(46, '비밀번호 노출 없음: 입력 칸 가림·주소·화면 글자·문서·탭 제목·콘솔·쿠키·localStorage', async (s) => {

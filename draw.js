@@ -58,7 +58,7 @@ const DRAW_CONFIG = {
   };
   const gate = { state: 'idle', busy: false, retry: null, retryAuto: false, checks: 0 };
   let app = null; // 입구를 통과하면 startApp 이 돌려준 상태 요약 함수
-  // state: idle(넣기 전) · checking(서버 확인 중) · wrong(비밀번호 거절) · offline(통신 오류 — 틀린 것과 다름) · locked(잠가서 다시 여는 중)
+  // state: idle(넣기 전) · checking(서버 확인 중) · wrong(비밀번호 거절) · offline(통신 오류 — 틀린 것과 다름) · server(그 밖의 서버 오류) · locked(잠가서 다시 여는 중)
   function gateUi(state, err, info) {
     gate.state = state;
     const wait = state === 'checking' || state === 'locked';
@@ -91,9 +91,13 @@ const DRAW_CONFIG = {
         gate.retry = null;
         return gateUi('wrong', /틀렸/.test(msg) ? (auto ? '관리자 비밀번호가 바뀌었어요. 새 비밀번호를 넣어 주세요.' : '비밀번호가 맞지 않아요. 다시 넣어 주세요.') : msg);
       }
-      gate.retry = c; // 통신 오류: 맞는지 아직 모름. '다시 연결'이 같은 값으로 다시 보냄(메모리에만)
+      gate.retry = c; // 맞는지 아직 모름(기억은 그대로). '다시 연결'이 같은 값으로 다시 보냄(메모리에만)
       gate.retryAuto = auto;
-      return gateUi('offline', '서버와 연결이 안 돼 비밀번호를 확인하지 못했어요(비밀번호가 틀렸다는 뜻은 아니에요). 인터넷 연결을 확인한 뒤 ‘다시 연결’을 눌러 주세요.');
+      // 통신 끊김·다시 해 볼 만한 오류(일시적 과부하·시간 초과) ↔ 그 밖의 서버 오류(함수 오류·권한·빈 답 등)를 나눠 안내
+      if ((e && e.retryable) || /연결이 느려요|인터넷 연결/.test(msg)) {
+        return gateUi('offline', '서버와 연결이 안 돼 비밀번호를 확인하지 못했어요(비밀번호가 틀렸다는 뜻은 아니에요). 인터넷 연결을 확인한 뒤 ‘다시 연결’을 눌러 주세요.');
+      }
+      return gateUi('server', `서버가 확인하지 못했어요: ${msg || '알 수 없는 오류'} 잠시 뒤 ‘다시 연결’을 눌러 주세요.`);
     }
     gate.busy = false;
     gate.retry = null;
@@ -140,7 +144,8 @@ const DRAW_CONFIG = {
     document.title = '발표용 뽑기';
     app = null;
     $('#loginView').hidden = false;
-    gateUi('locked', '', '잠그는 중…');
+    // 인터넷이 끊겨 있으면 다시 불러오기가 브라우저 오류 화면이 될 수 있음(명단은 이미 지워서 안 보임) → 미리 안내
+    gateUi('locked', '', navigator.onLine === false ? '화면을 잠갔어요. 인터넷이 연결되면 새로 고쳐 주세요.' : '잠그는 중…');
     location.reload();
   }
   Object.defineProperty(window, '__draw', { // 시험용 상태 요약(읽기 전용)
@@ -1428,7 +1433,11 @@ const DRAW_CONFIG = {
       }
       if (e.code === 'KeyF') { e.preventDefault(); toggleFs(); return; } // 한글 입력 상태(ㄹ)에서도 되게 e.code 로
       if (e.code === 'KeyM') { toggleSound(); return; }
-      if (S.view === 'menu' && (e.code === 'Digit1' || e.code === 'Digit2')) { go(() => openKind(e.code === 'Digit1' ? 'team' : 'room')); return; }
+      if (S.view === 'menu' && (e.code === 'Digit1' || e.code === 'Digit2')) {
+        if (screenGuarded()) return; // 첫 화면이 막 열린 직후(입구 통과 직후 screenGuardMs.gate 포함)의 숫자 키는 무시
+        go(() => openKind(e.code === 'Digit1' ? 'team' : 'room'));
+        return;
+      }
       if (!NEXT_KEYS.has(e.key)) return;
       const onControl = t && t.closest && t.closest('button, a, summary, select');
       if ((e.key === ' ' || e.key === 'Spacebar' || e.key === 'Enter') && onControl) { // 단추에 초점이 있으면 브라우저가 그 단추를 한 번 누름
