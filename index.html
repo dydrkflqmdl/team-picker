@@ -7,7 +7,7 @@
   <meta name="robots" content="noindex" />
   <meta name="color-scheme" content="light dark" /><!-- 삼성 인터넷 등의 강제 다크 모드가 이 화면의 어두운 색을 한 번 더 바꾸지 않게 -->
   <link rel="stylesheet" href="style.css?v=5" /><!-- style.css 를 고치면 v 숫자를 올린다 -->
-  <link rel="stylesheet" href="car.css?v=3" /><!-- 탑승 차량 뽑기. car.css·car.js 를 고치면 v 숫자를 올린다 -->
+  <link rel="stylesheet" href="car.css?v=4" /><!-- 탑승 차량 뽑기. car.css·car.js 를 고치면 v 숫자를 올린다 -->
   <!-- Supabase 연결 파일은 저장소에 같이 둔 것(2.117.3 버전). 받은 파일이 바뀌지 않았는지 integrity 로 확인. 올릴 때는 v 숫자와 integrity 를 같이 바꾼다 -->
   <script src="supabase.js?v=2.117.3" integrity="sha384-BWcjm9OdFth9TbhCxZPdm+gAOUMAzQy9nmTs12ioXdCcbVnJaPMn+fMUoQCLt60R"></script>
   <!-- common.js 를 고치면 v 숫자를 올린다(휴대폰에 남아 있는 예전 common.js 를 새 화면이 쓰지 않게) -->
@@ -550,7 +550,7 @@
   </section>
 </main>
 
-<script src="car.js?v=7"></script><!-- 탑승 차량 뽑기(아래 스크립트가 쓰는 Car). 이 파일은 아래 스크립트보다 먼저 -->
+<script src="car.js?v=8"></script><!-- 탑승 차량 뽑기(아래 스크립트가 쓰는 Car). 이 파일은 아래 스크립트보다 먼저 -->
 <script>if (!window.Car) { window.Car = { home() { const b = document.querySelector('#goCar'); if (b) b.hidden = true; }, load() {}, ensure() {}, reset() {}, paint() {} }; }</script><!-- car.js 를 못 받았으면 차량 단추만 숨기고(막대·남은 것에서도 빠짐) 나머지는 그대로 -->
 <script>
   const ME_KEY = 'team-picker-me';

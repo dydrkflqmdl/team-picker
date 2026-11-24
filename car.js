@@ -218,7 +218,10 @@
   }
 
   // ── 차량 화면 ──
-  const REVEAL_FIRST = () => `버튼을 눌러 차량을 뽑으세요. 한 번만 뽑을 수 있어요(${CHOICE_DEADLINE_LABEL}까지).`;
+  // 안 뽑은 사람 안내: 큰 한 줄 + 작은 꼬리표 둘(메인 단추의 .mb-edit·.mb-due 와 같은 계열). 화면 읽기에는 마침표로 끊어 한 문장씩 읽히게
+  const REVEAL_FIRST = () => `<span class="car-ask">버튼을 눌러 차량을 뽑아요<span class="sr-only">. </span></span>`
+    + `<span class="car-tags"><span class="car-tag">한 번만 뽑을 수 있어요</span><span class="sr-only">. </span>`
+    + `<span class="car-tag car-tag-due">${esc(CHOICE_DEADLINE_SHORT)}까지</span><span class="sr-only">.</span></span>`;
   // 마감 뒤 아직 안 뽑은 사람(lapsed): 뽑기 단추 없이 마감 안내만(조식의 "마감돼서 아직 못 골랐어요"와 같은 모양)
   function paintScreen(landed = false) {
     const st = state();
@@ -244,7 +247,7 @@
       return;
     }
     if (!has) {
-      $('#carText').textContent = REVEAL_FIRST();
+      $('#carText').innerHTML = REVEAL_FIRST();
       fill($('#carReveal'), '');
       return;
     }
