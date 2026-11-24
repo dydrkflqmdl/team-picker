@@ -33,6 +33,11 @@
 @keyframes car-in { from { opacity: 0; transform: translateY(14px) scale(.92); } }
 .car-title { margin: 0 0 6px; padding: 0 8px; font-size: clamp(24px, 7.5vw, 32px); font-weight: 900; line-height: 1.25; overflow-wrap: anywhere; }
 .car-title .car-label { display: block; margin-top: 2px; color: var(--muted); font-size: 16px; font-weight: 700; }
+/* 뽑기 전 안내: 큰 한 줄 + 꼬리표(메인 단추의 .mb-edit 칩 모양·.mb-due 색). 꼬리표 안에서는 줄이 꺾이지 않고, 좁거나 글자가 크면 꼬리표째 다음 줄로 */
+.car-ask { display: block; font-size: 20px; font-weight: 900; line-height: 1.35; overflow-wrap: anywhere; }
+.car-tags { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px 8px; margin-top: 8px; }
+.car-tag { padding: 2px 10px; border-radius: 999px; background: var(--chip); color: var(--muted); font-size: 12px; font-weight: 800; white-space: nowrap; }
+.car-tag-due { background: var(--chip); background: color-mix(in srgb, var(--accent) 12%, var(--card)); color: var(--accent); }
 .car-result-label { display: block; margin-top: 2px; color: var(--muted); font-size: 14px; }
 .car-svg { display: block; width: 100%; max-width: 340px; height: auto; margin: 0 auto; overflow: visible; }
 
