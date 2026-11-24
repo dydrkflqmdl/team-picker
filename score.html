@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>팀 점수판</title>
+  <meta name="robots" content="noindex" />
+  <meta name="color-scheme" content="dark" />
+  <!-- 진행자가 프로젝터에 띄워 레크리에이션 네 팀의 점수를 주고 빼는 화면. 관리자 비밀번호를 넣어야 열림(연습 모드 ?practice=1 도 같음).
+       비밀번호를 넣기 전에는 아래 입구(#loginView)만 있고, 점수판은 <template id="appTpl"> 안에 있다가 통과한 뒤에 만들어짐(score.js).
+       style.css·common.js·score.css·score.js 를 고치면 아래 v 숫자를 올린다(style.css·common.js 는 draw.html·board.html·index.html 과 같은 숫자로) -->
+  <link rel="stylesheet" href="style.css?v=5" />
+  <link rel="stylesheet" href="score.css?v=1" />
+  <script src="supabase.js?v=2.117.3" integrity="sha384-BWcjm9OdFth9TbhCxZPdm+gAOUMAzQy9nmTs12ioXdCcbVnJaPMn+fMUoQCLt60R"></script>
+  <script src="common.js?v=13"></script>
+</head>
+<body class="scoreboard">
+<div class="stage" id="stage" data-testid="score-stage" data-view="login">
+  <p class="error" id="error" role="alert" data-testid="score-page-error"></p>
+
+  <!-- 입구: 관리자 비밀번호를 넣어야 화면이 열림. 맞는지는 서버가 판단(score.js).
+       form 으로 보내지 않음(브라우저가 '비밀번호 저장' 상자를 프로젝터에 띄우지 않게). Enter 는 비밀번호 제출로만 씀 -->
+  <section class="view center gate" id="loginView" data-testid="score-login">
+    <div class="panel" id="codeForm" role="group" aria-labelledby="gateTitle" data-testid="score-login-form">
+      <h2 id="gateTitle">진행자 확인</h2>
+      <p class="dim" id="gateLead" data-testid="score-login-lead">관리자 비밀번호를 넣어야 점수판이 열려요.</p>
+      <input id="code" type="password" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" maxlength="200"
+             data-lpignore="true" data-1p-ignore="true" data-bwignore="true" data-form-type="other"
+             placeholder="관리자 비밀번호" aria-label="관리자 비밀번호" aria-describedby="loginErr" data-testid="score-code" />
+      <div class="gate-acts">
+        <button class="btn primary" id="loginBtn" type="button" data-testid="score-login-submit">들어가기</button>
+        <button class="btn" id="reconnectBtn" type="button" data-testid="score-reconnect" hidden>다시 연결</button>
+      </div>
+      <p class="info" id="gateInfo" role="status" data-testid="score-login-info" hidden></p>
+      <p class="err" id="loginErr" role="alert" data-testid="score-login-error"></p>
+    </div>
+  </section>
+</div>
+
+<!-- 입구를 통과한 뒤에 #stage 안에 만들어지는 화면(그 전에는 문서에 없음). 네 팀 칸(#teams 안)은 score.js 가 채움 -->
+<template id="appTpl">
+  <div class="watermark" id="watermark" aria-hidden="true" hidden>연습</div>
+
+  <!-- 맨 위 줄: 제목 · 연습 표시 | 화면 설정(이름·소리·전체 화면·연습·잠그기) -->
+  <header class="top">
+    <div class="top-l">
+      <span class="badge" id="practiceBadge" data-testid="score-practice-badge" hidden>연습</span>
+      <h1 id="title">팀 점수판</h1>
+      <span class="linkwarn" id="linkWarn" data-testid="score-link-warn" role="status" hidden>연결이 불안정해요 · 마지막으로 받은 점수예요</span>
+    </div>
+    <div class="top-r">
+      <button class="btn ghost" id="namesBtn" type="button" data-testid="score-names-toggle" aria-pressed="false" title="팀원 이름 보이기·숨기기 (H)">이름 숨기기</button>
+      <button class="btn ghost" id="soundBtn" type="button" data-testid="score-sound" aria-pressed="true" title="소리 켜고 끄기 (M)">🔊 소리 켜짐</button>
+      <button class="btn ghost" id="soundTestBtn" type="button" data-testid="score-sound-test" title="효과음을 한 번 들어 보기">소리 시험</button>
+      <button class="btn ghost" id="fsBtn" type="button" data-testid="score-fullscreen" title="전체 화면 (F)">⛶ 전체 화면</button>
+      <a class="btn ghost" id="toPractice" href="score.html?practice=1" data-testid="score-to-practice">연습 모드로</a>
+      <a class="btn ghost" id="toLive" href="score.html" data-testid="score-to-live" hidden>실제 점수로</a>
+      <button class="btn ghost" id="lockBtn" type="button" data-testid="score-lock" title="이 탭에 기억한 비밀번호를 지우고 비밀번호 입력 화면으로">🔒 잠그기</button>
+    </div>
+  </header>
+
+  <!-- 네 팀: 팀 색 띠 · 큰 점수 · 팀원 이름(작게). 항상 네 칸이 모두 보임 -->
+  <div class="teams" id="teams" data-testid="score-teams" role="group" aria-label="네 팀 점수"></div>
+
+  <!-- 조작부(아래쪽, 작고 차분하게): 팀 고르기 · 자주 쓰는 점수 / 직접 넣기 · 되돌리기 · 안내 -->
+  <footer class="controls" id="controls" data-testid="score-controls">
+    <div class="c-row">
+      <span class="c-lab" id="pickLab">팀</span>
+      <div class="picks" id="picks" role="radiogroup" aria-labelledby="pickLab" data-testid="score-picks"></div>
+      <span class="c-sep" aria-hidden="true"></span>
+      <div class="quicks" id="quicks" role="group" aria-label="자주 쓰는 점수" data-testid="score-quicks">
+        <button class="btn quick up" id="q-p10" type="button" data-delta="10" data-key="KeyQ" data-testid="score-q-p10"><b>+10</b><kbd>Q</kbd></button>
+        <button class="btn quick up" id="q-p50" type="button" data-delta="50" data-key="KeyW" data-testid="score-q-p50"><b>+50</b><kbd>W</kbd></button>
+        <button class="btn quick up" id="q-p100" type="button" data-delta="100" data-key="KeyE" data-testid="score-q-p100"><b>+100</b><kbd>E</kbd></button>
+        <button class="btn quick down" id="q-m10" type="button" data-delta="-10" data-key="KeyA" data-testid="score-q-m10"><b>−10</b><kbd>A</kbd></button>
+        <button class="btn quick down" id="q-m50" type="button" data-delta="-50" data-key="KeyS" data-testid="score-q-m50"><b>−50</b><kbd>S</kbd></button>
+      </div>
+    </div>
+    <div class="c-row">
+      <label class="amt" for="customAmt">직접</label>
+      <input id="customAmt" type="text" inputmode="numeric" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" maxlength="12"
+             placeholder="점수" aria-label="직접 넣을 점수(숫자)" aria-describedby="status" data-testid="score-custom" />
+      <button class="btn up" id="addBtn" type="button" data-testid="score-add">＋ 더하기</button>
+      <button class="btn down" id="subBtn" type="button" data-testid="score-sub">－ 빼기</button>
+      <span class="c-sep" aria-hidden="true"></span>
+      <button class="btn" id="undoBtn" type="button" data-testid="score-undo" disabled title="마지막으로 준 점수의 반대 점수를 같은 팀에 줘요 (U)">↩ 방금 준 것 되돌리기<small id="undoWhat"></small></button>
+      <p class="status" id="status" role="status" data-testid="score-status" data-kind=""></p>
+    </div>
+    <!-- 오류·확인 안내: 조작부 바로 위에 뜸(점수를 가리지 않음). 저장 실패·통신 오류가 여기에 나옴 -->
+    <div class="alert" id="alert" data-testid="score-alert" role="alert" data-kind="error" hidden>
+      <p id="alertMsg" data-testid="score-alert-message"></p>
+      <button class="btn" id="refreshBtn" type="button" data-testid="score-refresh" title="서버에 저장된 점수를 다시 읽어 와요 (R)">↻ 점수 다시 받기</button>
+      <button class="btn ghost" id="alertClose" type="button" data-testid="score-alert-close" aria-label="안내 닫기">닫기</button>
+    </div>
+  </footer>
+
+  <!-- 확인 상자(브라우저 confirm 대신 화면 안에) -->
+  <div class="dlg" id="dlg" data-testid="score-dialog" hidden>
+    <div class="dlg-box" role="dialog" aria-modal="true" aria-labelledby="dlgTitle" aria-describedby="dlgBody">
+      <h2 id="dlgTitle" data-testid="score-dialog-title"></h2>
+      <p id="dlgBody"></p>
+      <div class="acts">
+        <button class="btn" id="dlgCancel" type="button" data-testid="score-dialog-cancel">취소</button>
+        <button class="btn primary" id="dlgOk" type="button" data-testid="score-dialog-ok"></button>
+      </div>
+    </div>
+  </div>
+
+  <div class="sr-only" id="live" aria-live="polite"></div>
+</template>
+<script src="score.js?v=1"></script>
+</body>
+</html>

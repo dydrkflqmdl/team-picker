@@ -5,6 +5,7 @@
 //   server [포트]                   대리 서버(Ctrl-C 로 끔)
 //   dev          db-up + seed(+옵션) + server 를 한 번에 띄워 두고 Ctrl-C 로 전부 정리
 //   draw [번호...]  발표용 뽑기 화면(draw.html) 통합 시험(DB 올리기 → 시나리오 → 끄기)
+//   score [번호...] 발표용 점수판(score.html) 통합 시험(DB 올리기 → 시나리오 → 끄기)
 //   smoke        DB 올리기 → 명단 → 서버 → 브라우저 시험 → 정리(DB 끄기)까지 한 번에
 //   reset        관리자 페이지 초기화 칸 통합 시험(DB 올리기 → 시나리오 → 끄기)
 //   shuffle      관리자 페이지 자동 섞기(팀·방·탑승 차량 × 안 뽑은 사람만·전부 새로)와 아침 메뉴 초기화(admin_clear('menu')) 시험
@@ -71,6 +72,17 @@ switch (cmd) {
     console.log(ok ? '통과' : '실패');
     process.exit(ok ? 0 : 1);
   }
+  case 'score': { // 발표용 점수판 통합 시험: node run.mjs score [시나리오 번호 ...]
+    const { scoreTests } = await import('./score.mjs');
+    let ok = false;
+    try {
+      console.log('[1/2] 로컬 DB 올리기'); const warn = await dbUp(); if (warn) console.log('  안내: ' + warn.split('\n').join('\n  '));
+      console.log('[2/2] 발표용 점수판 시험'); ok = (await scoreTests(rest.filter((x) => /^\d+(\.\d+)?$/.test(x)))).ok;
+    } catch (e) { console.error('실패:', e.stack || e); }
+    finally { dbStop(); console.log('postgres 끔.'); }
+    console.log(ok ? '통과' : '실패');
+    process.exit(ok ? 0 : 1);
+  }
   case 'reset': { // 관리자 페이지 초기화 칸 시험(전체·항목별 초기화, 확인 한 번, 마감 문구, 참가자 화면, 중간 실패 뒤 이어서)
     const { resetTests } = await import('./reset.mjs');
     let ok = false;
@@ -105,5 +117,5 @@ switch (cmd) {
     process.exit(ok ? 0 : 1);
   }
   default:
-    console.log('사용법: node run.mjs <db-up|db-down|seed|server|dev|smoke|draw|reset|admin|shuffle> [--picked] [--no-gender]'); process.exit(cmd ? 1 : 0);
+    console.log('사용법: node run.mjs <db-up|db-down|seed|server|dev|smoke|draw|score|reset|admin|shuffle> [--picked] [--no-gender]'); process.exit(cmd ? 1 : 0);
 }

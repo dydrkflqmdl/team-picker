@@ -47,6 +47,9 @@
     /* 초기화 칸(맨 아래): 전체 초기화 한 줄 + 항목별 초기화 여섯 개를 한곳에 */
     .reset-zone { margin-top: 0; }
     .reset-zone .reset-items { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+    .scores .col .count { font-variant-numeric: tabular-nums; }
+    .scores .col h3 { align-items: baseline; }
+    #scoreMsg.err { color: var(--danger); }
     #resetMsg.err, #quickMsg.err, #teamMsg.err, #roomMsg.err { color: var(--danger); }
     .columns { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 16px; }
     @media (max-width: 900px) { .columns { grid-template-columns: repeat(2, 1fr); } }
@@ -305,6 +308,7 @@
       <h1><span class="admin-only">관리자 페이지</span><span class="tv-only">팀 현황</span></h1>
       <span class="stats" id="stats"></span>
       <a class="btn admin-only" id="drawLink" href="draw.html">발표용 뽑기 화면(팀·방)</a><!-- 프로젝터로 함께 뽑는 화면(draw.html). 같은 링크가 팀 칸·객실표 칸에도 있음 -->
+      <a class="btn admin-only" id="scoreLink" href="score.html">발표용 점수판</a><!-- 프로젝터에 띄워 두고 팀 점수를 주는 화면(score.html). 같은 링크가 팀 점수 칸 안에도 있음 -->
     </div>
     <!-- 마지막 갱신 · 프로젝터 보기 · 이 기기에서 비밀번호 지우기(로그인한 뒤에만 보임) + 그 아래 프로젝터 보기 경고 -->
     <div class="head-side">
@@ -328,7 +332,7 @@
          열어 둔 칸은 이 브라우저에 기억함(아래 스크립트의 OPEN_KEY). 처음에는 한눈에 보기만 펴 둠.
          칸 순서: 한눈에 보기(한 사람씩 전체를 훑음) → 참가자 메인과 같은 순서(일정표 → 탑승 차량 → 아침 메뉴 → 점심 → 자유시간)
          → 현장에서 발표용 화면으로 뽑는 것(객실표 → 팀 — 요약 타일·한눈에 보기 열·분류 단추·엑셀 열의 "방·팀" 순서와 같음)
-         → 관리용(명단 관리 → 초기화). 프로젝터 보기에서는 팀 칸이 맨 위(CSS order) -->
+         → 팀 점수(팀 바로 다음: 점수는 팀마다 주므로) → 관리용(명단 관리 → 초기화). 프로젝터 보기에서는 팀 칸이 맨 위(CSS order) -->
     <!-- 요약 타일(칸이 아님 — 늘 보임). 내용은 renderGlance 가 채움 -->
     <div class="glance-sum admin-only" id="glanceSum" aria-live="polite"></div>
     <!-- 한눈에 보기: 한 사람의 차량·아침 메뉴·점심·자유시간·방·팀을 한 줄로(진행자 화면에만 있음). 내용은 아래 스크립트의 renderGlance 가 채움.
@@ -490,6 +494,15 @@
       <p class="msg admin-only" id="teamMsg" role="status"></p>
     </details>
 
+    <!-- 팀 점수: 현장에서 진행자가 발표용 점수판 화면(score.html)으로 줌. 여기서는 지금 점수를 보고, 맨 끝 초기화 칸의 '점수 초기화'로 0으로 되돌림(진행자 화면에만 있음).
+         5초 새로고침에 맞춰 점수도 새로 받음(아래 스크립트의 refreshScore). 점수를 못 받는 예전 DB(함수 없음)에서는 이 칸에 안내만 나옴 -->
+    <details class="card admin-only" id="scoreCard">
+      <summary><span class="sum-t">팀 점수</span> <small class="sum-n" id="scoreCount"></small></summary>
+      <p class="draw-ref" id="scoreNote"><span class="msg">팀 점수는 현장에서 진행자가 발표용 점수판 화면으로 줘요. 여기서는 지금 점수만 확인해요. 0으로 되돌리려면 맨 아래 <b>초기화</b> 칸의 <b>점수 초기화</b>를 눌러요.</span><a class="btn" id="scoreLinkCard" href="score.html">발표용 점수판</a></p>
+      <div class="columns scores" id="scoreView"></div>
+      <p class="msg" id="scoreMsg" role="status"></p>
+    </details>
+
     <details class="card admin-only" id="admin">
       <summary><span class="sum-t">명단 관리</span> <small class="sum-n" id="totalCount"></small></summary>
 
@@ -540,8 +553,8 @@
       </div>
     </details>
 
-    <!-- 초기화: 참가자가 뽑거나 고른 결과(팀·방·아침 메뉴·점심·자유시간·탑승 차량)를 비움. 명단·일정표·차량 목록(운전자 지정 포함)은 그대로.
-         전체 초기화와 항목별 초기화 여섯 개를 이 한곳에 둠. 누르면 무엇이 몇 명분 지워지는지 한 번 확인한 뒤 바로 실행(백업 단계 없음). 기능은 아래 스크립트의 resetItems -->
+    <!-- 초기화: 참가자가 뽑거나 고른 결과(팀·방·아침 메뉴·점심·자유시간·탑승 차량)와 팀 점수를 비움. 명단·일정표·차량 목록(운전자 지정 포함)은 그대로.
+         전체 초기화와 항목별 초기화 일곱 개를 이 한곳에 둠. 누르면 무엇이 몇 명분 지워지는지 한 번 확인한 뒤 바로 실행(백업 단계 없음). 기능은 아래 스크립트의 resetItems -->
     <details class="card admin-only" id="resetCard">
       <summary><span class="sum-t">초기화</span> <small class="sum-n" id="resetCount"></small></summary>
       <div class="danger-zone reset-zone">
@@ -556,6 +569,7 @@
           <button class="danger sm" id="resetLunch" type="button" data-reset-item="lunch">점심 초기화</button>
           <button class="danger sm" id="resetAct" type="button" data-reset-item="activity">자유시간 초기화</button>
           <button class="danger sm" id="resetCar" type="button" data-reset-item="car">탑승 차량 초기화</button>
+          <button class="danger sm" id="resetScore" type="button" data-reset-item="score">점수 초기화</button>
         </div>
         <p class="msg" id="resetMsg" role="status"></p>
       </div>
@@ -1382,6 +1396,7 @@ Day 3 · 12/19(토) — 함께 만드는 내년
   async function refresh(force = false) {
     const mine = ++seq;
     loading++;
+    refreshScore(); // 팀 점수도 같이 받되 기다리지 않음(점수 함수가 느려도 명단 그리기가 늦어지지 않고, 늦게 온 답이 새 화면을 덮을 일도 없음. 오류는 스스로 처리함)
     try {
       const data = await rpc('board_state', { p_code: code }); // { people, schedule }
       lastOk = Date.now(); // 답이 왔으면(버려질 예전 답이라도) 서버와 통신은 되는 것
@@ -1595,6 +1610,56 @@ Day 3 · 12/19(토) — 함께 만드는 내년
     if (e.key === 'Escape') stopEditing();
   });
 
+  // ── 팀 점수(팀 점수 칸): score_state 를 5초마다 명단과 같이 받아 네 팀 점수를 그림 ──
+  // 점수 칸은 입력칸이 없고 안쪽만 다시 그리므로, 칸의 열림·초점은 건드리지 않음. 점수를 못 받아도 명단 화면은 그대로 동작.
+  //   scoreDb: 'wait' 아직 안 받음 · 'ok' 받음 · 'old' 점수 함수가 없는 예전 DB(PGRST202 — 안내만) · 'fail' 이번에 못 받음(마지막 점수는 그대로 보임)
+  // 프로젝터 보기에서는 점수 칸이 안 보이므로 받지 않고, 관리자 페이지로 돌아오면 곧바로 받음
+  let scores = null;     // { red, blue, yellow, green } 마지막으로 받은 점수(숫자). 아직 못 받았으면 null
+  let scoreDb = 'wait';
+  let scoreSeq = 0;      // 늦게 도착한 예전 답이 더 새 답을 덮어쓰지 않게
+  const fmtScore = (n) => Number(n).toLocaleString('ko-KR');
+  let scoreP = Promise.resolve(); // 가장 최근에 시작한 점수 받기(초기화 확인 문구가 지금 점수를 쓰도록 resetItems 만 기다림)
+  function refreshScore() { return (scoreP = loadScore()); }
+  async function loadScore() {
+    if (tv || !code) return;
+    const mine = ++scoreSeq;
+    try {
+      const d = await rpc('score_state', { p_code: code });
+      if (mine !== scoreSeq) return;
+      scores = Object.fromEntries(TEAM_KEYS.map((t) => [t, Number(d && d[t]) || 0]));
+      scoreDb = 'ok';
+    } catch (e) {
+      if (mine !== scoreSeq || e.message.includes('비밀번호')) return; // 비밀번호 문제는 명단 새로고침이 입력 화면으로 돌려 놓음
+      if (e.code === 'PGRST202') { scoreDb = 'old'; scores = null; } else scoreDb = 'fail';
+    }
+    renderScores();
+  }
+  function renderScores() {
+    const count = $('#scoreCount');
+    const msg = $('#scoreMsg');
+    const view = $('#scoreView');
+    msg.classList.toggle('err', scoreDb === 'old' || scoreDb === 'fail');
+    if (scoreDb === 'old') { // 점수 함수가 없는 예전 DB: 안내만
+      count.textContent = 'DB가 아직 새 버전이 아니에요';
+      msg.textContent = 'DB가 아직 새 버전이 아니에요. 진행자(개발 담당)에게 supabase.sql을 다시 적용해 달라고 해 주세요.';
+      view.innerHTML = '';
+      return;
+    }
+    if (!scores) { // 아직 못 받음(받는 중이거나 처음부터 실패)
+      count.textContent = scoreDb === 'fail' ? '점수를 받지 못했어요' : '';
+      msg.textContent = scoreDb === 'fail' ? '점수를 받지 못했어요. 연결이 다시 되면 저절로 맞춰져요.' : '';
+      view.innerHTML = '';
+      return;
+    }
+    count.textContent = TEAM_KEYS.map((t) => `${TEAMS[t]} ${fmtScore(scores[t])}`).join(' · ');
+    msg.textContent = scoreDb === 'fail' ? '점수를 새로 받지 못했어요(지금 보이는 것은 마지막으로 받은 점수예요). 연결이 다시 되면 저절로 맞춰져요.' : '';
+    view.innerHTML = TEAM_KEYS.map((t) => `
+      <div class="col">
+        <h3 class="team-${t}"><span>${TEAMS[t]}</span><span class="count">${fmtScore(scores[t])}<small>점</small></span></h3>
+      </div>`).join('');
+  }
+  document.addEventListener('tvchange', () => { if (!tv && !document.hidden && !$('#boardView').hidden) refreshScore(); });
+
   // ── 초기화(맨 아래 초기화 칸): 참가자가 뽑거나 고른 결과를 항목별로, 또는 전부 비움. 명단·일정표·차량 목록(운전자 지정 포함)은 그대로 ──
   // 확인은 한 번: 무엇이 몇 명분 지워지는지 한 줄로 보여 주고 확인을 누르면 바로 실행(백업 단계 없음 — 백업은 명단 전체 삭제에만).
   // 비우는 DB 함수는 모두 이미 빈 것은 그냥 지나가므로, 전체 초기화가 중간에 실패하면 무엇이 비워졌고 남았는지 알리고 다시 눌러 이어서 할 수 있음
@@ -1611,7 +1676,12 @@ Day 3 · 12/19(토) — 함께 만드는 내년
     const rows = ((d && d.people) || []).filter((p) => p.menu).map((p) => ({ id: p.id, value: '' }));
     if (rows.length) await rpc('admin_assign', { p_code: code, p_what: 'menu', p_rows: rows });
   }
-  const RESET_ORDER = ['team', 'room', 'menu', 'lunch', 'activity', 'car'];
+  // 점수만 0으로: admin_clear('score') 한 번. 점수 함수가 없는 예전 DB 에서는 비울 점수도 없으므로 알리고 멈춤(전체 초기화는 그냥 지나감 — 아래)
+  async function clearScores() {
+    if (scoreDb === 'old') throw new Error('DB가 아직 새 버전이 아니라 점수를 비우지 못했어요. 진행자(개발 담당)에게 supabase.sql을 다시 적용해 달라고 해 주세요.');
+    return rpc('admin_clear', { p_code: code, p_what: 'score' });
+  }
+  const RESET_ORDER = ['team', 'room', 'menu', 'lunch', 'activity', 'car', 'score'];
   const RESET_ITEMS = { // n(): 지금 화면 명단에서 지워질 인원(탑승 차량은 car-board.js 에서 새로 받아 셈)
     team: { label: '팀', n: () => people.filter((p) => p.team).length, run: () => rpc('admin_reset', { p_code: code, p_id: null }) }, // 팀·뽑은 시각만(아침 메뉴는 그대로)
     room: { label: '방', n: () => people.filter((p) => p.room).length, run: () => rpc('admin_clear', { p_code: code, p_what: 'room' }) },
@@ -1619,6 +1689,8 @@ Day 3 · 12/19(토) — 함께 만드는 내년
     lunch: { label: '점심', n: () => people.filter((p) => p.lunch).length, run: () => rpc('admin_clear', { p_code: code, p_what: 'lunch' }) },
     activity: { label: '자유시간', n: () => people.filter((p) => p.activity).length, run: () => rpc('admin_clear', { p_code: code, p_what: 'activity' }) },
     car: { label: '탑승 차량', n: () => null, run: () => rpc('admin_clear_cars', { p_code: code }) }, // 손님만 비움(운전자 지정·차량 목록은 그대로)
+    // 팀 점수: 네 팀 점수를 0으로(점수가 0이 아닌 팀 수를 셈. 점수를 아직 못 받았으면 null)
+    score: { label: '점수', n: () => (scores ? TEAM_KEYS.filter((t) => scores[t] !== 0).length : null), run: clearScores },
   };
   // 초기화 칸 제목 줄: 뽑거나 고른 기록(팀·방·아침 메뉴·점심·자유시간·탑승 차량 손님)이 하나라도 있는 사람 수.
   // 탑승 차량은 car-board.js 자료를 받았을 때만 셈(운전자 지정은 초기화로 지워지지 않으므로 세지 않음)
@@ -1642,21 +1714,28 @@ Day 3 · 12/19(토) — 함께 만드는 내년
     return lines;
   }
   // keys: 비울 항목들, title: '전체 초기화'·'팀 초기화' 등, steps: [{ keys, run }] 차례로 부를 것
+  const SKIP = Symbol('skip');
   async function resetItems(keys, title, steps) {
     const msgEl = $('#resetMsg');
     msgEl.textContent = '';
     msgEl.classList.remove('err');
     await refresh(true); // 지워질 인원을 지금 것으로
+    if (keys.includes('score')) await scoreP; // 점수 팀 수도 지금 것으로(명단 그리기는 점수를 기다리지 않으므로 여기서만 기다림)
     const carN = keys.includes('car') && window.carBoard && window.carBoard.riders ? await window.carBoard.riders() : null;
-    const count = (k) => (k === 'car' ? (carN == null ? `${RESET_ITEMS[k].label}(인원 확인 못 함)` : `${RESET_ITEMS[k].label} ${carN}명`) : `${RESET_ITEMS[k].label} ${RESET_ITEMS[k].n()}명`);
+    const count = (k) => {
+      if (k === 'car') return carN == null ? `${RESET_ITEMS[k].label}(인원 확인 못 함)` : `${RESET_ITEMS[k].label} ${carN}명`;
+      if (k === 'score') { const n = RESET_ITEMS.score.n(); return n == null ? `${RESET_ITEMS[k].label}(확인 못 함)` : `${RESET_ITEMS[k].label} ${n}팀`; } // 점수는 사람이 아니라 팀 수
+      return `${RESET_ITEMS[k].label} ${RESET_ITEMS[k].n()}명`;
+    };
     const kept = keys.length > 1 ? '명단·일정표·차량 목록(운전자 지정 포함)은 그대로 남아요.'
       : (keys.includes('car') ? '다른 항목과 명단·일정표·차량 목록(운전자 지정 포함)은 그대로 남아요.' : '다른 항목과 명단·일정표는 그대로 남아요.');
     if (!confirm(`${title}: ${RESET_ORDER.filter((k) => keys.includes(k)).map(count).join(' · ')}의 기록을 지울까요?\n${resetNote(keys).join('\n')}\n${kept} 되돌릴 수 없어요.`)) return;
     const btns = [...document.querySelectorAll('#resetCard button')];
     btns.forEach((b) => { b.disabled = true; });
     const done = [];
+    const skipped = []; // 할 일이 없어 건너뛴 것(run 이 SKIP 을 돌려줌): 비웠다고 말하면 안 됨
     try {
-      for (const s of steps) { await s.run(); done.push(...s.keys); }
+      for (const s of steps) { const r = await s.run(); done.push(...s.keys); if (r === SKIP) skipped.push(...s.keys); }
     } catch (e) {
       const left = keys.filter((k) => !done.includes(k));
       const text = done.length
@@ -1676,12 +1755,15 @@ Day 3 · 12/19(토) — 함께 만드는 내년
       if (done.includes('car') && window.carBoard) await window.carBoard.refresh();
     }
     const closedDue = Date.now() >= CHOICE_DEADLINE && keys.some((k) => DEADLINE_ITEMS.includes(k));
-    msgEl.textContent = `${title}를 마쳤어요(${resetLabels(keys)} 비움).${closedDue ? ' 마감이 지나 참가자가 다시 고를 수 없으니 진행자가 직접 넣어 주세요.' : ''}`;
+    const cleared = keys.filter((k) => !skipped.includes(k));
+    msgEl.textContent = `${title}를 마쳤어요(${resetLabels(cleared)} 비움${skipped.length ? ` · ${resetLabels(skipped)} 단계는 DB가 아직 새 버전이 아니라 건너뜀` : ''}).${closedDue ? ' 마감이 지나 참가자가 다시 고를 수 없으니 진행자가 직접 넣어 주세요.' : ''}`;
   }
-  // 전체 초기화: 팀·아침 메뉴는 한 번에 지우는 admin_reset_all, 나머지는 항목별 함수를 차례로(모두 다섯 번 부름)
+  // 전체 초기화: 팀·아침 메뉴는 한 번에 지우는 admin_reset_all, 나머지는 항목별 함수를 차례로(모두 여섯 번 부름).
+  // 점수는 점수 함수가 없는 예전 DB 에서는 비울 것이 없으므로 그 단계만 그냥 지나감
   $('#resetEvery').addEventListener('click', hold($('#resetEvery'), () => resetItems(RESET_ORDER, '전체 초기화', [
     { keys: ['team', 'menu'], run: () => rpc('admin_reset_all', { p_code: code }) },
     ...['room', 'lunch', 'activity', 'car'].map((k) => ({ keys: [k], run: RESET_ITEMS[k].run })),
+    { keys: ['score'], run: () => (scoreDb === 'old' ? SKIP : clearScores()) },
   ])));
   // 항목별 초기화: 그 항목만 비움(다른 항목은 그대로)
   for (const btn of document.querySelectorAll('#resetCard [data-reset-item]')) {

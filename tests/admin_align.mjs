@@ -21,7 +21,7 @@ const DEADLINE_SPEC = [ // [칸 이름, 안내 id, 방법에 들어 있어야 �
 ];
 const OPEN_KEY = 'team-picker-board-open'; // 관리자 페이지 칸 열림 기억
 // 칸(모두 details.card) 순서: 한눈에 보기 → 참가자 메인 순서(일정·차량·아침·점심·자유시간) → 현장 뽑기(객실표·팀) → 관리용(명단 관리·초기화)
-const CARD_ORDER = ['glanceCard', 'planCard', 'carCard', 'menuCard', 'lunchCard', 'actCard', 'roomCard', 'teamCard', 'admin', 'resetCard'];
+const CARD_ORDER = ['glanceCard', 'planCard', 'carCard', 'menuCard', 'lunchCard', 'actCard', 'roomCard', 'teamCard', 'scoreCard', 'admin', 'resetCard'];
 const CSV_HEAD = ['부서', '이름', '직급', '성별', '구분', '탑승 차량', '아침 메뉴', '점심', '자유시간', '객실', '팀'];
 
 // 확인·입력 상자를 모아 두고 대답함: answer(d) 가 true 면 확인(prompt 는 text), 아니면 취소
@@ -297,6 +297,22 @@ export async function adminAlignTests() {
         ok(st.fs === '14px' && st.h >= 36 && st.border === '1px' && st.deco === 'none', `[링크] ${id} 버튼 모양(14px·높이 ${Math.round(st.h)}px·테두리·밑줄 없음)`);
       }
       eq(await page.locator('a[href="draw.html"]').count(), 3, '[링크] draw.html 링크는 맨 위·팀 칸·객실표 칸 세 곳');
+      // 발표용 점수판 링크: 맨 위(뽑기 화면 링크 옆)와 팀 점수 칸 안 두 곳, 뽑기 화면 링크와 같은 버튼 모양
+      await page.locator('#scoreCard > summary').click();
+      const look = (el) => { const s = getComputedStyle(el); return { fs: s.fontSize, h: el.getBoundingClientRect().height, border: s.borderTopWidth, deco: s.textDecorationLine, tag: el.tagName, cls: el.className }; };
+      const drawLook = await page.locator('#drawLink').evaluate(look);
+      for (const id of ['#scoreLink', '#scoreLinkCard']) {
+        const a = page.locator(id);
+        ok(await a.isVisible() && /(^|\/)score\.html$/.test(await a.getAttribute('href')), `[점수판 링크] ${id} 보임 · 주소 ${await a.getAttribute('href')}`);
+        const st = await a.evaluate(look);
+        ok(st.tag === 'A' && /(^| )btn( |$)/.test(st.cls) && st.fs === '14px' && st.h >= 36 && st.border === '1px' && st.deco === 'none', `[점수판 링크] ${id} a.btn 버튼 모양(14px·높이 ${Math.round(st.h)}px·테두리·밑줄 없음)`);
+      }
+      eq(await page.locator('#scoreLink').evaluate(look).then((x) => [x.fs, x.border, x.deco, Math.round(x.h)]), [drawLook.fs, drawLook.border, drawLook.deco, Math.round(drawLook.h)], '[점수판 링크] #scoreLink 와 #drawLink 의 글자 크기·테두리·높이가 같음');
+      const [db1, sb1] = await Promise.all([page.locator('#drawLink').boundingBox(), page.locator('#scoreLink').boundingBox()]);
+      ok(sb1.x > db1.x && Math.abs(sb1.y - db1.y) < 4, `[점수판 링크] #scoreLink 는 #drawLink 오른쪽 옆(같은 줄): draw (${Math.round(db1.x)},${Math.round(db1.y)}) score (${Math.round(sb1.x)},${Math.round(sb1.y)})`);
+      eq(await page.locator('a[href="score.html"]').count(), 2, '[점수판 링크] score.html 링크는 맨 위·팀 점수 칸 두 곳');
+      eq(await page.locator('a[href="draw.html"]').count(), 3, '[점수판 링크] 뽑기 화면 링크는 그대로 세 곳');
+      ok(await page.locator('#scoreLink').evaluate((el) => el.closest('.admin-only') === el), '[점수판 링크] 맨 위 링크는 관리자 전용(admin-only)');
       // 객실표 안내
       const room = (await page.locator('#roomNote').innerText()).replace(/\s+/g, ' ');
       ok(room.includes('방은 현장에서 진행자가 발표용 뽑기 화면(draw.html)으로 뽑아요(남녀 따로·인원은 고르게·나머지는 무작위). 여기서는 결과를 확인하고 직접 고칠 수 있어요.') && room.includes('방을 비우면 발표용 화면에서 다시 뽑아요'), `[객실표 안내] ${room}`);
@@ -323,7 +339,7 @@ export async function adminAlignTests() {
       await page.waitForTimeout(1500);
       eq(await page.locator('#columns .col').count(), 4, '[프로젝터] 팀 열 4개');
       eq(await page.evaluate(() => document.body.classList.contains('tv')), true, '[프로젝터] tv 모양');
-      for (const sel of ['#glanceCard', '#carCard', '#tvWarn', '#teamNote', '#drawLink', '#drawLinkTeam', '#roomCard', '#admin', '#resetCard', '.glance-sum']) {
+      for (const sel of ['#glanceCard', '#carCard', '#tvWarn', '#teamNote', '#drawLink', '#drawLinkTeam', '#scoreLink', '#scoreLinkCard', '#scoreCard', '#roomCard', '#admin', '#resetCard', '.glance-sum']) {
         ok(!(await page.locator(sel).first().isVisible()), `[프로젝터] ${sel} 안 보임`);
       }
       ok(await page.locator('#menuCard').isVisible() && await page.locator('#waiting').isVisible(), '[프로젝터] 아침 메뉴·팀을 아직 안 뽑은 사람 칸은 그대로 보임');
@@ -380,7 +396,7 @@ export async function adminAlignTests() {
       eq(out, [], '[390px] 카드·머리·타일·분류가 화면 오른쪽을 넘지 않음');
       const sum = await page.evaluate(() => [...document.querySelectorAll('#glanceSum .gs')].map((e) => { const r = e.getBoundingClientRect(); return [Math.round(r.left), Math.round(r.right)]; }));
       ok(sum.length === 6 && sum.every(([l, r]) => l >= 0 && r <= 390), `[390px] 요약 타일 6개가 화면 안에 놓임: ${JSON.stringify(sum)}`);
-      for (const id of ['#drawLink', '#drawLinkTeam', '#drawLinkRoom']) ok(await page.locator(id).isVisible(), `[390px] ${id} 보임`);
+      for (const id of ['#drawLink', '#drawLinkTeam', '#drawLinkRoom', '#scoreLink']) ok(await page.locator(id).isVisible(), `[390px] ${id} 보임`);
       ok(await page.locator('#tvWarn').isVisible(), '[390px] 프로젝터 경고 보임');
       await page.setViewportSize({ width: 1280, height: 900 });
       o = await over();
@@ -409,7 +425,7 @@ export async function adminAlignTests() {
             return [c.fontSize, c.fontWeight, c.lineHeight, c.paddingRight, c.display, c.cursor, a.borderRightWidth, a.width, a.right, k.borderRadius, k.paddingTop, k.marginBottom, getComputedStyle(s.querySelector('small')).fontSize].join(' '); }),
         };
       });
-      eq(st.ids, CARD_ORDER, '[칸] 순서: 한눈에 보기 → 일정표 → 탑승 차량 → 아침 메뉴 → 점심 → 자유시간 → 객실표 → 팀 → 명단 관리 → 초기화');
+      eq(st.ids, CARD_ORDER, '[칸] 순서: 한눈에 보기 → 일정표 → 탑승 차량 → 아침 메뉴 → 점심 → 자유시간 → 객실표 → 팀 → 팀 점수 → 명단 관리 → 초기화');
       ok(st.tags.every((t) => /^DETAILS\.card( admin-only)?$/.test(t)), `[칸] 모두 접고 펴는 칸(details.card): ${st.tags.join(', ')}`);
       eq(st.h2, 0, '[칸] 늘 펼쳐진 칸(h2 제목)이 남아 있지 않음');
       ok(st.sums.every((x) => /^SPAN\.sum-t SMALL\.sum-n#\w+Count 단추0$/.test(x)), `[칸] 제목 줄 구성 같음(제목 + 숫자, 단추 없음): ${[...new Set(st.sums.map((x) => x.replace(/#\w+/, '#…')))].join(' | ')}`);
@@ -421,7 +437,7 @@ export async function adminAlignTests() {
       const WANT = {
         glanceCount: /^29명 · 머리글을 누르면 줄 세우기$/, planCount: /^2일 · 일정 3개 · 참가자 화면에도 보여요$/, carCount: /^6\/29명 정해짐$/,
         menuCount: /^12\/29명 고름 · 우거지 해장국 4 · 소고기 미역국 4 · 버섯 황태 해장국 4$/, lunchCount: /^8\/29명 고름 · 일반 설렁탕 4 · 얼큰 설렁탕 4$/,
-        actCount: /^6\/29명 고름 · 스키 3 · 휴식 3$/, roomCount: /^10\/29명 배정 · 남자 5실 · 여자 2실$/, teamCount: /^12\/29명 뽑음$/, totalCount: /^총 29명$/,
+        actCount: /^6\/29명 고름 · 스키 3 · 휴식 3$/, roomCount: /^10\/29명 배정 · 남자 5실 · 여자 2실$/, teamCount: /^12\/29명 뽑음$/, scoreCount: /^빨강 0 · 파랑 0 · 노랑 0 · 초록 0$/, totalCount: /^총 29명$/,
         resetCount: /^12\/29명 기록 있음 · 뽑거나 고른 결과 비우기$/,
       };
       for (const [id, re] of Object.entries(WANT)) {
@@ -651,7 +667,7 @@ export async function adminAlignTests() {
       await fill();
       const { page } = await openBoard({ width: 390, answer: (d) => (d.type() === 'prompt' ? '삭제' : false) });
       await page.waitForFunction(() => document.querySelector('#facets .facet[aria-label="차량"]'), null, { timeout: 15000 });
-      for (const id of ['glanceCard', 'carCard', 'menuCard', 'lunchCard', 'actCard', 'teamCard', 'admin', 'resetCard']) await openCard(page, id);
+      for (const id of ['glanceCard', 'carCard', 'menuCard', 'lunchCard', 'actCard', 'teamCard', 'scoreCard', 'admin', 'resetCard']) await openCard(page, id);
       await page.waitForTimeout(300);
       // 한눈에 보기 표: 8열이 모두 화면 안에 보이고, 표 칸 안에서도 옆으로 밀 필요가 없음(페이지 전체도 안 넘침)
       const g = await page.evaluate(() => {
@@ -666,7 +682,7 @@ export async function adminAlignTests() {
       eq(row.map((x) => x.replace(/\s+/g, ' ').trim()), ['시험관리부', '견본마', '2호차', '버섯 황태 해장국', '얼큰 설렁탕', '휴식', '남자 1호실', '빨강'], '[390px·한눈에 보기] 줄바꿈이 돼도 칸의 글은 그대로');
       // 누르는 자리: 분류 단추·작은 단추·링크 단추·머리글 단추 높이 40px 이상
       const h = (sel) => page.locator(sel).evaluateAll((els) => els.filter((e) => e.getBoundingClientRect().height > 0).map((e) => Math.round(e.getBoundingClientRect().height * 10) / 10));
-      for (const [name, sel] of [['분류 단추', '#facets .chip.pick'], ['작은 단추(복사·고치기)', '#carCopy, #carEditBtn, #lunchCopy, #actCopy, #menuCopy, #planEditBtn'], ['초기화 단추', '#resetCard button.sm'], ['발표용 링크', '#drawLink, #drawLinkTeam'], ['한눈에 보기 머리글', '.glance th button'], ['명단 표 머리글', '.people th button'], ['프로젝터 보기 단추', '#tvBtn'], ['표 안 수정·삭제', '#peopleBody tr:first-child button']]) {
+      for (const [name, sel] of [['분류 단추', '#facets .chip.pick'], ['작은 단추(복사·고치기)', '#carCopy, #carEditBtn, #lunchCopy, #actCopy, #menuCopy, #planEditBtn'], ['초기화 단추', '#resetCard button.sm'], ['발표용 링크', '#drawLink, #drawLinkTeam, #scoreLink'], ['한눈에 보기 머리글', '.glance th button'], ['명단 표 머리글', '.people th button'], ['프로젝터 보기 단추', '#tvBtn'], ['표 안 수정·삭제', '#peopleBody tr:first-child button']]) {
         const hs = await h(sel);
         ok(hs.length > 0 && hs.every((x) => x >= 39.5), `[390px·누르는 자리] ${name} 높이 40px 이상: ${[...new Set(hs)].join(', ')}`);
       }
@@ -837,7 +853,7 @@ export async function adminAlignTests() {
       await sel(20).selectOption(c.to);
       await waitCalls('admin_assign', c0, 1);
       await page.evaluate(() => document.activeElement && document.activeElement.blur());
-      const calls = server.calls.slice(c0).filter((x) => x.fn !== 'board_state' && x.fn !== 'board_cars');
+      const calls = server.calls.slice(c0).filter((x) => x.fn !== 'board_state' && x.fn !== 'board_cars' && x.fn !== 'score_state');
       eq(calls.map((x) => x.fn), ['admin_assign'], `[직접 고치기·${c.title}] 바꾸면 쓰기 호출은 admin_assign 한 번뿐`);
       eq([calls[0].args.p_what, calls[0].args.p_rows], [c.what, [{ id: 20, value: c.to }]], `[직접 고치기·${c.title}] admin_assign(${c.what}) 그 사람 한 명만`);
       eq(await waitDb(20, c.col, c.to), c.to, `[직접 고치기·${c.title}] DB에 반영됨`);
@@ -1027,6 +1043,61 @@ export async function adminAlignTests() {
       eq(wide[1], wide[0], '[1280px·세 칸] 점심 도구 줄 크기가 아침 메뉴와 같음');
       eq(wide[2], wide[0], '[1280px·세 칸] 자유시간 도구 줄 크기가 아침 메뉴와 같음');
       eq(wide[0][1], 36, '[1280px] 복사 단추 높이 36px(넓은 화면 모양 그대로)');
+      await page.close();
+    }
+
+    // ── 21. 팀 점수 칸: 제목 줄 숫자 `빨강 N · 파랑 N · 노랑 N · 초록 N` · 네 팀 점수 · 5초 새로고침 · 안 건드림 · 점수판 링크 목적지 ──
+    {
+      await fill();
+      await db.query('update public.team_scores set score = 0');
+      await db.query("update public.team_scores set score = case team when 'red' then 1250 when 'blue' then -30 when 'yellow' then 5 else 0 end");
+      const { page } = await openBoard();
+      const fmt = (n) => Number(n).toLocaleString('ko-KR');
+      await page.waitForFunction(() => /1,250/.test(document.querySelector('#scoreCount').textContent), null, { timeout: 15000 });
+      eq((await page.locator('#scoreCount').innerText()).trim(), `빨강 ${fmt(1250)} · 파랑 ${fmt(-30)} · 노랑 5 · 초록 0`, '[팀 점수] 접힌 제목 줄 숫자 "빨강 N · 파랑 N · 노랑 N · 초록 N"(마이너스도 그대로)');
+      ok(await page.locator('#scoreCount').isVisible() && !(await page.locator('#scoreCard').evaluate((d) => d.open)), '[팀 점수] 칸은 접힌 채 제목 줄 숫자가 보임');
+      await page.locator('#scoreCard > summary').click();
+      const cols = (await page.locator('#scoreView .col').allInnerTexts()).map((t) => t.replace(/\s+/g, ' ').trim());
+      eq(cols.length, 4, '[팀 점수] 칸 안에 네 팀 열');
+      ok(cols[0].startsWith('빨강') && cols[0].includes('1,250') && cols[1].startsWith('파랑') && cols[1].includes('30') && cols[2].includes('5') && cols[3].startsWith('초록'), `[팀 점수] 칸 안 네 팀 점수: ${cols.join(' | ')}`);
+      eq((await page.locator('#resetScore').textContent()).trim(), '점수 초기화', '[팀 점수] 맨 아래 초기화 칸에 점수 초기화 단추');
+      // 다른 곳에서 바뀐 점수가 5초 새로고침에 따라옴(열린 칸은 그대로)
+      const c0 = server.calls.length;
+      await db.query("update public.team_scores set score = 77 where team = 'green'");
+      await page.waitForFunction(() => /초록 77$/.test(document.querySelector('#scoreCount').textContent.trim()), null, { timeout: 15000 });
+      ok(server.calls.slice(c0).some((c) => c.fn === 'score_state'), '[팀 점수] 5초 새로고침이 score_state 를 부름');
+      eq(await page.locator('#scoreCard').evaluate((d) => d.open), true, '[팀 점수] 새로 받아도 열어 둔 칸은 그대로');
+      // 이 칸은 점수를 주지 않음: 읽기뿐, 쓰기 함수 호출 없음
+      ok(server.calls.slice(c0).every((c) => !/^score_add$|^admin_/.test(c.fn)), '[팀 점수] 이 칸은 읽기만 함(score_add·admin_* 호출 없음)');
+      eq(await page.locator('#scoreView input, #scoreView button, #scoreCard textarea').count(), 0, '[팀 점수] 점수를 줄 입력·단추는 이 칸에 없음(점수는 점수판 화면에서)');
+      await db.query('update public.team_scores set score = 0');
+      await page.close();
+    }
+
+    // ── 22. 점수 받기가 느려도 명단 그리기는 안 늦고, 늦게 온 예전 답이 새 화면을 덮지 않음 ──
+    //   (자동 새로고침의 score_state 만 3초 늦게 → 그 사이 DB 에서 한 명이 팀을 정함 → 초기화 칸의 '점수 초기화'로 refresh(true) → 3초 뒤 예전 새로고침이 끝나도 명단이 되돌아가지 않음)
+    {
+      await fill();
+      await db.query('update public.team_scores set score = 0');
+      const { page, seen } = await openBoard();
+      await page.waitForFunction(() => /팀 뽑음 12명/.test(document.querySelector('#stats').textContent), null, { timeout: 15000 });
+      await openCard(page, 'resetCard');
+      let slowed = 0;
+      await page.route('**/rest/v1/rpc/score_state', async (route) => { if (slowed++ === 0) await new Promise((r) => setTimeout(r, 3000)); await route.fallback(); }); // 처음 한 번만 3초 늦춤(= 다음 자동 새로고침의 점수 받기)
+      await page.waitForRequest((r) => /rpc\/score_state$/.test(r.url()), { timeout: 15000 }); // 자동 새로고침이 점수 받기를 보냄(명단 받기도 같이 나감)
+      await page.waitForTimeout(400); // 명단 받기는 이미 끝남(예전 12명 그대로)
+      await db.query('update public.people set team = \'red\', picked_at = now() where id = (select min(id) from public.people where team is null)');
+      const n0 = seen.length;
+      const t0 = Date.now();
+      await page.locator('#resetScore').click(); // refresh(true) → 확인 창(취소)
+      await page.waitForFunction(() => /팀 뽑음 13명/.test(document.querySelector('#stats').textContent), null, { timeout: 5000 });
+      const reached = Date.now() - t0;
+      const samples = [];
+      while (Date.now() - t0 < 4500) { samples.push((await page.locator('#stats').innerText()).replace(/\s+/g, ' ')); await page.waitForTimeout(80); } // 예전 새로고침이 끝나는 3초 뒤를 지나 계속 봄
+      eq([...new Set(samples)], ['전체 29명 · 팀 뽑음 13명 · 팀 남음 16명'], `[느린 점수] 명단(팀 뽑음 13명)이 새로 그려진 뒤 3초 늦은 예전 새로고침이 끝나도 12명으로 되돌아가지 않음(${samples.length}번 확인)`);
+      ok(reached < 2500, `[느린 점수] 점수 받기가 3초 늦어도 명단은 안 늦음(${reached}ms 만에 13명)`);
+      await waitDialogs(page, seen, n0 + 1);
+      ok(seen.length === n0 + 1 && /점수 \d+팀/.test(seen[n0].msg), `[느린 점수] 확인 문구는 점수 팀 수를 지금 것으로 보여 줌(취소함): ${(seen[n0] || {}).msg}`);
       await page.close();
     }
 

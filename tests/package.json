@@ -5,6 +5,7 @@
   "scripts": {
     "test": "node run.mjs smoke",
     "test:draw": "node run.mjs draw",
+    "test:score": "node run.mjs score",
     "test:reset": "node run.mjs reset",
     "test:admin": "node run.mjs admin",
     "test:shuffle": "node run.mjs shuffle",

@@ -807,8 +807,9 @@ begin
   return n;
 end $$;
 
--- 모든 사람의 객실('room')·자유시간('activity')·점심('lunch')·아침 메뉴('menu')를 비운다.
+-- 모든 사람의 객실('room')·자유시간('activity')·점심('lunch')·아침 메뉴('menu')를 비우거나, 팀 점수('score')를 모두 0으로 만든다.
 -- 'menu' 는 아침 메뉴만 비운다(팀은 그대로 — 팀까지 지우는 admin_reset_all 과 다름). 한 문장이라 읽고 나서 비우는 사이에 고른 사람이 남는 일이 없다.
+-- 'score' 는 점수 칸(맨 아래 '팀 점수')만 0으로 만들고, 사람 명단은 건드리지 않는다.
 create or replace function public.admin_clear(p_code text, p_what text) returns void
 language plpgsql security definer set search_path = public as $$
 begin
@@ -821,6 +822,8 @@ begin
     update people set lunch = null where lunch is not null;
   elsif p_what = 'menu' then
     update people set menu = null where menu is not null;
+  elsif p_what = 'score' then
+    update team_scores set score = 0, updated_at = now() where score <> 0;
   else
     raise exception '바꿀 수 없는 항목이에요.';
   end if;
@@ -1492,4 +1495,89 @@ begin
 end $$;
 revoke all on function public.admin_shuffle(text, text, text) from public;
 grant execute on function public.admin_shuffle(text, text, text) to anon, authenticated;
+notify pgrst, 'reload schema';  -- Supabase API(PostgREST)가 새 함수를 바로 알게 함
+
+-- ══ 팀 점수(진행자) ═════════════════════════════════════
+-- 발표용 점수판 화면이 쓴다. 네 팀(빨강·파랑·노랑·초록)의 점수를 한 줄씩 저장한다. 참가자 화면은 점수를 읽지도 쓰지도 못한다.
+-- 여러 번 Run 해도 안전하다: 칸은 없을 때만 만들고 네 팀 줄도 없을 때만 넣으므로 쌓인 점수는 그대로 남는다(0으로 비우는 것은 진행자의 초기화뿐).
+--   점수 읽기 / 점수 더하기  ← 진행자용 (관리자 비밀번호 필요)
+-- 점수 더하기는 화면이 아는 값을 덮어쓰지 않고 DB 안의 현재 값에 더한다(한 문장). 탭을 둘 열어 동시에 줘도 둘 다 반영된다.
+-- 마이너스 점수도 허용한다. 한 번에 ±1,000,000, 팀 점수는 ±1,000,000,000 까지(숫자가 화면 밖으로 나가지 않게).
+create table if not exists public.team_scores (
+  team       text primary key check (team in ('red', 'blue', 'yellow', 'green')),
+  score      bigint not null default 0,
+  updated_at timestamptz not null default now()
+);
+insert into public.team_scores (team) values ('red'), ('blue'), ('yellow'), ('green')
+on conflict (team) do nothing;
+alter table public.team_scores enable row level security;
+revoke all on public.team_scores from anon, authenticated;
+
+-- 네 팀의 지금 점수: {"red": 0, "blue": 0, "yellow": 0, "green": 0}
+create or replace function public.score_state(p_code text) returns json
+language plpgsql security definer set search_path = public as $$
+begin
+  perform check_admin(p_code);
+  return json_build_object(
+    'red',    coalesce((select score from team_scores where team = 'red'), 0),
+    'blue',   coalesce((select score from team_scores where team = 'blue'), 0),
+    'yellow', coalesce((select score from team_scores where team = 'yellow'), 0),
+    'green',  coalesce((select score from team_scores where team = 'green'), 0));
+end $$;
+
+-- 점수 요청 번호 기록: 같은 요청(같은 번호)이 두 번 도착해도 점수는 한 번만 더하려고 쓴다.
+-- 응답이 끊기거나 늦어서 화면이 "저장됐는지 모르는" 상태가 되면, 진행자가 다시 눌러도 화면이 같은 번호로 다시 보내므로
+-- 늦게 도착한 첫 요청과 다시 보낸 요청 중 하나만 반영된다. 24시간이 지난 줄은 점수를 더할 때마다 지운다(표를 작게 유지).
+-- 이 표는 점수 초기화(admin_clear('score'))나 전체 초기화로 지우지 않는다: 초기화 직전에 보낸 요청이 늦게 도착해 초기화 뒤에 다시 더해지는 것을 막으려고 번호를 남겨 둔다.
+create table if not exists public.score_requests (
+  req        text primary key,
+  created_at timestamptz not null default now()
+);
+alter table public.score_requests enable row level security;
+revoke all on public.score_requests from anon, authenticated;
+
+-- 예전에 3개 인자로 만든 score_add 가 있으면 지운다(인자가 다른 같은 이름 함수가 둘 남아 API 가 헷갈리지 않게). 여러 번 Run 해도 안전하다.
+drop function if exists public.score_add(text, text, bigint);
+
+-- 한 팀에 점수를 더한다(빼려면 마이너스). 갱신한 뒤의 네 팀 점수를 score_state 와 같은 꼴로 돌려준다.
+-- 한 문장으로 더하므로 읽고 쓰는 사이에 다른 요청이 끼어 어긋나는 일이 없다. 한도를 넘으면 아무것도 바꾸지 않고 오류를 낸다.
+-- p_req(요청 번호, 선택): 화면이 점수를 줄 때마다 새로 만든 번호(8~64자, 영문·숫자·_·-). 이미 처리한 번호면 점수를 더하지 않고 지금 점수만 돌려준다.
+--   번호 기록과 점수 더하기는 한 번의 호출(한 거래) 안에서 함께 이루어져서, 같은 번호가 동시에 두 번 와도 한 번만 더해지고,
+--   점수 더하기가 오류(한도 초과 등)로 실패하면 번호 기록도 함께 취소되어 같은 번호로 다시 보낼 수 있다.
+create or replace function public.score_add(p_code text, p_team text, p_delta bigint, p_req text default null) returns json
+language plpgsql security definer set search_path = public as $$
+declare
+  v_new int;
+begin
+  perform check_admin(p_code);
+  if p_team is null or p_team not in ('red', 'blue', 'yellow', 'green') then
+    raise exception '팀을 골라 주세요.';
+  end if;
+  if p_delta is null or p_delta = 0 then
+    raise exception '점수를 넣어 주세요.';
+  end if;
+  if abs(p_delta) > 1000000 then
+    raise exception '한 번에 줄 수 있는 점수는 1,000,000점까지예요.';
+  end if;
+  if p_req is not null then
+    if p_req !~ '^[A-Za-z0-9_-]{8,64}$' then
+      raise exception '요청 번호는 8~64자의 영문·숫자·-·_ 만 쓸 수 있어요.';
+    end if;
+    delete from score_requests where created_at < now() - interval '24 hours';
+    insert into score_requests (req) values (p_req) on conflict do nothing;
+    get diagnostics v_new = row_count;
+    if v_new = 0 then
+      return score_state(p_code); -- 이미 처리한 요청: 점수는 더하지 않고 지금 점수만
+    end if;
+  end if;
+  update team_scores set score = score + p_delta, updated_at = now()
+  where team = p_team and abs(score + p_delta) <= 1000000000;
+  if not found then
+    raise exception '팀 점수가 너무 커져요(±1,000,000,000 까지). 점수를 바꾸지 않았어요.'; -- 오류로 끝나므로 위의 번호 기록도 취소됨
+  end if;
+  return score_state(p_code);
+end $$;
+
+revoke all on function public.score_state(text), public.score_add(text, text, bigint, text) from public;
+grant execute on function public.score_state(text), public.score_add(text, text, bigint, text) to anon, authenticated;
 notify pgrst, 'reload schema';  -- Supabase API(PostgREST)가 새 함수를 바로 알게 함
