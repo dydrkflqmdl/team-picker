@@ -242,7 +242,8 @@
       return;
     }
     if (lapsed) {
-      $('#carText').innerHTML = `⏰ 마감돼서 아직 못 뽑았어요.<span class="car-result-label">${esc(CHOICE_DEADLINE_LABEL)}에 마감됐어요. 차량은 진행자에게 말해 주세요.</span>`;
+      $('#carText').innerHTML = `⏰ 마감돼서 아직 못 뽑았어요.<span class="car-tags"><span class="car-tag">${esc(CHOICE_DEADLINE_SHORT)}에 마감됐어요</span><span class="sr-only">. </span>`
+        + `<span class="car-tag">차량은 진행자에게 말해 주세요</span><span class="sr-only">.</span></span>`;
       fill($('#carReveal'), '');
       return;
     }
