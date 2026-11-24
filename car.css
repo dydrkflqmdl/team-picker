@@ -1,17 +1,17 @@
-/* 탑승 차량 뽑기(car.js). index.html 의 단추 #goCar 와 화면 #carCard 용. 색은 style.css 의 변수를 그대로 써서 어두운 화면에서도 맞음 */
+/* 탑승 차량 뽑기(car.js). index.html 의 단추 #goCar 와 화면 #carCard 용. 색은 style.css 의 변수를 그대로 써서 어두운 화면에서도 맞음.
+   뽑기 세 화면(차량·방·팀)과 아침 메뉴의 마감 꼬리표가 같은 모양이 되도록, 결과 문장(.car-result·.room-result·.result-text)·뽑기 단추 아래 간격(#carBtn·#roomBtn·#randomBtn)·안내(.car-ask .car-tags .car-tag)도 여기서 같이 정함(index.html 은 car.css 를 style.css 다음에 불러옴) */
 
 /* 메인 단추 안의 작은 차 */
 .mb-car { flex: none; width: 26px; height: 46px; }
 
 /* 차량 화면 */
-#carCard > .card { padding: 14px 10px 16px; }
-#carBtn { margin-bottom: 4px; }
+#carBtn, #roomBtn, #randomBtn { margin-bottom: 12px; } /* 뽑기 단추 아래에 늘 있는 "메인으로 돌아가기"(#carHomeBtn·#roomHomeBtn·#homeBtn)와의 간격(숨 쉬는 테두리 6px이 안 닿게) */
 #carHomeBtn { min-height: 56px; }
 #carCrewCard { margin-top: 16px; }
 .car-stage[hidden] { display: none; }
 .car-stage { margin: 0 0 12px; }
-.car-result { text-align: center; font-size: 17px; margin: 0 0 14px; min-height: 1.5em; }
-.car-result b { font-size: 20px; }
+.car-result, .room-result, .result-text { text-align: center; font-size: 17px; margin: 0 0 14px; min-height: 1.5em; }
+.car-result b, .room-result b, .result-text b { font-size: 20px; }
 .car-retry[hidden] { display: none; }
 .car-retry { display: block; margin: 0 auto 14px; padding: 10px 12px; font-size: 14px; }
 
