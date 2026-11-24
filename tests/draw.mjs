@@ -1,6 +1,8 @@
 // 발표용 뽑기 화면(draw.html) 통합 시험.  실행: cd tests && node run.mjs draw [시나리오 번호 ...]   (예: node run.mjs draw 1 5)
 //   30~30.4: 부서 숨김(모든 공개 화면에 부서 문자열 없음·같은 이름 구분 표시·이름 글자 크기·넘침)
 //   1~12·16~19: 기본 진행 '전체 한 번에'(unit=all) · 13~15: 권한·관리자 페이지·키 · 21~29: 남겨 둔 '한 팀·한 방씩'(?unit=group)·'한 명씩'(?unit=person) 회귀
+//   40~47: 입구(관리자 비밀번호 — 통과 전 화면·명단 DOM 없음·주소 옵션·저장된 비밀번호 무시·같은 탭 새로 고침·새 탭·잠그기·통신 오류·키·노출·캡처). 캡처 폴더: LOCK_SHOTS (기본 DRAW_SHOTS/lock)
+//   모든 시나리오: openLive·enterGate 가 입구에서 비밀번호를 직접 넣음(같은 탭은 sessionStorage 로 저절로). 콘솔에 비밀번호가 나오면 실패
 //   npm run test:draw  도 같음.  캡처 폴더: 환경변수 DRAW_SHOTS (기본 tests/.out/draw-shots). 전환 연속 캡처는 그 아래 transition-team/ · transition-room/
 // 운영 DB 에는 닿지 않는다: 모든 browser context 에 guardNetwork 를 걸고, 시나리오 끝마다 막힌 외부 요청이 0건인지 확인한다.
 // 각 시나리오는 끝난 뒤 로컬 postgres 를 직접 조회해(pg) 결과를 검증한다.
@@ -51,7 +53,7 @@ export async function drawTests(only = []) {
   async function scenario(num, name, fn) {
     if (only.length && !only.includes(String(num))) return;
     const t0 = Date.now();
-    const s = { num, name, checks: 0, fails: [], notes: [], guards: [], errors: [], ctxs: [] };
+    const s = { num, name, checks: 0, fails: [], notes: [], guards: [], errors: [], ctxs: [], consoles: [] };
     s.ok = (c, msg) => { s.checks++; if (!c) s.fails.push(msg); return !!c; };
     s.eq = (a, b, msg) => s.ok(JSON.stringify(a) === JSON.stringify(b), `${msg}: 실제 ${JSON.stringify(a)} / 기대 ${JSON.stringify(b)}`);
     s.note = (m) => s.notes.push(m);
@@ -60,6 +62,7 @@ export async function drawTests(only = []) {
     try { await fn(s); } catch (e) { s.fails.push('예외: ' + String(e.stack || e).split('\n').slice(0, 5).join(' | ')); }
     for (const g of s.guards) s.ok(g.blocked.length === 0, `허용 안 된 외부 요청: ${g.blocked.join(', ')}`); // 운영 DB 등 외부 접근 0건
     s.ok(s.errors.length === 0, `페이지 오류(pageerror): ${s.errors.join(' | ')}`);
+    s.ok(!s.consoles.some((t) => t.includes(ADMIN_CODE)), '콘솔에 관리자 비밀번호가 안 나옴'); // 모든 시나리오 공통
     for (const c of s.ctxs) await c.close().catch(() => {});
     const ok = s.fails.length === 0;
     results.push({ num, name, ok, checks: s.checks, fails: s.fails, notes: s.notes, ms: Date.now() - t0 });
@@ -69,14 +72,15 @@ export async function drawTests(only = []) {
     cur = null;
   }
 
-  /** 새 context(+가드). code:true 면 관리자 비밀번호를 localStorage 에 미리 넣어 둔다(board.html 에 들어간 적이 있는 기기 흉내). */
+  /** 새 context(+가드). code:true 면 관리자 비밀번호를 localStorage 'team-picker-admin' 에 미리 넣어 둔다(board.html 에 들어간 적이 있는 기기 흉내).
+   *  draw.html 은 그 값을 쓰지 않으므로(입구에서 직접 넣음) 들어가는 것은 openLive·enterGate 가 한다. */
   async function newCtx(o = {}) {
     const { code, trace, ...rest } = o;
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 720 }, locale: 'ko-KR', ...rest });
     const g = await guardNetwork(ctx, server.url);
     cur.guards.push(g);
     cur.ctxs.push(ctx);
-    ctx.on('page', (p) => p.on('pageerror', (e) => cur.errors.push(e.message)));
+    ctx.on('page', (p) => { p.on('pageerror', (e) => cur.errors.push(e.message)); p.on('console', (m) => cur.consoles.push(m.text())); });
     if (code) await ctx.addInitScript((c) => { try { localStorage.setItem('team-picker-admin', JSON.stringify(c)); } catch {} }, ADMIN_CODE);
     if (trace) await ctx.addInitScript(() => { // 화면·단계·groupIndex 가 바뀐 순서를 4ms 마다 기록(팀 건너뛰기·되돌아감·룰렛 반복 확인)
       window.__trace = []; let last = null;
@@ -106,8 +110,19 @@ export async function drawTests(only = []) {
   const dedup = (a) => a.filter((x, i) => i === 0 || x !== a[i - 1]);
   const unguard = (page) => wait(page, () => window.__draw && !window.__draw.guarded && !window.__draw.busy); // 화면 전환 직후 보호 시간이 끝날 때까지
 
-  async function openLive(page, query = '') { await page.goto(`${server.url}/draw.html${query}`); await waitView(page, 'menu'); }
-  async function chooseKind(page, kind) { await page.keyboard.press(kind === 'team' ? 'Digit1' : 'Digit2'); await waitView(page, 'intro'); }
+  /** 입구: 서버 확인이 끝날 때까지 기다린 뒤(같은 탭이면 저절로 들어감) 아직 입구면 비밀번호를 넣고 Enter. 직접 넣었으면 true */
+  async function enterGate(page, pw = ADMIN_CODE) {
+    await wait(page, () => { const d = window.__draw; return d && (d.view !== 'login' || (!d.busy && d.gate !== 'checking')); });
+    if ((await st(page)).view !== 'login') return false;
+    await tid(page, 'draw-code').fill(pw);
+    await tid(page, 'draw-code').press('Enter');
+    await wait(page, () => { const d = window.__draw; return d && (d.view !== 'login' || (!d.busy && d.gate !== 'checking')); });
+    if ((await st(page)).view === 'login') throw new Error(`입구를 통과하지 못함: ${await text(page, 'draw-login-error')}`);
+    return true;
+  }
+  async function openLive(page, query = '') { await page.goto(`${server.url}/draw.html${query}`); await enterGate(page); await waitView(page, 'menu'); }
+  // 첫 화면 숫자 키는 화면이 막 열린 직후(보호 시간) 무시되므로 보호가 끝난 뒤 누름
+  async function chooseKind(page, kind) { await unguard(page); await page.keyboard.press(kind === 'team' ? 'Digit1' : 'Digit2'); await waitView(page, 'intro'); }
   async function startBtn(page) { // 시작 화면의 주 단추(시작하기/그대로 두고…/결과 보기 등)
     const b = page.locator('#introActs .primary').first();
     await b.click();
@@ -572,8 +587,7 @@ export async function drawTests(only = []) {
     await resetRoster(db); resetCalls();
     const before = await rows();
     const { page, guard } = await newCtx({ trace: true });
-    await page.goto(`${server.url}/draw.html?practice=1`);
-    await waitView(page, 'menu');
+    await openLive(page, '?practice=1'); // 연습 모드도 입구를 지남(확인용 board_state 읽기 한 번)
     s.eq([(await st(page)).mode, (await st(page)).unit], ['practice', 'all'], '연습·전체 한 번에');
     s.ok(await visible(page, 'draw-practice-badge'), "'연습' 표시");
     await chooseKind(page, 'team');
@@ -599,10 +613,10 @@ export async function drawTests(only = []) {
     // 새로 고침하면 처음으로(연습은 기억하지 않음)
     await page.reload(); await waitView(page, 'menu');
     s.ok(/뽑음 0 \/ 30명/.test(await text(page, 'draw-menu-team-status')), `새로 고침 뒤 처음으로: ${await text(page, 'draw-menu-team-status')}`);
-    s.eq(server.calls.length, 0, '서버가 받은 rpc 요청 0건');
-    s.eq(guard.proxied.length, 0, '브라우저가 supabase 로 보내려던 요청 0건');
+    s.eq(server.calls.map((c) => c.fn), ['board_state', 'board_state'], '서버가 받은 rpc 는 입구 확인 board_state 뿐(처음 + 새로 고침 뒤 다시 확인)');
+    s.eq(guard.proxied.filter((u) => !/\/rpc\/board_state$/.test(String(u.url || u))).length, 0, '브라우저가 supabase 로 보낸 요청은 입구 확인뿐');
     s.eq(diffRows(before, await rows()), [], 'DB 변화 0');
-    s.eq(await page.evaluate(() => [...Object.keys(localStorage), ...Object.keys(sessionStorage)].filter((k) => k.startsWith('draw-') || k === 'team-picker-admin')), [], '연습 모드는 저장소에 남기는 것 없음');
+    s.eq(await page.evaluate(() => [...Object.keys(localStorage), ...Object.keys(sessionStorage)].filter((k) => k.startsWith('draw-') || k === 'team-picker-admin')), ['draw-gate'], '연습 모드가 남기는 것은 이 탭의 입구 기억(sessionStorage)뿐');
   });
 
   await scenario(10, '[전체] 움직임 줄이기(reducedMotion: reduce)', async (s) => {
@@ -827,7 +841,7 @@ export async function drawTests(only = []) {
       // 연습 모드(30명, '견본 고슴도치' 등)
       c = await newCtx({ viewport });
       const p4 = c.page;
-      await p4.goto(`${server.url}/draw.html?practice=1`); await waitView(p4, 'menu');
+      await openLive(p4, '?practice=1');
       await shot(p4, vp, 'a17_practice_menu');
       await chooseKind(p4, 'team'); await startBtn(p4); await runAll(p4);
       await shot(p4, vp, 'a18_practice_finale_team');
@@ -906,63 +920,78 @@ export async function drawTests(only = []) {
   });
 
   // ══ 13. 권한 없음 + 참가자 화면 ═══════════════════════
-  await scenario(13, '권한 없음(비밀번호 없이/틀린 비밀번호) + 참가자 화면', async (s) => {
+  await scenario(13, '입구: 비밀번호 없이/틀린 비밀번호/관리자 페이지에 들어간 기기·링크 + 참가자 화면', async (s) => {
     await resetRoster(db); resetCalls();
     const forbidden = () => server.calls.filter((c) => ['pick', 'pick_room'].includes(c.fn) || c.fn.startsWith('admin_'));
     let { page } = await newCtx();
     await page.goto(`${server.url}/draw.html`);
     await waitView(page, 'login');
     s.ok(await visible(page, 'draw-login'), '비밀번호 화면');
-    s.ok(!(await visible(page, 'draw-menu')), '첫 화면은 안 보임');
-    for (const k of ['Digit1', 'Digit2', 'Space', 'Enter', 'ArrowRight', 'PageDown']) await page.keyboard.press(k); // 입력칸에 초점이 없어도 진행 안 됨
+    s.eq(await tid(page, 'draw-menu').count(), 0, '첫 화면은 문서에도 없음');
+    s.eq(await page.evaluate(() => document.activeElement && document.activeElement.id), 'code', '처음 초점은 비밀번호 칸');
+    for (const k of ['Enter', 'Space', 'Enter', 'ArrowRight', 'PageDown', 'Enter']) await page.keyboard.press(k); // 빈 칸(공백만)에서 Enter: 요청 없이 안내만
+    s.ok(/넣어 주세요/.test(await text(page, 'draw-login-error')), `빈 칸 Enter 안내: ${await text(page, 'draw-login-error')}`);
+    await tid(page, 'draw-code').fill('');
+    await page.locator('body').click({ position: { x: 5, y: 5 } }); // 칸 밖에서 진행 키
+    for (const k of ['Digit1', 'Digit2', 'Space', 'Enter', 'ArrowRight', 'PageDown']) await page.keyboard.press(k);
     await sleep(200);
     s.eq((await st(page)).view, 'login', '키를 눌러도 비밀번호 화면 그대로');
     s.eq(server.calls.length, 0, '비밀번호 없이 열었을 때 rpc 요청 0건');
     // 틀린 비밀번호
     await tid(page, 'draw-code').fill('틀린-비밀번호');
     await tid(page, 'draw-login-submit').click();
-    await wait(page, () => window.__draw.view === 'login' && !window.__draw.busy && document.getElementById('loginErr').textContent.length > 0);
-    s.ok((await text(page, 'draw-login-error')).length > 0, `틀린 비밀번호 안내: ${await text(page, 'draw-login-error')}`);
+    await wait(page, () => window.__draw.view === 'login' && !window.__draw.busy && window.__draw.gate === 'wrong');
+    s.ok(/맞지 않아요/.test(await text(page, 'draw-login-error')), `틀린 비밀번호 안내: ${await text(page, 'draw-login-error')}`);
     s.eq((await st(page)).view, 'login', '틀린 비밀번호는 거절');
-    s.eq(await page.evaluate(() => localStorage.getItem('team-picker-admin')), null, '틀린 비밀번호는 저장 안 됨');
+    s.eq(await page.evaluate(() => [localStorage.getItem('team-picker-admin'), sessionStorage.getItem('draw-gate')]), [null, null], '틀린 비밀번호는 어디에도 저장 안 됨');
     s.eq(forbidden().length, 0, '틀린 비밀번호 뒤 pick/pick_room/admin_* 요청 0건');
-    s.eq(server.calls.map((c) => `${c.fn}:${c.status}`), ['board_state:400'], '서버가 받은 요청은 board_state 한 건(거절)');
+    s.eq(server.calls.map((c) => `${c.fn}:${c.status}`), ['board_state:400'], '서버가 받은 요청은 확인 한 건(거절)');
     await page.keyboard.press('Escape');
     for (const k of ['Digit1', 'Digit2', 'Space']) await page.keyboard.press(k);
     s.eq((await st(page)).view, 'login', '틀린 뒤에도 키로 못 들어감');
-    // 저장된 틀린 비밀번호(예전 비밀번호) 로 열기
-    const w = await newCtx();
-    await w.ctx.addInitScript(() => { try { localStorage.setItem('team-picker-admin', JSON.stringify('옛-비밀번호')); } catch {} });
+    // 관리자 페이지에 들어간 적 있는 기기(localStorage 에 맞는 비밀번호): 그래도 입구가 나오고, draw.js 는 그 키를 읽지도 쓰지도 않음
+    const w = await newCtx({ code: true });
+    await w.ctx.addInitScript(() => { // localStorage 접근 기록
+      const L = Storage.prototype; window.__ls = [];
+      for (const m of ['getItem', 'setItem', 'removeItem']) { const f = L[m]; L[m] = function (...a) { if (this === window.localStorage) window.__ls.push(`${m}:${a[0]}`); return f.apply(this, a); }; }
+    });
+    resetCalls();
     await w.page.goto(`${server.url}/draw.html`);
-    await wait(w.page, () => window.__draw && window.__draw.view === 'login' && !window.__draw.busy && document.getElementById('loginErr').textContent.length > 0);
-    s.eq(forbidden().length, 0, '저장된 틀린 비밀번호로 열어도 pick/admin 요청 0건');
+    await waitView(w.page, 'login'); await sleep(300);
+    s.eq((await st(w.page)).gate, 'idle', '[저장된 비밀번호] 입구가 나옴(저절로 안 들어감)');
+    s.eq(server.calls.length, 0, '[저장된 비밀번호] 요청 0건');
+    s.eq(await w.page.evaluate(() => window.__ls.filter((x) => x.endsWith(':team-picker-admin'))), [], '[저장된 비밀번호] draw.js 가 team-picker-admin 을 읽지도 쓰지도 않음');
+    await enterGate(w.page); await waitView(w.page, 'menu');
+    await w.page.reload(); await waitView(w.page, 'menu');
+    s.eq(await w.page.evaluate(() => window.__ls.filter((x) => x.endsWith(':team-picker-admin'))), [], '[들어간 뒤·새로 고침 뒤에도] team-picker-admin 접근 0');
+    s.eq(await w.page.evaluate(() => JSON.parse(localStorage.getItem('team-picker-admin'))), ADMIN_CODE, '[저장된 비밀번호] 관리자 페이지 값은 그대로');
     // 맞는 비밀번호로 들어감
+    resetCalls();
     await tid(page, 'draw-code').fill(ADMIN_CODE);
     await tid(page, 'draw-login-submit').click();
     await waitView(page, 'menu');
-    s.eq(await page.evaluate(() => JSON.parse(localStorage.getItem('team-picker-admin'))), ADMIN_CODE, '맞는 비밀번호는 저장됨(board.html 과 같은 키)');
+    s.eq(await page.evaluate(() => [localStorage.getItem('team-picker-admin'), sessionStorage.getItem('draw-gate')]), [null, ADMIN_CODE], '맞는 비밀번호는 이 탭 sessionStorage 에만(localStorage 에는 안 씀)');
+    s.eq(server.calls.map((c) => `${c.fn}:${c.status}`), ['board_state:200'], '들어갈 때 요청은 확인 한 건(그 명단으로 첫 화면)');
     s.eq(forbidden().length, 0, '로그인만으로 쓰기 요청 없음');
-    // 새로 고침: 저장돼 있어 묻지 않음
+    // 새로 고침: 같은 탭이면 다시 묻지 않음(서버에 다시 확인)
+    resetCalls();
     await page.reload(); await waitView(page, 'menu');
-    s.ok(!(await visible(page, 'draw-login')), '저장된 비밀번호면 다시 묻지 않음');
+    s.ok(!(await visible(page, 'draw-login')), '같은 탭 새로 고침은 다시 묻지 않음');
+    s.eq(server.calls.map((c) => c.fn), ['board_state'], '새로 고침 뒤 서버에 다시 확인 한 번');
 
-    // board.html 로 들어가면 draw.html 이 묻지 않고, '비밀번호 지우기' 뒤에는 다시 묻는다(저장 키 공유)
+    // 관리자 페이지에 들어간 뒤 그 페이지의 발표용 뽑기 링크로 와도 입구가 나옴
     const bctx = await newCtx();
     bctx.page.on('dialog', (d) => d.accept());
     await bctx.page.goto(`${server.url}/board.html`);
     await bctx.page.locator('#code').fill(ADMIN_CODE);
     await bctx.page.locator('#codeForm button[type=submit]').click();
     await bctx.page.locator('#glanceBody tr').first().waitFor({ timeout: 10000 });
-    await bctx.page.goto(`${server.url}/draw.html`);
-    await waitView(bctx.page, 'menu');
-    s.ok(true, 'board.html 에서 로그인하면 draw.html 이 묻지 않음');
-    await bctx.page.goto(`${server.url}/board.html`);
-    await bctx.page.locator('#glanceBody tr').first().waitFor({ timeout: 10000 });
-    await bctx.page.locator('#forget').click();
-    await sleep(300);
-    await bctx.page.goto(`${server.url}/draw.html`);
+    await bctx.page.locator('#drawLink').click();
+    await bctx.page.waitForURL(/draw\.html/);
     await waitView(bctx.page, 'login');
-    s.ok(true, "board.html '비밀번호 지우기' 뒤 draw.html 이 다시 물음");
+    s.eq((await st(bctx.page)).gate, 'idle', '관리자 페이지 링크로 와도 입구');
+    s.eq(await tid(bctx.page, 'draw-menu').count(), 0, '관리자 페이지 링크로 와도 첫 화면 DOM 없음');
+    s.eq(await bctx.page.evaluate(() => JSON.parse(localStorage.getItem('team-picker-admin'))), ADMIN_CODE, '관리자 페이지의 비밀번호 저장은 그대로');
 
     // 참가자 화면(index.html)
     const ictx = await newCtx();
@@ -1001,9 +1030,12 @@ export async function drawTests(only = []) {
     s.eq(rs.filter((x) => x.room).length, 29, '자동으로 나누기: 전원 방');
     s.ok(spread(men) <= 1 && spread(women) <= 1, `자동으로 나누기 인원 차이 ≤1: 남 ${JSON.stringify(men)} 여 ${JSON.stringify(women)}`);
     s.eq(rs.filter((x) => x.room[0] !== (x.gender === '남' ? 'm' : 'f')).length, 0, '자동으로 나누기: 성별 섞임 0');
-    // 링크로 가면 묻지 않고 열림
+    // 링크로 가도 입구가 나오고, 비밀번호를 넣어야 열림
     await link.click();
     await page.waitForURL(/draw\.html/);
+    await waitView(page, 'login');
+    s.eq((await st(page)).gate, 'idle', '관리자 페이지 링크로 와도 입구');
+    s.eq(await enterGate(page), true, '비밀번호를 직접 넣어야 열림');
     await waitView(page, 'menu');
     s.ok(/뽑음 0 \/ 29명/.test(await text(page, 'draw-menu-team-status')) && /29 \/ 29명|모두 뽑았어요/.test(await text(page, 'draw-menu-room-status')), `링크로 들어간 첫 화면 상태: 팀 ${await text(page, 'draw-menu-team-status')} / 방 ${await text(page, 'draw-menu-room-status')}`);
     s.ok(await visible(page, 'draw-to-board'), '첫 화면에 관리자 페이지로 돌아가는 링크');
@@ -1031,10 +1063,12 @@ export async function drawTests(only = []) {
     const fs2 = await page.evaluate(() => !!document.fullscreenElement);
     if (fs1 && !fs2) s.ok(true, 'F: 전체 화면 켜고 끄기');
     else s.note(`F: 헤드리스 Chrome 에서 전체 화면 전환을 확인하지 못함(켬 ${fs1}, 끔 ${!fs2}) — 실제 노트북에서 직접 확인 필요`);
-    await page.keyboard.press('Digit2'); await waitView(page, 'intro');
+    await unguard(page); await page.keyboard.press('Digit2'); await waitView(page, 'intro');
     s.eq((await st(page)).kind, 'room', '2: 방 배정 뽑기');
     await tid(page, 'draw-back').click(); await waitView(page, 'menu');
-    await page.keyboard.press('Digit1'); await waitView(page, 'intro');
+    await page.keyboard.press('Digit1'); await sleep(100);
+    s.eq((await st(page)).view, 'menu', '첫 화면으로 돌아온 직후(보호 시간) 1 은 무시');
+    await unguard(page); await page.keyboard.press('Digit1'); await waitView(page, 'intro');
     s.eq((await st(page)).kind, 'team', '1: 팀 뽑기');
     await startBtn(page);
     s.ok(await visible(page, 'draw-home'), '뽑는 화면에 처음 화면 단추');
@@ -1331,16 +1365,15 @@ export async function drawTests(only = []) {
   });
 
   // ══ 27. (한 팀씩·한 명씩) 연습 모드 ══════════════════════════════════════
-  await scenario(27, '[한 팀씩·한 명씩] 연습 모드(비밀번호 없이, DB 요청 0건)', async (s) => {
+  await scenario(27, '[한 팀씩·한 명씩] 연습 모드(입구를 지난 뒤 DB 요청 0건)', async (s) => {
     await resetRoster(db); resetCalls();
     const before = await rows();
     const { page, guard } = await newCtx();
-    await page.goto(`${server.url}/draw.html?practice=1&unit=group`);
-    await waitView(page, 'menu');
+    await openLive(page, '?practice=1&unit=group');
     s.eq((await st(page)).mode, 'practice', '모드');
     s.ok(await visible(page, 'draw-practice-badge'), "'연습' 표시");
     s.ok(await page.locator('#watermark').isVisible(), '연습 워터마크');
-    s.ok(!(await visible(page, 'draw-login')), '비밀번호 화면 없이 바로 첫 화면');
+    s.ok(!(await visible(page, 'draw-login')), '입구를 지나면 첫 화면(입구는 숨김)');
     s.ok(/^연습/.test(await page.title()), `탭 제목: ${await page.title()}`);
     await chooseKind(page, 'team');
     s.ok(/전체 30명/.test(await text(page, 'draw-intro-summary')), `요약: ${await text(page, 'draw-intro-summary')}`);
@@ -1375,10 +1408,11 @@ export async function drawTests(only = []) {
     // 새로 고침하면 처음으로
     await page.reload(); await waitView(page, 'menu');
     s.ok(/뽑음 0 \/ 30명/.test(await text(page, 'draw-menu-team-status')), `새로 고침 뒤 처음으로: ${await text(page, 'draw-menu-team-status')}`);
-    s.eq(server.calls.length, 0, '서버가 받은 rpc 요청 0건');
-    s.eq(guard.proxied.length, 0, '브라우저가 supabase 로 보내려던 요청 0건');
+    s.eq(server.calls.filter((c) => c.fn !== 'board_state').length, 0, '서버가 받은 rpc 는 입구 확인 board_state 뿐');
+    s.eq(server.calls.length, 3, `입구 확인 = 페이지를 연 횟수(처음·한 명씩으로 이동·새로 고침): ${server.calls.length}`);
+    s.eq(guard.proxied.filter((u) => !/\/rpc\/board_state$/.test(String(u.url || u))).length, 0, '브라우저가 supabase 로 보낸 요청은 입구 확인뿐');
     s.eq(diffRows(before, await rows()), [], 'DB 변화 0');
-    s.eq(await page.evaluate(() => localStorage.getItem('team-picker-admin')), null, '연습 모드는 비밀번호를 만들거나 저장하지 않음');
+    s.eq(await page.evaluate(() => localStorage.getItem('team-picker-admin')), null, '연습 모드는 비밀번호를 localStorage 에 저장하지 않음');
     s.eq(await page.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith('draw-reveal'))), [], '연습 모드는 공개 위치를 localStorage 에 남기지 않음');
   });
 
@@ -1680,7 +1714,7 @@ export async function drawTests(only = []) {
       const vp = String(w);
       const opt = { depts: PRACTICE_DEPTS, dupNames: [], dupDepts: [] };
       const { page } = await newCtx({ viewport: { width: w, height: h } });
-      await page.goto(`${server.url}/draw.html?practice=1`); await waitView(page, 'menu');
+      await openLive(page, '?practice=1');
       await chooseKind(page, 'team'); await startBtn(page);
       await page.keyboard.press('Space');
       await wait(page, () => window.__draw.phase === 'saving'); await sleep(300);
@@ -1749,6 +1783,391 @@ export async function drawTests(only = []) {
     s.ok(await visible(page, 'draw-error'), '오류 상자 보임');
   });
 
+  // ══ 40~47. 입구(관리자 비밀번호): 통과 전에는 화면·명단 없음, 이 탭에만 기억, 잠그기, 통신 오류, 키, 노출 ══════════
+  const LOCK_SHOTS = process.env.LOCK_SHOTS || join(SHOTS, 'lock');
+  const APP_IDS = ['draw-menu', 'draw-intro', 'draw-play', 'draw-finale', 'draw-board', 'draw-finale-board', 'draw-menu-team-status', 'draw-practice-badge', 'draw-lock', 'draw-loading', 'draw-dialog'];
+  const WRITE_FNS = (c) => c.fn !== 'board_state'; // 이 화면이 부르는 함수 가운데 board_state 말고는 모두 쓰기(pick·pick_room·admin_*)
+  /** 입구에서 문서에 남은 것: 화면 요소·명단 이름(보이는 글자와 숨은 DOM 모두)·견본 명단·첫 화면 글 */
+  async function gateLeak(page) {
+    const names = [...new Set((await rows()).map((r) => r.name))];
+    return page.evaluate(({ ids, names }) => {
+      const html = document.body.outerHTML.replace(/<template[\s\S]*?<\/template>/g, ''); // <template> 안(아직 만들지 않은 화면 틀)은 문서가 아님. 그 틀에도 명단은 없음
+      const text = document.body.innerText;
+      const practice = /견본 (토끼|판다|여우|사과|포도|감자)/;
+      return {
+        appEls: ids.filter((id) => document.querySelector(`[data-testid="${id}"]`)),
+        textNames: names.filter((n) => text.includes(n)),
+        domNames: names.filter((n) => html.includes(n) || document.documentElement.outerHTML.includes(n)),
+        practice: practice.test(text) || practice.test(document.documentElement.outerHTML),
+        menuText: /무엇을 뽑을까요|레크리에이션 팀 뽑기|방 배정 뽑기|연습 모드|명\)/.test(text),
+        stageKids: [...document.getElementById('stage').children].map((e) => e.id),
+        lis: document.querySelectorAll('li').length,
+      };
+    }, { ids: APP_IDS, names });
+  }
+  const NO_LEAK = { appEls: [], textNames: [], domNames: [], practice: false, menuText: false, stageKids: ['error', 'loginView'], lis: 0 };
+  const gateIdle = (page) => wait(page, () => { const d = window.__draw; return d && d.view === 'login' && !d.busy && d.gate !== 'checking'; });
+  const gateState = (page) => page.evaluate(() => window.__draw.gate);
+
+  await scenario(40, '입구: 비밀번호 없이·틀린 비밀번호·주소 옵션·저장된 비밀번호 — 화면·명단 DOM 없음, 쓰기 0건', async (s) => {
+    await resetRoster(db, { picked: true }); resetCalls(); // 일부는 이미 뽑은 상태(첫 화면 인원 숫자가 새어 나오는지도 봄)
+    const { ctx, page } = await newCtx({ code: true }); // 관리자 페이지에 들어간 적 있는 기기(맞는 비밀번호가 localStorage 에)
+    for (const q of ['', '?practice=1', '?unit=group', '?unit=person', '?practice=1&unit=person', '?unit=all&practice=1']) {
+      await page.goto(`${server.url}/draw.html${q}`);
+      await gateIdle(page); await sleep(250);
+      s.eq(await gateState(page), 'idle', `[${q || '옵션 없음'}] 입구`);
+      s.eq(await gateLeak(page), NO_LEAK, `[${q || '옵션 없음'}] 비밀번호 없이: 화면·명단 DOM 없음`);
+      s.eq(await page.title(), '발표용 뽑기', `[${q || '옵션 없음'}] 탭 제목에 연습·종류 표시 없음`);
+      await tid(page, 'draw-code').fill('틀린-비밀번호-1');
+      await tid(page, 'draw-code').press('Enter');
+      await gateIdle(page);
+      s.eq(await gateState(page), 'wrong', `[${q || '옵션 없음'}] 틀린 비밀번호`);
+      s.eq(await gateLeak(page), NO_LEAK, `[${q || '옵션 없음'}] 틀린 비밀번호 뒤: 화면·명단 DOM 없음`);
+      s.eq(await page.evaluate(() => sessionStorage.getItem('draw-gate')), null, `[${q || '옵션 없음'}] 틀린 비밀번호는 기억 안 함`);
+    }
+    s.eq(server.calls.filter(WRITE_FNS).length, 0, '그동안 쓰기 요청 0건');
+    s.eq(server.calls.map((c) => `${c.fn}:${c.status}`), Array(6).fill('board_state:400'), '요청은 틀린 비밀번호 확인 6건뿐(모두 거절)');
+    s.eq(await page.evaluate(() => JSON.parse(localStorage.getItem('team-picker-admin'))), ADMIN_CODE, 'localStorage 의 관리자 페이지 비밀번호는 그대로(안 지움·안 씀)');
+    const ws = await page.evaluate(() => (window.__draw && Object.keys(window.__draw)) || []);
+    s.ok(!ws.includes('people'), 'window.__draw 에 명단 없음');
+  });
+
+  await scenario(41, '입구: 같은 탭 새로 고침은 다시 묻지 않음(첫 화면·룰렛 저장 중·전체 결과), 서버에 다시 확인', async (s) => {
+    await resetRoster(db); resetCalls();
+    const { page } = await newCtx();
+    await page.goto(`${server.url}/draw.html`);
+    s.eq(await enterGate(page), true, '처음에는 직접 넣음');
+    await waitView(page, 'menu');
+    // 첫 화면
+    resetCalls();
+    await page.reload();
+    s.eq(await enterGate(page), false, '[첫 화면] 새로 고침 뒤 묻지 않음');
+    await waitView(page, 'menu');
+    s.eq(server.calls.map((c) => `${c.fn}:${c.status}`), ['board_state:200'], '[첫 화면] 서버에 다시 확인 한 번(그 명단으로 첫 화면)');
+    // 룰렛 저장 중
+    await page.route(/\/rpc\/pick$/, async (r) => { await sleep(120); r.fallback(); });
+    await chooseKind(page, 'team'); await startBtn(page);
+    await page.keyboard.press('Space');
+    for (let i = 0; i < 400; i++) { const n = (await rows()).filter((r) => r.team).length; if (n >= 6) break; await sleep(25); }
+    s.eq((await st(page)).phase, 'saving', '룰렛(저장) 도중');
+    await page.reload();
+    s.eq(await enterGate(page), false, '[룰렛 저장 중] 새로 고침 뒤 묻지 않음');
+    await waitView(page, 'menu');
+    await sleep(500);
+    const n1 = (await rows()).filter((r) => r.team).length;
+    await chooseKind(page, 'team');
+    s.ok(await visible(page, 'draw-keep'), `[룰렛 저장 중] 이어 하기 단추: ${await text(page, 'draw-keep')}`);
+    await tid(page, 'draw-keep').click(); await waitView(page, 'play');
+    await runAll(page);
+    s.eq((await rows()).filter((r) => r.team).length, 29, `[룰렛 저장 중] 남은 ${29 - n1}명 이어서 저장 → 29명`);
+    // 전체 결과
+    const m1 = await finaleMap(page);
+    resetCalls();
+    await page.reload();
+    s.eq(await enterGate(page), false, '[전체 결과] 새로 고침 뒤 묻지 않음');
+    await waitFinale(page);
+    s.eq([(await st(page)).view, await finaleMap(page)], ['finale', m1], '[전체 결과] 같은 전체 결과 다시');
+    s.eq(server.calls.filter(WRITE_FNS).length, 0, '[전체 결과] 새로 고침으로 쓰기 0건');
+    s.eq(calls('board_state').length, 2, '[전체 결과] 입구 다시 확인 1 + 전체 결과 최신 명단 1');
+    s.eq(await page.evaluate(() => [Object.keys(localStorage).filter((k) => !k.startsWith('draw-reveal')), document.cookie]), [[], ''], '오래 남는 저장소(localStorage·쿠키)에 새로 적은 것 없음');
+  });
+
+  await scenario(42, '입구: 새 탭(같은 context)·새 context(브라우저를 다시 연 것)는 다시 물음', async (s) => {
+    await resetRoster(db); resetCalls();
+    const a = await newCtx();
+    await openLive(a.page);
+    const p2 = await a.ctx.newPage();
+    await p2.goto(`${server.url}/draw.html`);
+    await gateIdle(p2);
+    s.eq(await gateState(p2), 'idle', '같은 브라우저의 새 탭: 입구');
+    s.eq(await gateLeak(p2), NO_LEAK, '새 탭: 화면·명단 DOM 없음');
+    s.eq(await p2.evaluate(() => sessionStorage.getItem('draw-gate')), null, '새 탭에는 기억 없음');
+    s.eq(await a.page.evaluate(() => sessionStorage.getItem('draw-gate')), ADMIN_CODE, '원래 탭은 그대로 기억');
+    const b = await newCtx({ code: true });
+    await b.page.goto(`${server.url}/draw.html?practice=1`);
+    await gateIdle(b.page);
+    s.eq(await gateState(b.page), 'idle', '새 context(브라우저를 다시 연 것과 같음): 입구');
+    s.eq(server.calls.filter(WRITE_FNS).length, 0, '쓰기 0건');
+  });
+
+  await scenario(43, '잠그기: 확인 상자·취소, 누르면 입구로(기억·명단 DOM 지움), 룰렛 중·화면 전환 직후에는 안 눌림', async (s) => {
+    await resetRoster(db); resetCalls();
+    const { page } = await newCtx();
+    await page.goto(`${server.url}/draw.html`);
+    await tid(page, 'draw-code').fill(ADMIN_CODE);
+    await tid(page, 'draw-code').press('Enter');
+    await wait(page, () => window.__draw && window.__draw.view === 'menu');
+    s.ok((await st(page)).guarded, '통과 직후는 보호 시간');
+    await tid(page, 'draw-lock').click({ force: true });
+    await sleep(150);
+    s.eq((await st(page)).dialog, null, '통과 직후(보호 시간)에는 잠그기가 안 눌림');
+    await unguard(page);
+    s.ok(await visible(page, 'draw-lock'), '첫 화면에 잠그기 단추');
+    await tid(page, 'draw-lock').click();
+    await wait(page, () => window.__draw.dialog === 'lock');
+    await page.keyboard.press('Enter'); await sleep(50); // 열린 직후(0.5초) Enter 는 무시
+    s.eq((await st(page)).dialog, 'lock', '열린 직후 Enter 로 닫히지 않음');
+    s.ok(/잠글까요/.test(await text(page, 'draw-dialog-title')), `확인 상자: ${await text(page, 'draw-dialog-title')}`);
+    s.eq(await page.evaluate(() => document.activeElement && document.activeElement.id), 'dlgCancel', '처음 초점은 취소');
+    await tid(page, 'draw-dialog-cancel').click();
+    await wait(page, () => window.__draw.dialog === null);
+    s.eq([(await st(page)).view, await page.evaluate(() => sessionStorage.getItem('draw-gate'))], ['menu', ADMIN_CODE], '취소하면 그대로');
+    // 룰렛 중에는 안 눌림
+    await page.route(/\/rpc\/pick$/, async (r) => { await sleep(150); r.fallback(); });
+    await chooseKind(page, 'team'); await startBtn(page);
+    await page.keyboard.press('Space');
+    await wait(page, () => window.__draw.phase === 'saving');
+    s.ok(await tid(page, 'draw-lock').isDisabled(), '룰렛(저장) 중 잠그기 단추 꺼짐');
+    await tid(page, 'draw-lock').click({ force: true }); await sleep(100);
+    await page.evaluate(() => document.getElementById('lockBtn').click()); await sleep(100);
+    s.eq((await st(page)).dialog, null, '룰렛 중 눌러도 확인 상자 안 열림');
+    await wait(page, () => window.__draw.phase === 'landing' || window.__draw.view === 'finale');
+    s.ok(await tid(page, 'draw-lock').isDisabled(), '멈추는 중에도 꺼짐');
+    await waitFinale(page);
+    s.ok((await st(page)).guarded, '전체 결과로 넘어간 직후 보호 시간');
+    await tid(page, 'draw-lock').click({ force: true }); await sleep(100);
+    s.eq((await st(page)).dialog, null, '전체 결과로 넘어간 직후(보호 시간)에는 안 눌림');
+    await unguard(page);
+    s.ok((await page.locator('#finaleBoard li').count()) === 29, '전체 결과에 29명');
+    // 잠그기
+    const writes0 = server.calls.filter(WRITE_FNS).length;
+    await tid(page, 'draw-lock').click();
+    await wait(page, () => window.__draw.dialog === 'lock');
+    await sleep(600);
+    const loaded = page.waitForEvent('load');
+    const now = await page.evaluate(async () => {
+      document.getElementById('dlgOk').click();
+      await new Promise((r) => setTimeout(r, 0));
+      return { lis: document.querySelectorAll('li').length, kids: [...document.getElementById('stage').children].map((e) => e.id), mem: sessionStorage.getItem('draw-gate') };
+    }).catch((e) => ({ err: String(e).slice(0, 80) }));
+    if (now.err) s.note(`누른 바로 뒤 DOM 은 페이지가 먼저 다시 불러져 못 읽음: ${now.err}`);
+    else s.eq(now, { lis: 0, kids: ['error', 'loginView'], mem: null }, '누른 즉시: 명단 DOM·기억 지움');
+    await loaded;
+    await gateIdle(page);
+    s.eq(await gateState(page), 'idle', '잠근 뒤 입구');
+    s.ok(/잠갔어요/.test(await text(page, 'draw-login-info')), `잠근 뒤 안내: ${await text(page, 'draw-login-info')}`);
+    s.eq(await page.evaluate(() => sessionStorage.getItem('draw-gate')), null, '잠근 뒤 sessionStorage 비밀번호 없음');
+    s.eq(await gateLeak(page), NO_LEAK, '잠근 뒤 화면·명단 DOM 없음');
+    s.eq(server.calls.filter(WRITE_FNS).length, writes0, '잠그기로 쓰기 요청 없음');
+    // 새로 고쳐도 입구(기억이 없음)
+    resetCalls();
+    await page.reload(); await gateIdle(page);
+    s.eq([await gateState(page), server.calls.length], ['idle', 0], '잠근 뒤 새로 고침: 입구, 요청 0건');
+    // 다시 넣으면 들어감(전체 결과를 띄운 채 잠갔으므로 전체 결과로 다시 — 결과는 DB 에 있음)
+    await enterGate(page);
+    await wait(page, () => window.__draw && ['menu', 'finale'].includes(window.__draw.view) && !window.__draw.busy);
+    s.note(`잠근 뒤 다시 넣으면: ${(await st(page)).view}`);
+    // 첫 화면에서 잠그기
+    await unguard(page);
+    if ((await st(page)).view === 'finale') { await tid(page, 'draw-finale-home').click(); await waitView(page, 'menu'); await unguard(page); }
+    await tid(page, 'draw-lock').click(); await wait(page, () => window.__draw.dialog === 'lock');
+    await Promise.all([page.waitForEvent('load'), tid(page, 'draw-dialog-ok').click()]);
+    await gateIdle(page);
+    s.eq(await gateLeak(page), NO_LEAK, '[첫 화면에서 잠금] 화면·명단 DOM 없음');
+  });
+
+  await scenario(44, '입구: 통신 오류는 틀린 것과 따로 안내 + 다시 연결 / 새로 고침 재확인 때 오류·비밀번호 바뀜', async (s) => {
+    await resetRoster(db); resetCalls();
+    const { page } = await newCtx();
+    let down = 0;
+    await page.route(/\/rpc\/board_state$/, async (r) => { if (down > 0) { down--; return r.abort('failed'); } return r.fallback(); });
+    await page.goto(`${server.url}/draw.html`);
+    await gateIdle(page);
+    // 처음 넣을 때 통신 오류
+    down = 1;
+    await tid(page, 'draw-code').fill(ADMIN_CODE);
+    await tid(page, 'draw-code').press('Enter');
+    await gateIdle(page);
+    const offMsg = await text(page, 'draw-login-error');
+    s.eq(await gateState(page), 'offline', '통신 오류 상태');
+    s.ok(/연결/.test(offMsg) && !/맞지 않아요/.test(offMsg), `통신 오류 안내(틀림과 다름): ${offMsg}`);
+    s.ok(await visible(page, 'draw-reconnect'), "'다시 연결' 단추");
+    s.eq(await page.evaluate(() => [document.getElementById('code').value, sessionStorage.getItem('draw-gate')]), ['', null], '입력 칸 비움·아직 기억 안 함');
+    s.eq(await gateLeak(page), NO_LEAK, '통신 오류: 화면·명단 DOM 없음');
+    // 틀린 비밀번호 안내와 다른지
+    await tid(page, 'draw-code').fill('틀린-비밀번호-2'); await tid(page, 'draw-code').press('Enter'); await gateIdle(page);
+    const wrongMsg = await text(page, 'draw-login-error');
+    s.ok(wrongMsg !== offMsg && /맞지 않아요/.test(wrongMsg), `틀림 안내: ${wrongMsg}`);
+    s.ok(!(await visible(page, 'draw-reconnect')), "틀리면 '다시 연결' 없음");
+    // 서버 오류(500, 통신은 됨): 인터넷 안내가 아닌 '서버가 확인하지 못했어요' + 다시 연결
+    let fail500 = 1;
+    await page.route(/\/rpc\/board_state$/, async (r) => {
+      if (fail500 > 0) { fail500--; return r.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ message: 'internal error', code: 'XX000' }) }); }
+      return r.fallback();
+    });
+    await tid(page, 'draw-code').fill(ADMIN_CODE); await tid(page, 'draw-code').press('Enter'); await gateIdle(page);
+    const srvMsg = await text(page, 'draw-login-error');
+    s.eq(await gateState(page), 'server', '[500] 서버 오류 상태(통신 오류·틀림과 다름)');
+    s.ok(/서버가 확인하지 못했어요/.test(srvMsg) && !/인터넷/.test(srvMsg) && !/맞지 않아요/.test(srvMsg), `[500] 안내: ${srvMsg}`);
+    s.ok(await visible(page, 'draw-reconnect'), "[500] '다시 연결' 단추");
+    s.eq(await gateLeak(page), NO_LEAK, '[500] 화면·명단 DOM 없음');
+    await tid(page, 'draw-reconnect').click(); await waitView(page, 'menu');
+    s.ok(true, "[500] '다시 연결'로 들어감");
+    // 들어온 상태에서 새로 고침 때 500: 기억은 그대로, 다시 연결로 들어감
+    fail500 = 1;
+    await page.reload(); await gateIdle(page);
+    s.eq(await gateState(page), 'server', '[새로 고침·500] 서버 오류 안내');
+    s.eq(await page.evaluate(() => sessionStorage.getItem('draw-gate')), ADMIN_CODE, '[새로 고침·500] 기억 유지');
+    await tid(page, 'draw-reconnect').click(); await waitView(page, 'menu');
+    await page.unroute(/\/rpc\/board_state$/);
+    await page.route(/\/rpc\/board_state$/, async (r) => { if (down > 0) { down--; return r.abort('failed'); } return r.fallback(); });
+    await page.evaluate(() => sessionStorage.removeItem('draw-gate'));
+    await page.reload(); await gateIdle(page);
+    // 다시 통신 오류 → 다시 연결로 들어감
+    down = 1;
+    await tid(page, 'draw-code').fill(ADMIN_CODE); await tid(page, 'draw-code').press('Enter'); await gateIdle(page);
+    s.eq(await gateState(page), 'offline', '다시 통신 오류');
+    await tid(page, 'draw-reconnect').click();
+    await waitView(page, 'menu');
+    s.eq(await page.evaluate(() => sessionStorage.getItem('draw-gate')), ADMIN_CODE, "'다시 연결'로 들어가고 기억");
+    // 새로 고침 때 통신 오류: 기억은 두고 입구에서 다시 연결
+    down = 1;
+    await page.reload(); await gateIdle(page);
+    s.eq(await gateState(page), 'offline', '[새로 고침] 다시 확인 중 통신 오류 → 입구(오류 안내)');
+    s.eq(await gateLeak(page), NO_LEAK, '[새로 고침·통신 오류] 화면·명단 DOM 없음');
+    s.eq(await page.evaluate(() => sessionStorage.getItem('draw-gate')), ADMIN_CODE, '[새로 고침·통신 오류] 기억은 그대로(틀린 게 아니므로)');
+    await tid(page, 'draw-reconnect').click();
+    await waitView(page, 'menu');
+    s.ok(true, '[새로 고침·통신 오류] 다시 연결로 들어감(비밀번호 다시 안 넣음)');
+    // 비밀번호가 바뀐 뒤 새로 고침 → 기억 지우고 입구
+    await db.query("update public.config set value = 'test-admin-code-changed' where key = 'admin_code'");
+    try {
+      await page.reload(); await gateIdle(page);
+      s.eq(await gateState(page), 'wrong', '[비밀번호 바뀜] 새로 고침 → 입구');
+      s.ok(/바뀌었어요/.test(await text(page, 'draw-login-error')), `[비밀번호 바뀜] 안내: ${await text(page, 'draw-login-error')}`);
+      s.eq(await page.evaluate(() => sessionStorage.getItem('draw-gate')), null, '[비밀번호 바뀜] 기억 지움');
+      // 들어온 뒤 바뀜(첫 화면에서 팀 뽑기를 고르면 명단을 다시 받다가 거절) → 입구로
+      await enterGate(page, 'test-admin-code-changed'); await waitView(page, 'menu');
+      await db.query(`update public.config set value = '${ADMIN_CODE}' where key = 'admin_code'`);
+      await unguard(page);
+      await Promise.all([page.waitForEvent('load'), page.keyboard.press('Digit1')]);
+      await gateIdle(page);
+      s.eq(await gateState(page), 'wrong', '[들어온 뒤 바뀜] 입구로 돌아감');
+      s.ok(/바뀌었어요/.test(await text(page, 'draw-login-error')), `[들어온 뒤 바뀜] 안내: ${await text(page, 'draw-login-error')}`);
+      s.eq(await gateLeak(page), NO_LEAK, '[들어온 뒤 바뀜] 화면·명단 DOM 없음');
+    } finally {
+      await db.query(`update public.config set value = '${ADMIN_CODE}' where key = 'admin_code'`);
+    }
+    s.eq(server.calls.filter(WRITE_FNS).length, 0, '쓰기 0건');
+  });
+
+  await scenario(45, '입구 키: 연타해도 확인 한 번, Space·Enter 는 진행 키가 아님, 통과 직후 연타·클릭이 첫 화면 단추를 안 누름', async (s) => {
+    await resetRoster(db); resetCalls();
+    const { page } = await newCtx();
+    await page.route(/\/rpc\/board_state$/, async (r) => { await sleep(1200); r.fallback(); }); // 느린 확인
+    await page.goto(`${server.url}/draw.html`);
+    await gateIdle(page);
+    await tid(page, 'draw-code').fill(ADMIN_CODE);
+    await tid(page, 'draw-code').press('Enter');
+    for (let i = 0; i < 6; i++) { await tid(page, 'draw-login-submit').click({ force: true }).catch(() => {}); await page.keyboard.press('Enter'); }
+    s.eq((await st(page)).gate, 'checking', '확인 중');
+    s.ok(await tid(page, 'draw-login-submit').isDisabled(), '확인 중 들어가기 단추 꺼짐');
+    await waitView(page, 'menu');
+    s.eq(calls('board_state').length, 1, '연타해도 확인 요청 한 번');
+    // 통과 직후 연타: 새 탭에서 Enter 를 누른 채(반복)·스페이스·클릭
+    const p2 = await page.context().newPage();
+    await p2.goto(`${server.url}/draw.html`); await gateIdle(p2);
+    resetCalls();
+    await tid(p2, 'draw-code').fill(ADMIN_CODE);
+    await p2.keyboard.down('Enter'); // 제출
+    const t0 = Date.now();
+    let opened = false;
+    let clicks = 0;
+    let menuAt = 0;
+    while (Date.now() - t0 < 1600) { // 키를 누른 채(반복 Enter) + 스페이스·Enter 연타 + 보호 시간 동안 첫 화면 단추 클릭
+      await p2.keyboard.down('Enter');
+      await p2.keyboard.press('Space');
+      await p2.keyboard.press('Enter');
+      const d = await st(p2);
+      if (d.view === 'menu' && !menuAt) menuAt = Date.now();
+      if (d.view === 'menu' && d.guarded && Date.now() - menuAt < 600) { // 보호 시간(screenGuardMs.gate 1초)이 끝나기 한참 전까지만 클릭
+        const box = await p2.locator('#pickTeam').boundingBox().catch(() => null);
+        if (box) { await p2.mouse.click(box.x + box.width / 2, box.y + box.height / 2); clicks++; }
+      }
+      if (d.view === 'intro' || d.view === 'loading') opened = true;
+    }
+    await p2.keyboard.up('Enter');
+    await sleep(300);
+    const d = await st(p2);
+    s.ok(!opened && d.view === 'menu', `통과 직후 연타해도 첫 화면 그대로: ${d.view}`);
+    s.ok(clicks >= 2, `보호 시간 동안 첫 화면 단추를 ${clicks}번 클릭함`);
+    s.eq(server.calls.filter((c) => c.fn !== 'board_state').length, 0, '통과 직후 연타로 다른 요청 없음');
+    s.eq(calls('board_state').length, 1, '확인 한 번(명단을 다시 받지도 않음)');
+    // 보호 시간이 지나면 단추가 정상으로 눌림
+    await unguard(p2);
+    await p2.locator('#pickTeam').click(); await waitView(p2, 'intro');
+    s.ok(true, '보호 시간 뒤에는 첫 화면 단추가 눌림');
+    // 통과 직후 보호 중 숫자 키 1·2 → 첫 화면 그대로
+    const p3 = await page.context().newPage();
+    await p3.goto(`${server.url}/draw.html`); await gateIdle(p3);
+    resetCalls();
+    await tid(p3, 'draw-code').fill(ADMIN_CODE); await tid(p3, 'draw-code').press('Enter');
+    await wait(p3, () => window.__draw && window.__draw.view === 'menu');
+    let digits = 0;
+    const m0 = Date.now();
+    while (Date.now() - m0 < 600 && (await st(p3)).guarded) { await p3.keyboard.press(digits % 2 ? 'Digit2' : 'Digit1'); digits++; } // 보호 시간(1초)이 끝나기 한참 전까지만
+    await sleep(300);
+    s.ok(digits >= 2 && (await st(p3)).view === 'menu', `통과 직후 보호 중 1·2 를 ${digits}번 눌러도 첫 화면 그대로`);
+    s.eq(server.calls.map((c) => c.fn), ['board_state'], '보호 중 숫자 키로 명단 다시 받기·뽑기 요청 없음');
+  });
+
+  await scenario(46, '비밀번호 노출 없음: 입력 칸 가림·주소·화면 글자·문서·탭 제목·콘솔·쿠키·localStorage', async (s) => {
+    await resetRoster(db); resetCalls();
+    const { ctx, page, guard } = await newCtx();
+    await page.goto(`${server.url}/draw.html`); await gateIdle(page);
+    const attrs = await page.evaluate(() => { const i = document.getElementById('code'); return { type: i.type, ac: i.getAttribute('autocomplete'), form: !!i.form || !!i.closest('form') }; });
+    s.eq(attrs, { type: 'password', ac: 'off', form: false }, '입력 칸: type=password, 자동 완성 끔, form 으로 보내지 않음');
+    const leaks = [];
+    const look = async (label, pw) => {
+      const r = await page.evaluate((pw) => ({
+        text: document.body.innerText.includes(pw), dom: document.documentElement.outerHTML.includes(pw), title: document.title.includes(pw),
+        url: location.href.includes(pw), input: document.getElementById('code').value.includes(pw), ls: Object.values(localStorage).some((v) => String(v).includes(pw)),
+      }), pw);
+      for (const [k, v] of Object.entries(r)) if (v) leaks.push(`${label}:${k}`);
+    };
+    await tid(page, 'draw-code').fill('틀린-비밀번호-3'); await tid(page, 'draw-code').press('Enter'); await gateIdle(page);
+    await look('틀린 뒤', '틀린-비밀번호-3');
+    await tid(page, 'draw-code').fill(ADMIN_CODE); await tid(page, 'draw-code').press('Enter'); await waitView(page, 'menu');
+    await look('들어온 뒤', ADMIN_CODE);
+    await page.reload(); await waitView(page, 'menu');
+    await look('새로 고침 뒤', ADMIN_CODE);
+    await chooseKind(page, 'team'); await startBtn(page); await runAll(page);
+    await look('전체 결과', ADMIN_CODE);
+    s.eq(leaks, [], '화면 글자·문서·탭 제목·주소·입력 칸·localStorage 어디에도 비밀번호 없음');
+    s.eq(await ctx.cookies(), [], '쿠키 없음');
+    s.ok(!s.consoles.some((t) => t.includes('틀린-비밀번호-3')), '콘솔에 틀린 비밀번호도 안 나옴');
+    s.ok(!guard.proxied.some((x) => String(x.url).includes(ADMIN_CODE)), '요청 주소에 비밀번호 없음(본문으로만 보냄)');
+  });
+
+  for (const [w, h] of [[1920, 1080], [1280, 720]]) {
+    await scenario(47, `입구 캡처 ${w}×${h}: 입구·틀림·통신 오류·들어온 뒤 잠그기 단추`, async (s) => {
+      await resetRoster(db); resetCalls();
+      mkdirSync(LOCK_SHOTS, { recursive: true });
+      const { page } = await newCtx({ viewport: { width: w, height: h } });
+      let down = 0;
+      await page.route(/\/rpc\/board_state$/, async (r) => { if (down > 0) { down--; return r.abort('failed'); } return r.fallback(); });
+      const snap = async (name) => {
+        await settle(page);
+        const file = join(LOCK_SHOTS, `${w}x${h}_${name}.png`);
+        await page.screenshot({ path: file });
+        shotFiles.push(file);
+        const issues = await layoutCheck(page, `lock ${name}`, String(w));
+        s.eq(issues, [], `[${name}] 넘침·무대 밖 없음`);
+      };
+      await page.goto(`${server.url}/draw.html`); await gateIdle(page);
+      await snap('1_gate');
+      await tid(page, 'draw-code').fill('틀린-비밀번호'); await tid(page, 'draw-code').press('Enter'); await gateIdle(page);
+      await snap('2_wrong');
+      down = 1;
+      await tid(page, 'draw-code').fill(ADMIN_CODE); await tid(page, 'draw-code').press('Enter'); await gateIdle(page);
+      await snap('3_offline');
+      await tid(page, 'draw-reconnect').click(); await waitView(page, 'menu'); await unguard(page);
+      s.ok(await visible(page, 'draw-lock'), '첫 화면에 잠그기 단추');
+      await page.mouse.move(1, 1); // 누른 자리의 hover 모양이 캡처에 남지 않게
+      await snap('4_menu_lock');
+    });
+  }
+
   // ── 정리 · 보고 ──────────────────────────────────────
   await browser.close();
   await server.close();
@@ -1760,7 +2179,7 @@ export async function drawTests(only = []) {
     const seen = new Set();
     for (const l of layoutFindings) if (!seen.has(l)) { seen.add(l); console.log('  - ' + l); }
   } else if (!only.length || only.includes('11')) console.log('\n레이아웃 점검: 글자 잘림·넘침·무대 밖 요소 없음');
-  if (shotFiles.length) console.log(`\n캡처 ${shotFiles.length}장: ${SHOTS}`);
+  if (shotFiles.length) console.log(`\n캡처 ${shotFiles.length}장: ${[...new Set(shotFiles.map((f) => dirname(f)))].join(' , ')}`);
   const failed = results.filter((r) => !r.ok);
   return { ok: failed.length === 0 && layoutFindings.length === 0, results, layoutFindings, shotFiles };
 }

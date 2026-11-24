@@ -6,15 +6,39 @@
   <title>발표용 뽑기</title>
   <meta name="robots" content="noindex" />
   <meta name="color-scheme" content="dark" />
-  <!-- 진행자가 프로젝터에 띄워 레크리에이션 팀 뽑기·방 배정 뽑기를 함께 보는 화면. 관리자 비밀번호가 있어야 열림(연습 모드 ?practice=1 은 비밀번호 없이, DB 를 전혀 부르지 않음).
+  <!-- 진행자가 프로젝터에 띄워 레크리에이션 팀 뽑기·방 배정 뽑기를 함께 보는 화면. 관리자 비밀번호를 넣어야 열림(연습 모드 ?practice=1 도 같음).
+       비밀번호를 넣기 전에는 아래 입구(#loginView)만 있고, 화면(첫 화면·시작·뽑기·결과)은 <template id="appTpl"> 안에 있다가 통과한 뒤에 만들어짐(draw.js).
        style.css·common.js·draw.css·draw.js 를 고치면 아래 v 숫자를 올린다(style.css·common.js 는 board.html·index.html 과 같은 숫자로) -->
   <link rel="stylesheet" href="style.css?v=5" />
-  <link rel="stylesheet" href="draw.css?v=8" />
+  <link rel="stylesheet" href="draw.css?v=9" />
   <script src="supabase.js?v=2.117.3" integrity="sha384-BWcjm9OdFth9TbhCxZPdm+gAOUMAzQy9nmTs12ioXdCcbVnJaPMn+fMUoQCLt60R"></script>
   <script src="common.js?v=13"></script>
 </head>
 <body class="draw">
-<div class="stage" id="stage" data-testid="draw-stage">
+<div class="stage" id="stage" data-testid="draw-stage" data-view="login">
+  <p class="error" id="error" role="alert" data-testid="draw-page-error"></p>
+
+  <!-- 입구: 관리자 비밀번호를 넣어야 화면이 열림. 맞는지는 서버가 판단(draw.js).
+       form 으로 보내지 않음(브라우저가 '비밀번호 저장' 상자를 프로젝터에 띄우지 않게). Enter 는 비밀번호 제출로만 씀 -->
+  <section class="view center gate" id="loginView" data-testid="draw-login">
+    <div class="panel" id="codeForm" role="group" aria-labelledby="gateTitle" data-testid="draw-login-form">
+      <h2 id="gateTitle">진행자 확인</h2>
+      <p class="dim" id="gateLead" data-testid="draw-login-lead">관리자 비밀번호를 넣어야 뽑기 화면이 열려요.</p>
+      <input id="code" type="password" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" maxlength="200"
+             data-lpignore="true" data-1p-ignore="true" data-bwignore="true" data-form-type="other"
+             placeholder="관리자 비밀번호" aria-label="관리자 비밀번호" aria-describedby="loginErr" data-testid="draw-code" />
+      <div class="gate-acts">
+        <button class="btn primary" id="loginBtn" type="button" data-testid="draw-login-submit">들어가기</button>
+        <button class="btn" id="reconnectBtn" type="button" data-testid="draw-reconnect" hidden>다시 연결</button>
+      </div>
+      <p class="info" id="gateInfo" role="status" data-testid="draw-login-info" hidden></p>
+      <p class="err" id="loginErr" role="alert" data-testid="draw-login-error"></p>
+    </div>
+  </section>
+</div>
+
+<!-- 입구를 통과한 뒤에 #stage 안에 만들어지는 화면들(그 전에는 문서에 없음) -->
+<template id="appTpl">
   <div class="watermark" id="watermark" aria-hidden="true" hidden>연습</div>
 
   <!-- 맨 위 줄 -->
@@ -28,22 +52,9 @@
       <button class="btn ghost" id="soundBtn" type="button" data-testid="draw-sound" aria-pressed="false" title="소리 켜고 끄기 (M)">🔇 소리 꺼짐</button>
       <button class="btn ghost" id="fsBtn" type="button" data-testid="draw-fullscreen" title="전체 화면 (F)">⛶ 전체 화면</button>
       <button class="btn ghost" id="homeBtn" type="button" data-testid="draw-home" hidden>처음 화면</button>
+      <button class="btn ghost" id="lockBtn" type="button" data-testid="draw-lock" title="이 탭에 기억한 비밀번호를 지우고 비밀번호 입력 화면으로">🔒 잠그기</button>
     </div>
   </header>
-  <p class="error" id="error" role="alert" data-testid="draw-page-error"></p>
-
-  <!-- 진행자 확인(관리자 비밀번호) -->
-  <section class="view center" id="loginView" data-testid="draw-login" hidden>
-    <form class="panel" id="codeForm" data-testid="draw-login-form">
-      <h2>진행자 확인</h2>
-      <p class="dim">관리자 비밀번호를 넣어야 뽑기 화면이 열려요. 이 기기에서 관리자 페이지에 들어간 적이 있으면 묻지 않아요.</p>
-      <input id="code" type="password" required autocomplete="current-password" placeholder="관리자 비밀번호" aria-label="관리자 비밀번호" data-testid="draw-code" />
-      <button class="btn primary" type="submit" data-testid="draw-login-submit">확인</button>
-      <button class="btn" id="reconnectBtn" type="button" data-testid="draw-reconnect" hidden>저장된 비밀번호로 다시 연결</button>
-      <p class="err" id="loginErr" role="alert" data-testid="draw-login-error"></p>
-    </form>
-    <a class="btn ghost" href="draw.html?practice=1" data-testid="draw-practice-link">연습 모드로 들어가기 (비밀번호 없이, 견본 명단)</a>
-  </section>
 
   <section class="view center" id="loadingView" data-testid="draw-loading" hidden>
     <p class="loading" id="loadingMsg">불러오는 중…</p>
@@ -144,7 +155,7 @@
   </div>
 
   <div class="sr-only" id="live" aria-live="polite"></div>
-</div>
-<script src="draw.js?v=7"></script>
+</template>
+<script src="draw.js?v=8"></script>
 </body>
 </html>
