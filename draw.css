@@ -66,6 +66,14 @@ body.draw { margin: 0; overflow: hidden; display: flex; align-items: center; jus
                background: rgb(0 0 0 / .3); color: var(--ink); font-size: calc(var(--u) * 2); }
 .panel .err { color: var(--bad); font-size: calc(var(--u) * 1.5); }
 .panel .err:empty { display: none; }
+/* 입구: 맨 위 줄 없이 무대 가운데. 통신 오류는 틀린 비밀번호(빨강)와 다른 색(노랑)으로 */
+.gate .panel { width: calc(var(--u) * 52); }
+.gate .panel input:disabled { opacity: .6; }
+.gate-acts { display: flex; flex-wrap: wrap; gap: calc(var(--u) * 1); }
+.gate-acts .btn { flex: 1 1 auto; }
+.btn:disabled { opacity: .45; cursor: default; }
+.panel .info { color: var(--dim); font-size: calc(var(--u) * 1.5); }
+.panel .err[data-kind="offline"] { color: var(--gold); }
 
 /* 첫 화면: 무엇을 뽑을지 */
 .choices { display: flex; gap: calc(var(--u) * 2.4); }
