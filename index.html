@@ -7,7 +7,7 @@
   <meta name="robots" content="noindex" />
   <meta name="color-scheme" content="light dark" /><!-- 삼성 인터넷 등의 강제 다크 모드가 이 화면의 어두운 색을 한 번 더 바꾸지 않게 -->
   <link rel="stylesheet" href="style.css?v=5" /><!-- style.css 를 고치면 v 숫자를 올린다 -->
-  <link rel="stylesheet" href="car.css?v=4" /><!-- 탑승 차량 뽑기. car.css·car.js 를 고치면 v 숫자를 올린다 -->
+  <link rel="stylesheet" href="car.css?v=5" /><!-- 탑승 차량 뽑기. car.css·car.js 를 고치면 v 숫자를 올린다 -->
   <!-- Supabase 연결 파일은 저장소에 같이 둔 것(2.117.3 버전). 받은 파일이 바뀌지 않았는지 integrity 로 확인. 올릴 때는 v 숫자와 integrity 를 같이 바꾼다 -->
   <script src="supabase.js?v=2.117.3" integrity="sha384-BWcjm9OdFth9TbhCxZPdm+gAOUMAzQy9nmTs12ioXdCcbVnJaPMn+fMUoQCLt60R"></script>
   <!-- common.js 를 고치면 v 숫자를 올린다(휴대폰에 남아 있는 예전 common.js 를 새 화면이 쓰지 않게) -->
@@ -91,8 +91,7 @@
     #randomBtn:not(:disabled)::after { animation: breathe-ring 1.8s ease-in-out infinite; }
     @keyframes breathe { 50% { transform: scale(1.02); } }
     @keyframes breathe-ring { 50% { opacity: 1; } }
-    .result-text { text-align: center; font-size: 17px; margin: 0 0 16px; min-height: 1.5em; }
-    .result-text b { font-size: 20px; }
+    /* 결과 문장(.result-text 팀 · .room-result 방)의 자리·크기·간격은 차량의 .car-result 와 함께 car.css 에서 정함 */
     .result-text .dot { display: inline-block; width: 22px; height: 22px; margin-right: 8px; border-radius: 50%; vertical-align: -3px; box-shadow: 0 0 0 1px rgb(0 0 0 / .15); } /* 팀 색 점(team-… 색) */
     @media (max-height: 520px) { .scene { height: 180px; } } /* 가로로 돌렸을 때 "뽑아봐!"가 첫 화면 안에 들어오게 */
     @media (prefers-reduced-motion: reduce) { .scene *, #randomBtn, #randomBtn::after, .nag, .letgo *, .letgo .dish-name::before { animation: none !important; } }
@@ -104,9 +103,9 @@
 
     /* 조식 메뉴 고르기 */
     /* 색을 섞는 color-mix()를 모르는 예전 브라우저를 위해 같은 속성을 비슷한 색으로 한 번 먼저 적어 둠(아래 몇 군데도 같음) */
-    .notice { margin: 0 0 14px; padding: 10px 12px; border-radius: 10px; font-weight: 700; color: #b91c1c;
-              background: rgb(220 38 38 / .1); background: color-mix(in srgb, var(--danger) 10%, transparent); }
-    @media (prefers-color-scheme: dark) { .notice { color: var(--danger); } }
+    /* 마감 안내 꼬리표(차량의 .car-tag 모양, car.css). 빨강은 술 금지 경고에만 씀 */
+    #menuNotice { margin: 0 0 14px; }
+    #menuDoneNote { justify-content: flex-start; margin: 8px 0 0; }
     .dish { position: relative; z-index: 0; margin: 0 0 12px; font-size: inherit; color: inherit; cursor: pointer; -webkit-tap-highlight-color: transparent; }
     /* 체크 상자는 카드 전체를 덮는 투명한 층(키보드·화면 낭독기로도 그대로 고를 수 있음). 고르면 테두리로 표시.
        구석에 작게 숨기면, 카드 위쪽이 화면 밖일 때 이름을 누르는 순간 브라우저가 체크 상자를 보여 주려고 화면을 위로 튕김.
@@ -222,7 +221,6 @@
     .crew li b { font-size: 15px; }
     .crew li small { display: block; color: var(--muted); font-size: 12px; }
     .crew .me-tag { margin-left: 4px; padding: 0 7px; border-radius: 999px; background: var(--accent); color: var(--accent-text); font-size: 11px; font-weight: 800; vertical-align: 2px; }
-    #crewCard h2 .dot { display: inline-block; margin-left: 6px; padding: 1px 12px; border-radius: 999px; font-size: 14px; }
     .crew-note { margin: 10px 0 0; }
     #crewCard { margin-top: 16px; }
     /* 사람이 몰려 자동으로 다시 시도하는 중이라는 안내(오류 문구 바로 아래) */
@@ -271,15 +269,12 @@
     .room-stage[data-state="done"] .room-door.r { transform: translateX(100%); }
     .room-stage[data-state="done"] .room-name { opacity: 1; transform: none; transition: opacity .4s .3s, transform .5s .3s cubic-bezier(.2, 1.4, .4, 1); }
     .room-stage.shown .room-door, .room-stage.shown .room-name { transition: none; } /* 이미 방이 있어서 들어오자마자 보여 줄 때는 문이 열리는 모습 없이 */
-    .room-result { text-align: center; font-size: 17px; margin: 0 0 14px; min-height: 1.5em; }
-    .room-result b { font-size: 20px; }
-    #roomBtn { margin-bottom: 4px; }
     #roomCrewCard { margin-top: 16px; }
     /* 18일 자유시간 */
     .warn-box { margin: 14px 0 0; padding: 16px; border-radius: 14px; border: 3px solid var(--danger); background: rgb(220 38 38 / .12); background: color-mix(in srgb, var(--danger) 12%, var(--card)); }
     .warn-title { display: block; margin: 0 0 6px; font-size: 20px; font-weight: 900; line-height: 1.3; }
     .warn-box p { margin: 0; font-size: 16px; font-weight: 700; line-height: 1.55; }
-    #actCard > .block.back, #lunchCard > .block.back, #roomHomeBtn, #menuDone .block.back, #menuClosed .block.back { min-height: 56px; }
+    #actCard > .block.back, #lunchCard > .block.back, #roomHomeBtn, #homeBtn, #menuDone .block.back, #menuClosed .block.back { min-height: 56px; }
     #menuChange { margin-bottom: 10px; min-height: 56px; }
     .stack button { display: block; width: 100%; min-height: 56px; margin-top: 10px; font-size: 16px; }
     .stack button:first-child { margin-top: 14px; }
@@ -319,7 +314,7 @@
   </header>
   <header id="headRoom" class="with-who" hidden>
     <h1 tabindex="-1">지낼 방 뽑기</h1>
-    <p class="sub">12월 17일(목) ~ 19일(토) · 2박 3일</p>
+    <p class="sub">12월 17일(목) ~ 19일(토) · 2박 3일<span id="roomSubNote" hidden><br />한 번 뽑은 방은 바꿀 수 없어요.</span></p>
   </header>
   <header id="headCar" class="with-who" hidden>
     <h1 tabindex="-1">탑승 차량 뽑기</h1>
@@ -327,14 +322,14 @@
   </header>
   <header id="headAct" class="with-who" hidden>
     <h1 tabindex="-1">18일 자유시간</h1>
-    <p class="sub">12/18(금) 저녁 식사 뒤 자유시간 · 20:00</p>
+    <p class="sub" id="actSub">12/18(금) 저녁 식사 뒤 자유시간 · 20:00</p>
   </header>
   <header id="headLunch" class="with-who" hidden>
     <h1 tabindex="-1">12월 18일 금요일 점심</h1>
-    <p class="sub">설렁탕 중 하나를 골라 주세요</p>
+    <p class="sub" id="lunchSub">설렁탕 중 하나를 골라 주세요</p>
   </header>
   <header id="headMenu" class="with-who" hidden>
-    <h1 tabindex="-1">12월 18일 금요일 조식</h1>
+    <h1 tabindex="-1">12월 18일 금요일 아침 메뉴</h1>
     <p class="sub" id="menuSub"></p>
   </header>
   <p class="error" id="error" role="alert"></p>
@@ -391,7 +386,7 @@
       <button class="link back">메인으로 돌아가기</button>
     </div>
     <div id="menuPick">
-      <p class="notice" id="menuNotice"></p>
+      <p class="car-tags" id="menuNotice"></p>
       <div id="dishes" role="group" aria-label="조식 메뉴 (하나만 고를 수 있어요)"></div>
       <p class="hint fine">상기 이미지는 실제와 다를 수 있습니다.</p>
       <div class="nag" id="nag" role="alert" hidden></div>
@@ -408,7 +403,7 @@
       </div>
     </div>
     <div id="menuDone" hidden>
-      <p class="act-state" aria-live="polite">✓ <b id="menuDoneName"></b>으로 정했어요.<br /><span class="hint" id="menuDoneNote"></span></p>
+      <p class="act-state" aria-live="polite">✓ <b id="menuDoneName"></b>으로 정했어요.<span class="car-tags" id="menuDoneNote"></span></p>
       <div class="dish menu-done" id="menuDoneBox"></div>
       <p class="hint fine">상기 이미지는 실제와 다를 수 있습니다.</p>
       <button class="block" id="menuChange">다른 메뉴로 바꾸기</button>
@@ -421,10 +416,11 @@
   </section>
 
   <!-- 17일 내 팀 뽑기: 메인의 단추. 뽑은 뒤 다시 들어오면 내 팀과 우리 팀 사람들 -->
-  <section class="card" id="meCard" hidden>
+  <section id="meCard" hidden>
     <div class="me">
       <button class="link back">메인으로 돌아가기</button>
     </div>
+    <div class="card">
     <div class="scene" id="scene" role="img" aria-label="뽑기함이 가만히 기다리고 있어요" data-state="idle">
       <svg viewBox="0 0 320 270" preserveAspectRatio="xMidYMid meet" aria-hidden="true" focusable="false">
         <defs>
@@ -455,10 +451,11 @@
       <div class="bubble">눌러봐요!</div>
     </div>
     <p class="result-text" id="resultText" aria-live="polite"></p>
-    <button class="primary block" id="randomBtn">뽑아봐!</button>
+    <button class="primary block" id="randomBtn">🔑 뽑아봐!</button>
     <button class="primary block back" id="homeBtn" hidden>메인으로 돌아가기</button>
+    </div>
     <section class="card" id="crewCard" hidden>
-      <h2><span>팀<span id="crewTeam"></span></span> <small id="crewCount"></small></h2>
+      <h2><span>같은 팀 사람들</span> <small id="crewCount"></small></h2>
       <ul class="crew" id="crewList"></ul>
       <p class="hint crew-note" id="crewNote">아직 안 뽑은 사람은 뽑으면 나타나요.</p>
     </section>
@@ -477,7 +474,7 @@
         <div class="room-key" aria-hidden="true">🔑</div>
       </div>
       <p class="room-result" id="roomText" aria-live="polite"></p>
-      <button class="primary block" id="roomBtn">🔑 방 뽑기</button>
+      <button class="primary block" id="roomBtn">🔑 뽑아봐!</button>
       <button class="primary block back" id="roomHomeBtn" hidden>메인으로 돌아가기</button>
     </div>
     <section class="card" id="roomCrewCard" hidden>
@@ -561,6 +558,9 @@
   let busy = false; // 메뉴·자유시간을 저장하거나 팀·방을 뽑는 중
 
   const all = (s) => [...document.querySelectorAll(s)];
+  // 방·팀 뽑기 전 안내: 차량(car.js 의 REVEAL_FIRST)과 같은 큰 한 줄 + 꼬리표. 방·팀은 마감이 없어서 마감 꼬리표는 없음. 화면 읽기에는 마침표로 끊어 한 문장씩 읽히게
+  const ASK_HTML = (what) => `<span class="car-ask">버튼을 눌러 ${what}을 뽑아요<span class="sr-only">. </span></span>`
+    + '<span class="car-tags"><span class="car-tag">한 번만 뽑을 수 있어요</span><span class="sr-only">.</span></span>';
 
   // 참가자 함수 호출. 사람이 몰려 실패하면(DB 시간 초과·잠금 충돌·통신 끊김) 잠깐 쉬었다 최대 2번 자동으로 다시 보내고, 그동안 안내를 보여줌.
   // 이 함수들은 같은 요청을 다시 보내도 결과가 같아 안전함. quiet 이면 안내를 띄우지 않음(몰래 하는 자동 갱신)
@@ -633,6 +633,8 @@
   const choicesClosed = () => serverClosed || Date.now() >= CHOICE_DEADLINE;
   const DEADLINE_SHORT = CHOICE_DEADLINE_SHORT; // '11/25(수) 15시'
   const CLOSED_NOTE = `${CHOICE_DEADLINE_LABEL}에 마감됐어요. 바꾸려면 진행자에게 말해 주세요.`;
+  const CLOSED_NOTE_NONE = `${CHOICE_DEADLINE_LABEL}에 마감됐어요. 고르려면 진행자에게 말해 주세요.`; // 못 고른 채 마감(아침 메뉴의 마감 안내와 같은 말투)
+  const ACT_SUB = $('#actSub').textContent, LUNCH_SUB = $('#lunchSub').textContent; // 소제목 원래 글(마감까지 못 골랐을 때만 바뀜)
   // 서버 오류가 "마감됐다"는 거절이면 마감 표시를 켜고 true
   const markClosed = (e) => { if (CHOICE_CLOSED_ERR.test(e && e.message)) { serverClosed = true; return true; } return false; };
   const person = () => (me ? `${me.dept}\n${me.name}` : '');
@@ -690,9 +692,8 @@
     const ok = hasTeam() && crew && crew.key === crewKey();
     $('#crewCard').hidden = !ok;
     if (!ok) return;
-    $('#crewTeam').innerHTML = `<span class="dot team-${me.team}">${TEAMS[me.team]}</span>`;
     // 팀 전체 인원이 아니라 지금까지 뽑은 사람 수라는 것을 알려 줌(아직 안 뽑은 사람은 뽑으면 목록에 나타남)
-    $('#crewCount').textContent = `지금까지 뽑은 ${crew.list.length}명`;
+    $('#crewCount').textContent = `지금까지 ${crew.list.length}명`;
     fill($('#crewList'), crew.list.map((p) => {
       const mine = p.dept === me.dept && p.name === me.name;
       return `<li><b>${esc(p.name)}</b>${mine ? '<span class="me-tag">나</span>' : ''}<small>${p.title ? esc(p.title) + ' · ' : ''}${esc(p.dept)}</small></li>`;
@@ -725,13 +726,14 @@
     const cur = hasAct() ? me.activity : '';
     if (cur === 'ski' || closed) askSki = false;
     $('#actState').innerHTML = askSki ? '스키를 타려면 먼저 약속이 필요해요.'
-      : cur ? `지금 고른 것: <b>${esc(ACTS[cur])}</b> ✓` : closed ? '마감돼서 고를 수 없어요.' : '아직 안 골랐어요. 스키와 휴식 중 하나를 눌러 주세요.';
+      : cur ? `지금 고른 것: <b>${esc(ACTS[cur])}</b> ✓` : closed ? '⏰ 마감돼서 아직 못 골랐어요.' : '아직 안 골랐어요. 스키와 휴식 중 하나를 눌러 주세요.';
+    $('#actSub').textContent = closed && !cur ? '마감됐어요.' : ACT_SUB; // 마감까지 못 골랐으면 차량·아침 메뉴처럼 소제목도 마감됐다고
     // 저장하는 중(busy)에는 저장 쪽이 잠가 둔 그대로 두고, 끝난 뒤(busy 가 풀린 뒤) 다시 불려 마감 상태를 맞춤
     all('#actCard [data-act]').forEach((el) => { el.setAttribute('aria-pressed', String(el.dataset.act === cur)); el.disabled = closed || busy; });
     $('#actChoices').hidden = askSki;
     $('#actConfirm').hidden = !askSki;
     $('#actWarn').hidden = !(askSki || cur === 'ski');
-    $('#actNote').textContent = closed ? CLOSED_NOTE : `${CHOICE_DEADLINE_LABEL}까지 바꿀 수 있어요. 바꾸려면 다른 쪽을 눌러 주세요.`;
+    $('#actNote').textContent = closed ? (cur ? CLOSED_NOTE : CLOSED_NOTE_NONE) : `${CHOICE_DEADLINE_LABEL}까지 바꿀 수 있어요. 바꾸려면 다른 쪽을 눌러 주세요.`;
     $('#actNote').hidden = askSki;
   }
   function showAct() {
@@ -789,10 +791,11 @@
   function paintLunch() {
     const closed = choicesClosed();
     const cur = hasLunch() ? me.lunch : '';
-    $('#lunchState').innerHTML = cur ? `지금 고른 것: <b>${esc(LUNCHES[cur])}</b> ✓` : closed ? '마감돼서 고를 수 없어요.' : '아직 안 골랐어요. 둘 중 하나를 눌러 주세요.';
+    $('#lunchState').innerHTML = cur ? `지금 고른 것: <b>${esc(LUNCHES[cur])}</b> ✓` : closed ? '⏰ 마감돼서 아직 못 골랐어요.' : '아직 안 골랐어요. 둘 중 하나를 눌러 주세요.';
+    $('#lunchSub').textContent = closed && !cur ? '마감됐어요.' : LUNCH_SUB; // 마감까지 못 골랐으면 차량·아침 메뉴처럼 소제목도 마감됐다고
     // 저장하는 중(busy)에는 저장 쪽이 잠가 둔 그대로 두고, 끝난 뒤(busy 가 풀린 뒤) 다시 불려 마감 상태를 맞춤
     all('#lunchCard [data-lunch]').forEach((el) => { el.setAttribute('aria-pressed', String(el.dataset.lunch === cur)); el.disabled = closed || busy; });
-    $('#lunchNote').textContent = closed ? CLOSED_NOTE : `${CHOICE_DEADLINE_LABEL}까지 바꿀 수 있어요. 바꾸려면 다른 쪽을 눌러 주세요.`;
+    $('#lunchNote').textContent = closed ? (cur ? CLOSED_NOTE : CLOSED_NOTE_NONE) : `${CHOICE_DEADLINE_LABEL}까지 바꿀 수 있어요. 바꾸려면 다른 쪽을 눌러 주세요.`;
   }
   function showLunch() {
     who();
@@ -848,7 +851,7 @@
     const ok = !!(hasRoom() && roomMates && roomMates.key === roomKey());
     $('#roomCrewCard').hidden = !ok;
     if (!ok) return;
-    $('#roomCount').textContent = `${roomMates.list.length}명`;
+    $('#roomCount').textContent = `지금까지 ${roomMates.list.length}명`;
     fill($('#roomList'), roomMates.list.map((p) => {
       const mine = p.dept === me.dept && p.name === me.name;
       return `<li><b>${esc(p.name)}</b>${mine ? '<span class="me-tag">나</span>' : ''}<small>${p.title ? esc(p.title) + ' · ' : ''}${esc(p.dept)}</small></li>`;
@@ -878,7 +881,8 @@
     stage.dataset.state = has ? 'done' : 'idle';
     stage.setAttribute('aria-label', has ? `${ROOMS[me.room]} 방이 열렸어요` : '닫힌 문 앞에 열쇠가 있어요');
     $('#roomReveal').textContent = has ? ROOMS[me.room] : '';
-    $('#roomText').innerHTML = has ? `<b>${esc(ROOMS[me.room])}</b>에서 지내요!` : '버튼을 눌러 방을 뽑으세요. 한 번만 뽑을 수 있어요.';
+    $('#roomText').innerHTML = has ? `<b>${esc(ROOMS[me.room])}</b>에서 지내요!` : ASK_HTML('방');
+    $('#roomSubNote').hidden = !has;
     $('#roomBtn').hidden = has;
     $('#roomHomeBtn').hidden = !has;
     if (has && landed && !reduced()) $('#roomText').animate([{ opacity: 0 }, { opacity: 0, offset: 0.7 }, { opacity: 1 }], { duration: 1000 });
@@ -981,7 +985,7 @@
     set('Room', '방 뽑기', hasRoom(), hasRoom() ? `<b class="mb-big">${esc(ROOMS[me.room])}</b>` : todo('뽑았어요'),
       peopleHtml(`같은 방 사람 ${mates.length}명`, mates));
     set('Team', '팀 뽑기', hasTeam(), hasTeam() ? `<span class="mb-team team-${me.team}">${esc(TEAMS[me.team])} 팀</span>` : todo('뽑았어요'),
-      peopleHtml(`우리 팀 · 지금까지 뽑은 ${team.length}명`, team, '아직 안 뽑은 사람은 뽑으면 나타나요.'));
+      peopleHtml(`같은 팀 사람 ${team.length}명`, team, '아직 안 뽑은 사람은 뽑으면 나타나요.'));
     set('Menu', '아침 메뉴', hasMenu(), hasMenu() ? `<img class="mb-thumb" src="menu_${me.menu}_art.jpg" alt="" width="46" height="46" /><b class="mb-big">${esc(MENUS[me.menu])}</b>${editPill}` : todo('골랐어요', true));
     set('Lunch', '점심 메뉴', hasLunch(), hasLunch() ? `<img class="mb-thumb" src="lunch_${me.lunch}.jpg" alt="" width="46" height="46" /><b class="mb-big">${esc(LUNCHES[me.lunch])}</b>${editPill}` : todo('골랐어요', true));
     set('Act', '자유시간', hasAct(), !hasAct() ? todo('골랐어요', true)
@@ -1045,7 +1049,7 @@
     } else {
       paint(null);
       $('#pickSub').innerHTML = '<b>뽑아봐!</b>를 누르면 팀 색이 정해져요.';
-      $('#resultText').textContent = '버튼을 눌러 팀을 뽑으세요. 한 번만 뽑을 수 있어요.';
+      $('#resultText').innerHTML = ASK_HTML('팀');
       $('#randomBtn').hidden = false;
     }
     $('#homeBtn').hidden = !me.team; // 뽑은 뒤에는 "뽑아봐!" 자리에 "메인으로 돌아가기"
@@ -1098,9 +1102,11 @@
     $('#menuClosed').hidden = !(closed && !has);
     if (closed || !picking) {
       if (has) {
-        $('#menuSub').textContent = closed ? `${CHOICE_DEADLINE_LABEL}에 마감됐어요.` : `이미 정했어요. ${CHOICE_DEADLINE_LABEL}까지 바꿀 수 있어요.`;
+        $('#menuSub').textContent = '이미 정했어요.'; // 마감 안내는 아래 꼬리표 한 곳에만(소제목·본문에 겹쳐 나오지 않게)
         $('#menuDoneName').textContent = MENUS[me.menu];
-        $('#menuDoneNote').textContent = closed ? CLOSED_NOTE : `${CHOICE_DEADLINE_LABEL}까지 바꿀 수 있어요.`;
+        $('#menuDoneNote').innerHTML = closed
+          ? `<span class="car-tag">${esc(DEADLINE_SHORT)}에 마감됐어요</span><span class="car-tag">바꾸려면 진행자에게 말해 주세요</span>`
+          : `<span class="car-tag car-tag-due">${esc(DEADLINE_SHORT)}까지 바꿀 수 있어요</span>`;
         $('#menuChange').hidden = closed;
         fill($('#menuDoneBox'), dishBox(me.menu));
       } else {
@@ -1109,7 +1115,7 @@
       }
       return screen('menu');
     }
-    $('#menuNotice').textContent = `${CHOICE_DEADLINE_LABEL}까지는 바꿀 수 있어요.`;
+    $('#menuNotice').innerHTML = `<span class="car-tag car-tag-due">${esc(CHOICE_DEADLINE_SHORT)}까지 바꿀 수 있어요</span>`;
     $('#menuConfirmHint').textContent = `${CHOICE_DEADLINE_LABEL}까지는 다시 바꿀 수 있어요.`;
     $('#menuSub').innerHTML = has ? `지금은 <b>${esc(MENUS[me.menu])}</b>으로 정해져 있어요. 바꿀 메뉴를 <b>하나만</b> 골라 주세요.` : '세 가지 메뉴 중 <b>하나만</b> 고를 수 있어요.';
     if (!$('#dishes').children.length) { // 음식 그림은 이 화면이 처음 필요할 때 받음
