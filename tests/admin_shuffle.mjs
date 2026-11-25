@@ -111,7 +111,7 @@ export async function shuffleTests() {
       }
       eq(await page.locator('#menuCard [data-shuffle], #lunchCard [data-shuffle], #actCard [data-shuffle], #resetCard [data-shuffle], summary [data-shuffle]').count(), 0, '[자리] 고르는 칸(아침 메뉴·점심·자유시간)·초기화 칸·제목 줄에는 자동 섞기 없음');
       ok((await page.locator('#resetCard .reset-zone > p:first-child').textContent()).replace(/\s+/g, ' ').includes('자동 섞기는 각 칸(팀·객실표·탑승 차량) 아래 도구 줄에 있어요'), '[자리] 초기화 칸 설명에 "자동 섞기는 각 칸에 있어요"');
-      eq(await page.locator('#resetCard .reset-items button').allTextContents(), ['팀 초기화', '방 초기화', '아침 메뉴 초기화', '점심 초기화', '자유시간 초기화', '탑승 차량 초기화'], '[자리] 항목별 초기화 단추는 그대로');
+      eq(await page.locator('#resetCard .reset-items button').allTextContents(), ['팀 초기화', '방 초기화', '아침 메뉴 초기화', '점심 초기화', '자유시간 초기화', '탑승 차량 초기화', '점수 초기화'], '[자리] 항목별 초기화 단추는 그대로(맨 끝에 점수 초기화가 더해짐)');
       await page.close();
     }
 
