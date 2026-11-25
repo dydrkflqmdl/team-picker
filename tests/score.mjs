@@ -1,7 +1,7 @@
 // 발표용 점수판(score.html) 통합 시험.  실행: cd tests && node run.mjs score [시나리오 번호 ...]   (예: node run.mjs score 1 6)   npm run test:score  도 같음.
 //   1 입구(비밀번호 전 DOM·요청 없음, 틀림/통신 오류/서버 오류 구분, 저장된 관리자 비밀번호 무시, 같은 탭 새로 고침·새 탭, 잠그기)
 //   2 점수 주기·빼기와 DB 값(네 팀·직접 입력·한도) + 서버 함수 score_add 의 합산·오류·권한·다시 적용해도 점수 유지
-//   3 연달아 주기(연타·Enter 두 번·연출 중 같은 팀·다른 팀 바로 이어서·마지막 값으로 정확히 멈춤·연출 길이)
+//   3 연달아 주기(연타·Enter 두 번·연출 중 같은 팀·다른 팀 바로 이어서·마지막 값으로 정확히 멈춤·연출 길이) + 세어 올라가기/내려가기(사이 값·한 방향·마지막 걸음·안 바뀌는 자리는 가만히·자릿수 변화·음수·세는 도중 이어서)
 //   4 새로 고침 뒤 유지(연출 중·저장 중 포함)   5 두 브라우저(다른 쪽 점수 5초 안 반영·동시에 줘도 합산·연출 중 폴링이 안 덮음)
 //   6 저장 실패(서버 거절·응답 끊김·서버엔 반영된 채 응답만 끊김)
 //   6.1 응답이 끊긴 요청이 늦게 서버에 도착해도 같은 점수를 다시 누르면 한 번만(요청 번호 p_req, (팀, 점수)마다 따로 기억 — 그 사이 다른 점수를 줘도 남음)   6.2 요청을 23초 붙잡았다가 보냄(20초 시간 초과 뒤 도착)
@@ -172,6 +172,64 @@ export async function scoreTests(only = []) {
   const recordSpin = (page) => page.evaluate(() => { window.__spinRec = []; (function f() { const a = window.__score.animating; const L = window.__spinRec; if (!L.length || L[L.length - 1].a !== a) L.push({ a, t: performance.now() }); requestAnimationFrame(f); })(); });
   const spinMs = (page) => page.evaluate(async () => { await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(r)))); const L = window.__spinRec; const a = L.find((x) => x.a); const b = a && L.find((x) => !x.a && x.t > a.t); return a && b ? b.t - a.t : JSON.stringify([L.map((x) => [x.a, Math.round(x.t)]), Math.round(performance.now()), window.__score.animating, window.__score.phase]); });
   const REDUCED = { reducedMotion: 'reduce' };
+  // 세어 올라가는 연출 표본: 15ms 마다(setInterval — requestAnimationFrame 에 기대지 않음) 팀별로 지금 보이는 값(__score.display)·점수 칸 DOM(data-cur·자리별 칸의 굴러가는 정도·위치)을 모음
+  const watchStart = (page, teams) => page.evaluate((teams) => {
+    if (window.__w) clearInterval(window.__w.id);
+    const w = (window.__w = { id: 0, rows: Object.fromEntries(teams.map((t) => [t, []])) });
+    const t0 = performance.now();
+    w.id = setInterval(() => {
+      const d = window.__score;
+      for (const t of teams) {
+        const box = document.getElementById(`score-${t}`);
+        const dgs = [...box.querySelectorAll('.dg')];
+        const sg = box.querySelector('.sg');
+        w.rows[t].push({
+          t: performance.now() - t0, anim: d.animating && !!d.spinning[t], spin: d.spinning[t], disp: d.display[t], shown: d.shown[t], cur: box.dataset.cur, text: box.textContent.replace(/\s+/g, ''),
+          sg: sg ? sg.style.opacity : null,
+          wheels: dgs.map((e, i) => { const st = e.firstElementChild; return { r: dgs.length - 1 - i, w: Math.round(e.getBoundingClientRect().width * 10) / 10, hid: e.style.display === 'none', roll: e.classList.contains('roll'), d: e.dataset.d, cells: st.textContent, tf: st.style.transform, x: Math.round(e.getBoundingClientRect().left * 10) / 10 }; }),
+        });
+      }
+    }, 15);
+  }, teams);
+  const watchStop = (page) => page.evaluate(() => { clearInterval(window.__w.id); return window.__w.rows; });
+  const tfOf = (w) => { const m = /translate3d\(0px, (-?[\d.]+)%/.exec(w.tf || ''); return m ? parseFloat(m[1]) : null; };
+  /** 한 팀의 연출 표본이 "from 에서 to 까지 한 방향으로, 정확히 to 에 멈추는 세기"인지 모아서 확인(길이 1.8~2.5초·사이 값·한 방향·건너뜀 없는 마지막 걸음·처음 빠르고 끝에서 느림) */
+  function checkCount(s, rows, { lab, from, to }) {
+    const dir = to > from ? 1 : -1;
+    const D = Math.abs(to - from);
+    const an = rows.filter((r) => r.anim);
+    s.ok(an.length > 20, `[${lab}] 연출 표본이 충분함(${an.length}개)`);
+    if (an.length < 20) return;
+    const vals = an.map((r) => r.disp);
+    const lo = Math.min(from, to), hi = Math.max(from, to);
+    s.ok(vals.every((v) => v >= lo && v <= hi), `[${lab}] 연출 동안 보이는 값은 늘 ${from} 과 ${to} 사이(표본 ${Math.min(...vals)}~${Math.max(...vals)})`);
+    const back = vals.findIndex((v, i) => i > 0 && (v - vals[i - 1]) * dir < 0);
+    s.ok(back < 0, `[${lab}] 한 방향으로만 움직임(되돌아가는 표본 ${back < 0 ? '없음' : `#${back}: ${vals[back - 1]} → ${vals[back]}`})`);
+    s.ok(an.every((r) => r.cur === String(r.disp)), `[${lab}] 점수 칸의 data-cur 가 __score.display 와 같음`);
+    const dur = an[an.length - 1].t - an[0].t;
+    s.ok(dur >= 1800 && dur <= 2500, `[${lab}] 연출 길이 1.8~2.5초: ${Math.round(dur)}ms`);
+    const end = rows.find((r) => !r.anim && r.t > an[an.length - 1].t);
+    s.ok(end && end.disp === to && end.shown === to && end.cur === String(to), `[${lab}] 끝에서 정확히 ${to}(display·shown·data-cur): ${end ? `${end.disp}/${end.shown}/${end.cur}` : '끝 표본 없음'}`);
+    const seen = new Set(vals);
+    const need = Array.from({ length: Math.min(8, D) }, (_, j) => to - dir * j); // 마지막 8걸음(차이가 8보다 작으면 전부)
+    s.ok(need.every((v) => seen.has(v)), `[${lab}] 끝 무렵 마지막 ${need.length}걸음이 건너뛰지 않고 한 칸씩 보임(빠진 값: ${need.filter((v) => !seen.has(v)).join(',') || '없음'})`);
+    if (D <= 24) s.ok(Array.from({ length: D + 1 }, (_, j) => from + dir * j).every((v) => seen.has(v)), `[${lab}] 차이가 작아(${D}) 걸음이 하나도 안 빠지고 다 보임(보인 값 ${[...seen].length}개)`);
+    if (D >= 50) {
+      const prog = (r) => Math.abs(r.disp - from) / D;
+      const t50 = an.find((r) => prog(r) >= 0.5), t90 = an.find((r) => prog(r) >= 0.9);
+      s.ok(t50.t - an[0].t < 700, `[${lab}] 처음엔 빨라서 절반(${D / 2})이 0.7초 안에 옴: ${Math.round(t50.t - an[0].t)}ms`);
+      s.ok(an[an.length - 1].t - t90.t >= 600, `[${lab}] 끝에서는 느려져서 마지막 10%에 0.6초 넘게 걸림: ${Math.round(an[an.length - 1].t - t90.t)}ms`);
+    }
+    // 굴러가는 방향: 일의 자리 칸이 같은 두 숫자 사이를 굴러가는 연속 표본에서, 올릴 때는 띠가 위로(변환값이 더 작아짐), 내릴 때는 아래로(더 커짐). 연출이 시작되고 1.1초 뒤(속도가 느려진 뒤)부터만 봄
+    let pairs = 0, wrong = 0;
+    for (let i = 1; i < an.length; i++) {
+      const a = an[i - 1].wheels.find((w) => w.r === 0), b = an[i].wheels.find((w) => w.r === 0);
+      if (an[i].t - an[0].t < 1100 || !a || !b || !a.roll || !b.roll || a.cells !== b.cells || tfOf(a) == null || tfOf(b) == null || tfOf(a) === tfOf(b)) continue;
+      pairs++;
+      if ((tfOf(b) - tfOf(a)) * dir > 0) { wrong++; s.note(`[${lab}] 반대 방향 표본: ${an[i - 1].t.toFixed(0)}ms ${JSON.stringify(a)} → ${an[i].t.toFixed(0)}ms ${JSON.stringify(b)}`); } // dir=+1 이면 변환값이 줄어야(더 위로) 함
+    }
+    s.ok(pairs >= 3 && wrong === 0, `[${lab}] 일의 자리가 ${dir > 0 ? '위로' : '아래로'} 굴러감(비교 ${pairs}쌍 중 반대 방향 ${wrong})`);
+  }
 
   // 화면 안에 들어 있는지: 네 팀·네 점수·조작부·오류 상자가 무대 안, 점수가 칸·이름·오류 상자와 겹치지 않음, 문서가 안 넘침
   const layoutIssues = (page) => page.evaluate(() => {
@@ -447,8 +505,8 @@ export async function scoreTests(only = []) {
     resetCalls(); const preSends = page.nrpc('score_add'); // 여기부터 새로 셈
     await give(page, 'red', 10);
     await wait(page, () => window.__score.spinning.red === 'up');
-    const mid = await page.locator('#score-red').evaluate((e) => [e.dataset.spin, e.classList.contains('spinning'), e.querySelectorAll('.strip i').length > 4]);
-    s.eq(mid, ['up', true, true], '[연출] 점수가 오르면 위로 도는 숫자띠(data-spin=up)');
+    const mid = await page.locator('#score-red').evaluate((e) => [e.dataset.spin, e.classList.contains('spinning'), Number(e.dataset.cur) >= 0 && Number(e.dataset.cur) <= 10, e.querySelectorAll('.dg').length]);
+    s.eq(mid, ['up', true, true, 2], '[연출] 점수가 오르면 data-spin=up · 도는 중 표시 · 보이는 값(data-cur)은 0~10 사이 · 2자리(10)까지만 칸이 있음');
     await give(page, 'red', 50); // 앞 연출이 도는 중
     const chain = await sc(page);
     s.eq([chain.shown.red, chain.spinning.red, calls('score_add').length], [60, 'up', 2], '[연출 중 연속] 앞 연출이 도는 중에도 같은 팀에 다시 줄 수 있음 — 목표는 바로 60 으로 바뀌고 계속 도는 중(요청 2번)');
@@ -461,7 +519,7 @@ export async function scoreTests(only = []) {
     await give(page, 'blue', -50); // 빨강이 도는 중에 파랑
     await wait(page, () => window.__score.spinning.red && window.__score.spinning.blue, null, 5000).then(() => s.ok(true, '[다른 팀] 빨강이 도는 중에 파랑을 줘서 두 팀이 동시에 도는 순간이 있음'), () => s.ok(false, '[다른 팀] 두 팀이 동시에 돌지 않음'));
     const dirs = await sc(page);
-    s.ok(dirs.spinning.blue === 'down' || dirs.spinning.blue === null, '[다른 팀] 내려가는 점수는 아래로 도는 숫자띠(down)');
+    s.ok(dirs.spinning.blue === 'down' || dirs.spinning.blue === null, '[다른 팀] 내려가는 점수는 아래로 굴러감(down)');
     const vis4 = await page.evaluate(() => ['red', 'blue', 'yellow', 'green'].map((t) => { const r = document.getElementById(`score-${t}`).getBoundingClientRect(); return r.width > 0 && r.height > 0 && r.left >= 0 && r.right <= innerWidth && r.top >= 0 && r.bottom <= innerHeight; }));
     s.eq(vis4, [true, true, true, true], '[다른 팀] 도는 동안에도 네 팀 점수가 모두 화면 안에 보임');
     await idle(page);
@@ -478,6 +536,79 @@ export async function scoreTests(only = []) {
     s.ok(typeof ms2 === 'number' && ms2 >= 1800 && ms2 <= 2500, `[연출 길이] +999,999 처럼 크게 바뀌어도 약 2초: ${typeof ms2 === 'number' ? Math.round(ms2) + 'ms' : ms2}`);
     s.eq(await textOf(page, 'green'), '999,999', '큰 점수도 정확히 멈춤(쉼표 표기)');
     s.eq(calls('score_add').length, page.nrpc('score_add') - preSends, '브라우저가 보낸 score_add 와 서버가 받은 score_add 수가 같음(자동 재시도·중복 없음)');
+
+    // (e) 세어 올라가기/내려가기: 네 팀을 연달아 줘서 한꺼번에 돌리고, 팀별 표본(보이는 값·칸 DOM)을 모아 확인
+    const countBatch = async (start, gives) => {
+      await setScores(start); await page.reload(); await waitBoard(page);
+      await overflowProbe(page);
+      await watchStart(page, TEAMS);
+      for (const [t, d] of gives) await give(page, t, d);
+      await idle(page); await sleep(150);
+      return { rows: await watchStop(page), ov: await page.evaluate(() => window.__ov) };
+    };
+    // 0 → +100 · 1,200 → +100(천의 자리는 그대로) · 20 → +10(걸음이 다 보임) · 130 → −50(내려감)
+    const A = await countBatch({ red: 0, blue: 1200, yellow: 20, green: 130 }, [['red', 100], ['blue', 100], ['yellow', 10], ['green', -50]]);
+    checkCount(s, A.rows.red, { lab: '0→+100', from: 0, to: 100 });
+    checkCount(s, A.rows.blue, { lab: '1,200→+100', from: 1200, to: 1300 });
+    checkCount(s, A.rows.yellow, { lab: '20→+10', from: 20, to: 30 });
+    checkCount(s, A.rows.green, { lab: '130→−50', from: 130, to: 80 });
+    // 바뀌지 않는 자리는 가만히: 1,200 → 1,300 도중 천의 자리(와 그 앞 쉼표 자리)는 내용·위치가 그대로, 굴러가는 칸도 아님
+    const bl = A.rows.blue.filter((r) => r.anim);
+    const th = bl.map((r) => r.wheels.find((w) => w.r === 3));
+    s.ok(th.every((w) => w && !w.hid && !w.roll && w.d === '1' && w.cells === '1' && !w.tf && w.x === th[0].x), `[1,200→+100] 천의 자리는 연출 내내 '1'로 가만히(굴러가지 않고 위치도 그대로, x=${th[0] && th[0].x})`);
+    s.ok(bl.every((r) => r.wheels.length === 4 && r.wheels.every((w) => !w.hid)), '[1,200→+100] 자릿수가 그대로라 칸은 네 개 그대로');
+    s.eq([...new Set(A.rows.blue.filter((r) => r.t >= bl[0].t).map((r) => r.wheels.find((w) => w.r === 2).d))], ['2', '3'], '[1,200→+100] 백의 자리만 2 → 3 으로 한 번 넘어감(끝난 뒤 표본까지 봄 — 3 은 마지막 순간에야 칸에 자리 잡음)');
+    s.ok(bl.some((r) => r.wheels.find((w) => w.r === 0).roll) && bl.some((r) => r.wheels.find((w) => w.r === 1).roll), '[1,200→+100] 일·십의 자리는 굴러감');
+    // 20 → 30: 십의 자리는 29 → 30 으로 넘어가는 마지막 순간에만 움직임
+    const yl = A.rows.yellow.filter((r) => r.anim);
+    s.ok(yl.filter((r) => r.disp <= 28).every((r) => { const w = r.wheels.find((x) => x.r === 1); return !w.roll && w.d === '2'; }), '[20→+10] 28 이하일 때 십의 자리는 2 로 가만히(아랫자리가 넘어갈 때만 한 칸 굴러감)');
+    s.eq([...new Set(yl.map((r) => r.disp))], Array.from({ length: 11 }, (_, i) => 20 + i), '[20→+10] 보이는 값이 20, 21, … 30 순서로 하나씩');
+    s.eq(A.ov.ms, 0, `[세기] 센 팀들이 점수 칸 밖으로 한 번도 안 나감(칸 밖으로 나간 시간 ${Math.round(A.ov.ms)}ms ${JSON.stringify(A.ov.info || null)})`);
+    await consistent(page, s, '세어 올라가기(0→100 · 1,200→1,300 · 20→30 · 130→80)', { red: 100, blue: 1300, yellow: 30, green: 80 });
+    s.eq(await textOf(page, 'blue'), '1,300', '[1,200→+100] 쉼표 표기 그대로 멈춤');
+
+    // 자릿수가 바뀔 때: 99 → 100 · 1,000 → 999 · 5 → −45(0을 지나 마이너스) · 0 → +999,999(큰 차이도 같은 길이, 마지막 걸음 보임)
+    const B = await countBatch({ red: 99, blue: 1000, yellow: 5, green: 0 }, [['red', 1], ['blue', -1], ['yellow', -50], ['green', 999999]]);
+    checkCount(s, B.rows.red, { lab: '99→100', from: 99, to: 100 });
+    checkCount(s, B.rows.blue, { lab: '1,000→999', from: 1000, to: 999 });
+    checkCount(s, B.rows.yellow, { lab: '5→−45', from: 5, to: -45 });
+    checkCount(s, B.rows.green, { lab: '0→+999,999', from: 0, to: 999999 });
+    const vis = (r) => r.wheels.filter((w) => !w.hid).length;
+    const rd = B.rows.red.filter((r) => r.anim), bd = B.rows.blue.filter((r) => r.anim), yd = B.rows.yellow.filter((r) => r.anim), gd = B.rows.green.filter((r) => r.anim);
+    const wid = (r, k) => r.wheels.find((w) => w.r === k).w; // 그 자리 칸의 너비(px)
+    s.ok(wid(rd[0], 2) < wid(rd[0], 0) * 0.2 && wid(rd.at(-1), 2) > wid(rd.at(-1), 0) * 0.9, `[99→100] 새 맨 윗자리(백)가 빈칸에서 서서히 자라 1 로 나타남(너비 ${wid(rd[0], 2)}px → ${wid(rd.at(-1), 2)}px, 일의 자리 ${wid(rd[0], 0)}px)`);
+    s.ok(wid(bd[0], 3) > wid(bd[0], 0) * 0.8 && wid(bd.at(-1), 3) < wid(bd.at(-1), 0) * 0.2 || vis(bd.at(-1)) === 3, `[1,000→999] 맨 윗자리(천)와 쉼표가 서서히 줄어 사라짐(너비 ${wid(bd[0], 3)}px → ${vis(bd.at(-1)) === 3 ? '없음' : wid(bd.at(-1), 3) + 'px'})`);
+    s.eq(await textOf(page, 'red'), '100', '[99→100] 끝은 100');
+    s.eq(await textOf(page, 'blue'), '999', '[1,000→999] 끝은 999(쉼표 없음)');
+    s.ok(yd.some((r) => r.disp >= 1) && yd.some((r) => r.disp <= -1) && yd.every((r) => r.disp >= -45 && r.disp <= 5), '[5→−45] 0 을 지나 마이너스 쪽으로 −45 까지 내려감');
+    s.ok(yd[0].sg === '0' && yd.at(-1).sg === '1' && yd.filter((r) => r.disp >= 1).every((r) => r.sg === '0'), '[5→−45] 마이너스 표시는 0 아래로 내려간 뒤에 나타남');
+    s.eq(await textOf(page, 'yellow'), '−45', '[5→−45] 끝은 −45');
+    s.eq(await textOf(page, 'green'), '999,999', '[0→+999,999] 끝은 999,999');
+    s.ok(gd.filter((r) => r.disp >= 1000).length > 5 && gd.some((r) => r.disp === 999992) && gd.some((r) => r.disp === 999999), '[0→+999,999] 큰 차이도 마지막 걸음(999,992 … 999,999)이 보임');
+    s.eq(B.ov.ms, 0, `[자릿수 변화] 자릿수가 늘고 주는 동안 점수가 칸 밖으로 한 번도 안 나감(${Math.round(B.ov.ms)}ms · 최대 ${((B.ov.max - 1) * 100).toFixed(1)}% ${JSON.stringify(B.ov.info || null)})`);
+    await consistent(page, s, '자릿수가 바뀌는 연출', { red: 100, blue: 999, yellow: -45, green: 999999 });
+
+    // 연달아 주기: 세는 도중 새 점수가 오면 지금 보이는 값에서 새 목표로 이어서 세고(0 으로 되돌아가지 않음), 마지막은 서버 값에 정확히 멈춤
+    await setScores({}); await page.reload(); await waitBoard(page);
+    await watchStart(page, ['red']);
+    await give(page, 'red', 100);
+    await wait(page, () => window.__score.display.red >= 30 && window.__score.display.red <= 70);
+    await give(page, 'red', 50); // 세는 도중 +50 → 목표 150
+    s.eq([(await sc(page)).shown.red, (await sc(page)).animating], [150, true], '[이어서] 세는 도중 새 점수: 목표는 바로 150 · 계속 세는 중');
+    await wait(page, () => window.__score.display.red >= 110 && window.__score.display.red <= 140);
+    await give(page, 'red', -100); // 이번엔 오르는 도중 방향이 바뀜 → 목표 50
+    await idle(page); await sleep(150);
+    const cr = (await watchStop(page)).red;
+    const sw = cr.findIndex((r) => r.shown === 50); // 방향이 바뀐 새 목표가 반영된 첫 표본
+    s.ok(cr.slice(cr.findIndex((r) => r.anim), cr.findLastIndex((r) => r.anim) + 1).every((r) => r.anim), '[이어서] +100 · +50 · −100 이 한 번도 끊기거나 멈추지 않고 이어서 셈(연출이 계속 도는 중)');
+    const first150 = cr.findIndex((r) => r.shown === 150);
+    const upTo = cr.slice(cr.findIndex((r) => r.anim), sw).map((r) => r.disp);
+    s.ok(upTo.every((v, i) => i === 0 || v >= upTo[i - 1]) && cr[first150].disp >= 20, `[이어서] +50 이 들어와도 0 으로 되돌아가거나 멈추지 않고 이어서 오름(새 목표 반영 때 ${cr[first150].disp})`);
+    s.ok(Math.abs(cr[sw].disp - cr[sw - 1].disp) <= 12, `[이어서] 방향이 바뀌어도 지금 보이는 값에서 바로 이어짐(${cr[sw - 1].disp} → ${cr[sw].disp})`);
+    const down = cr.slice(sw).filter((r) => r.anim).map((r) => r.disp);
+    s.ok(down.every((v, i) => i === 0 || v <= down[i - 1]) && down.at(-1) === 50, `[이어서] 방향이 바뀐 뒤에는 50 까지 한 방향(내림)으로만 감(${down[0]} → ${down.at(-1)})`);
+    await consistent(page, s, '세는 도중 연달아 줌(+100,+50,−100)', { ...ZERO, red: 50 });
+    s.eq(await textOf(page, 'red'), '50', '[이어서] 마지막 값 50 에 정확히 멈춤');
   });
 
   await scenario(4, '새로 고침 뒤 점수 유지(연출 중·저장 중 새로 고침 포함)', async (s) => {
@@ -1046,12 +1177,12 @@ export async function scoreTests(only = []) {
     s.eq(await undoUi(), { last: null, off: true, what: '' }, '[되돌리기] 관리자 페이지 점수 초기화로 초록이 0 이 되면 되돌리기도 비워짐');
   });
 
-  await scenario(9, '움직임 줄이기(reducedMotion): 숫자띠가 안 생기고 바로 새 점수', async (s) => {
+  await scenario(9, '움직임 줄이기(reducedMotion): 세지 않고(굴러가는 칸이 안 생기고) 바로 새 점수', async (s) => {
     await clean(); resetCalls();
     const { page } = await newCtx(REDUCED);
     await login(page);
     s.eq((await sc(page)).reduced, true, '__score.reduced = true');
-    await page.evaluate(() => { // 숫자띠(여러 칸짜리 strip)·도는 표시가 한 번이라도 생기는지 감시
+    await page.evaluate(() => { // 굴러가는 칸(두 숫자가 든 strip·.roll)·세는 중 표시가 한 번이라도 생기는지 감시
       window.__seen = { spin: 0, strip: 0, animating: 0 };
       new MutationObserver(() => { for (const e of document.querySelectorAll('.score')) { if (e.dataset.spin || e.classList.contains('spinning')) window.__seen.spin++; if ([...e.querySelectorAll('.strip')].some((st) => st.children.length > 1)) window.__seen.strip++; } if (window.__score.animating) window.__seen.animating++; }).observe(document.getElementById('teams'), { subtree: true, childList: true, attributes: true });
       (function f() { if (window.__score.animating) window.__seen.animating++; requestAnimationFrame(f); })();
@@ -1061,8 +1192,9 @@ export async function scoreTests(only = []) {
     s.eq(await page.locator('#score-red').evaluate((e) => [e.textContent.replace(/\s+/g, ''), e.dataset.value, e.dataset.spin]), ['100', '100', ''], '주자마자 바로 새 점수(100)가 보임 — 도는 중이 아님');
     await give(page, 'red', -250);
     s.eq(await textOf(page, 'red'), '−150', '내려가는 점수도 바로 −150');
+    s.eq([(await sc(page)).display.red, await page.locator('#score-red').evaluate((e) => e.dataset.cur)], [-150, '-150'], '지금 보이는 값(display·data-cur)도 바로 −150 — 중간 값을 지나지 않음');
     await sleep(500);
-    s.eq(await page.evaluate(() => window.__seen), { spin: 0, strip: 0, animating: 0 }, '숫자띠·도는 표시·animating 이 한 번도 생기지 않음');
+    s.eq(await page.evaluate(() => window.__seen), { spin: 0, strip: 0, animating: 0 }, '굴러가는 칸·세는 중 표시·animating 이 한 번도 생기지 않음');
     s.eq(await page.evaluate(() => window.__spinRec.some((x) => x.a)), false, 'rAF 감시에서도 animating 이 한 번도 true 가 아님');
     const tag = await page.locator('#tags-red .delta').allInnerTexts();
     s.ok(tag.length >= 1 && /[+−]/.test(tag.join('')), `얼마 바뀌었는지(+100·−250) 표시는 남음: ${tag.join(',')}`);

@@ -2,13 +2,14 @@
 //
 // 점수는 DB(team_scores)에 저장된다. 이 화면은 점수를 계산해서 덮어쓰지 않고, 서버 함수 score_add 에게 "이 팀에 +50" 만 말한다.
 //   서버가 현재 값에 더하고 갱신한 네 팀 점수를 돌려주므로(한 문장으로 더함), 탭을 두 개 열어 동시에 줘도 어긋나지 않는다.
-//   화면에 보이는 점수는 늘 '서버가 돌려준 값'이다: 누르면 먼저 서버에 저장하고, 답이 오면 그 값으로 슬롯 연출이 돈 뒤 멈춘다(답이 오기 전엔 연출 없음).
+//   화면에 보이는 점수는 늘 '서버가 돌려준 값'이다: 누르면 먼저 서버에 저장하고, 답이 오면 이전 점수에서 그 값까지 숫자가 세어 올라가(내려가)는 연출이 돈 뒤 멈춘다(답이 오기 전엔 연출 없음).
 // 입구: 관리자 비밀번호를 넣어야 열린다(뽑기 화면 draw.js 와 같은 방식, 기억 키만 따로 score-gate). 연습 모드(?practice=1)는 입구 확인 말고는 DB 를 부르지 않는다.
 // 시험용 관측: window.__score(화면 상태 요약, 읽기 전용) · window.__scoreAudio(소리 요청 기록).
 
 // ── 바꾸기 쉬운 설정 ─────────────────────────────────────
 const SCORE_CONFIG = {
-  spinMs: 2000,            // 숫자가 도는 시간(처음 빠르고 끝에서 느려짐). 점수 변화가 아무리 커도 같음
+  spinMs: 2000,            // 숫자가 세어 올라가는(내려가는) 시간(처음 빠르고 끝에서 느려짐). 점수 변화가 아무리 커도 같음
+  tailSteps: 8,            // 끝 무렵 눈에 보이게 한 칸씩 넘어가는 마지막 걸음 수(점수 차이가 이보다 훨씬 클 때). 차이가 작으면(+10 등) 걸음마다 다 보임
   pollMs: 5000,            // 서버 점수·팀원 이름을 다시 받는 간격
   verifyMs: 1200,          // 저장 응답을 못 받은(저장됐는지 모르는) 뒤 서버 점수를 다시 읽어 보기까지의 시간
   pendMs: 120000,          // 응답을 못 받은 요청의 번호를 기억해 두는 시간((팀, 점수)마다 따로): 이 안에 같은 팀·같은 점수를 다시 누르면(그 사이 다른 점수를 줬어도) 같은 번호로 보내 서버가 두 번 더하지 않음
@@ -46,6 +47,31 @@ window.__scoreAudio = { log: [], muted: false, started: false, state: 'none', cu
     try { if (crypto.randomUUID) return crypto.randomUUID(); } catch {}
     const h = () => Math.floor(Math.random() * 0x10000).toString(16).padStart(4, '0');
     return `${Date.now().toString(36)}-${h()}${h()}-${h()}${h()}${h()}`;
+  };
+
+  // ── 세어 올라가는 곡선 ───────────────────────────────
+  // 이전 점수에서 새 점수까지 D 만큼 가는 연출에서, 시간 x(0~1, 1 = 연출 끝) 때 '아직 남은 거리' r(x) 를 돌려준다(보이는 값 = 도착 값 ∓ r). 늘 줄어들기만 하고(되돌아가지 않음) x=1 에서 정확히 0.
+  //   D 가 작을 때(≤ 3·tailSteps): r = D·(1−x)² — 처음 빠르고 끝에서 느려지는 한 곡선. 모든 걸음이 보이고(+10 은 열 걸음, 맨 끝 걸음은 0.3초쯤), +1 도 2초에 걸쳐 굴러감.
+  //   D 가 클 때: 앞쪽 절반은 건너뛰며 빠르게 세다가(3제곱으로 느려짐) 뒤쪽 절반(= 마지막 tailSteps 걸음)은 한 칸씩 눈에 보이게(r = L·(1−s)², 걸음마다 60ms → 마지막 걸음 0.35초). 두 곡선은 이어지는 지점에서 속도가 같아 끊김이 없음.
+  const countLeft = (D, x) => {
+    const L = C.tailSteps;
+    if (x >= 1) return 0;
+    if (x <= 0) return D;
+    if (D <= 3 * L) return D * (1 - x) * (1 - x);
+    if (x >= 0.5) { const s = 2 * x - 1; return L * (1 - s) * (1 - s); }
+    const q = 1 - 2 * x;
+    return L + 2 * L * q + (D - 3 * L) * q * q * q;
+  };
+  // 값이 한 칸 넘어가는 순간(남은 거리가 j−0.5 가 되는 때)의 시간 x: 소리의 '딸깍'을 숫자가 넘어가는 순간에 맞추려고 씀
+  const countTicks = (D) => {
+    const L = C.tailSteps;
+    const xs = [];
+    if (!(D >= 1)) return xs;
+    if (D <= 3 * L) { for (let j = Math.floor(D); j >= 1; j--) xs.push(1 - Math.sqrt((j - 0.5) / D)); return xs; }
+    const N = 16; // 건너뛰며 세는 앞쪽 절반: 처음 촘촘하다가 점점 드문드문
+    for (let i = 1; i <= N; i++) xs.push(0.5 * Math.pow(i / (N + 1), 1.5));
+    for (let j = L; j >= 1; j--) xs.push(0.5 + 0.5 * (1 - Math.sqrt((j - 0.5) / L)));
+    return xs;
   };
 
   // ── 소리(WebAudio 합성음) ─────────────────────────────
@@ -120,13 +146,9 @@ window.__scoreAudio = { log: [], muted: false, started: false, state: 'none', cu
           o2.stop(s + dur + 0.03);
         };
         const sweep = (up, at, dur) => osc('triangle', up ? 260 : 1000, up ? 1000 : 260, at, dur, 0.05, true);
-        // 숫자가 칸을 지나가는 '딸깍' 소리: 숫자가 느려지는 것과 같은 간격으로 점점 드문드문, 올라갈 땐 음이 높아지고 내려갈 땐 낮아짐
-        const ticks = (up, at, dur) => {
-          const K = 24;
-          for (let i = 1; i < K; i++) {
-            const x = 1 - Math.pow(1 - i / K, 1 / 3);
-            osc('square', up ? 600 + 900 * (i / K) : 1500 - 900 * (i / K), 0, at + x * dur, 0.035, 0.028);
-          }
+        // 숫자가 한 칸 넘어갈 때 나는 '딸깍' 소리: 실제로 값이 넘어가는 순간(countTicks)마다. 처음엔 촘촘하고 끝에서는 드문드문, 올라갈 땐 음이 높아지고 내려갈 땐 낮아짐
+        const ticks = (up, at, dur, dist) => {
+          for (const x of countTicks(dist)) osc('square', up ? 600 + 900 * x : 1500 - 900 * x, 0, at + x * dur, 0.035, 0.028);
         };
         const cheer = (at) => { // 멈출 때 밝은 화음
           [523.25, 659.25, 783.99, 1046.5].forEach((f, i) => osc('triangle', f, 0, at + i * 0.045, 0.75, 0.085));
@@ -141,7 +163,7 @@ window.__scoreAudio = { log: [], muted: false, started: false, state: 'none', cu
         let total;
         if (dir === 'test') { sweep(true, 0, 0.5); cheer(0.45); sweep(false, 0.95, 0.4); thud(1.3); total = 2.0; }
         else if (short) { sweep(dir === 'up', 0, 0.22); (dir === 'up' ? cheer : thud)(0.2); total = 1.0; }
-        else { sweep(dir === 'up', 0, sec); ticks(dir === 'up', 0, sec); (dir === 'up' ? cheer : thud)(sec - 0.04); total = sec + 0.8; }
+        else { sweep(dir === 'up', 0, sec); ticks(dir === 'up', 0, sec, o.dist); (dir === 'up' ? cheer : thud)(sec - 0.04); total = sec + 0.8; }
         cur = { master, until: t0 + total };
         entry.played = true;
       } catch { /* 소리를 못 내도 화면은 그대로 */ }
@@ -379,10 +401,10 @@ window.__scoreAudio = { log: [], muted: false, started: false, state: 'none', cu
     }
 
     // ── 점수 숫자 그리기 ─────────────────────────────────
-    // 숫자 한 자리마다 세로로 긴 숫자띠(strip)가 위아래로 지나가는 슬롯 모양. 멈춰 있을 때도 같은 모양(칸 하나짜리 띠)이라 돌다 멈출 때 어긋나지 않는다.
+    // 숫자 한 자리마다 칸(.dg) 하나. 멈춰 있을 때는 칸 안에 숫자 하나뿐이고, 세는 중에는 굴러 넘어가는 두 숫자(지금 것·다음 것)가 칸 안에서 위아래로 움직인다(주행 거리계 모양).
     const DW = 0.7, CW = 0.3, SW = 0.68; // 숫자·쉼표·마이너스 한 칸의 너비(em). score.css 의 .dg .cm .sg 와 같음(글자 크기 자동 줄임 계산용)
     const digitsOf = (v) => String(Math.abs(v)).split('').reverse().map(Number); // 일의 자리부터
-    const mod10 = (n) => ((n % 10) + 10) % 10;
+    const lenOf = (v) => Math.max(1, String(Math.ceil(Math.abs(v) - 1e-9)).length); // 자릿수(소수 점수는 올림: 99.4 는 곧 100 이 되므로 3자리)
     function layout(m, neg) { // m자리 숫자의 칸 나열: [{t:'s'}, {t:'d', r}, {t:'c'}, ...] 와 너비(em)
       const items = [];
       let wem = 0;
@@ -406,6 +428,7 @@ window.__scoreAudio = { log: [], muted: false, started: false, state: 'none', cu
       box.classList.remove('spinning', 'sp-up', 'sp-down');
       if (v == null) {
         box.dataset.value = '';
+        box.dataset.cur = '';
         setWem(box, 1.4);
         box.innerHTML = '<span class="vis" aria-hidden="true"><span class="dg"><span class="strip"><i>–</i></span></span></span>';
         box.setAttribute('aria-label', `${label(t)} 점수를 아직 못 받았어요`);
@@ -414,45 +437,29 @@ window.__scoreAudio = { log: [], muted: false, started: false, state: 'none', cu
       const ds = digitsOf(v);
       const { items, wem } = layout(ds.length, v < 0);
       box.dataset.value = String(v);
+      box.dataset.cur = String(v);
       setWem(box, wem);
       box.setAttribute('aria-label', `${label(t)} ${fmt(v)}점`);
       box.innerHTML = `<span class="vis" aria-hidden="true">${items.map((it) => (it.t === 's' ? '<span class="sg">−</span>' : it.t === 'c' ? '<span class="cm">,</span>'
-        : `<span class="dg"><span class="strip"><i>${ds[it.r]}</i></span></span>`)).join('')}</span>`;
+        : `<span class="dg" data-d="${ds[it.r]}"><span class="strip"><i>${ds[it.r]}</i></span></span>`)).join('')}</span>`;
     }
 
-    // ── 슬롯 연출 ─────────────────────────────────────────
-    // 점수가 올라가면 숫자가 위로 흘러 올라가고(띠가 위로 올라가며 아래에서 새 숫자가 나옴), 내려가면 아래로 흘러 내려간다.
-    // 자리마다 띠의 길이(k칸)는 '도착 숫자가 되는 칸 수 + 한두 바퀴'. 시간은 늘 같음(C.spinMs): 처음에 빠르고 끝에서 느려지는(ease-out 3제곱) 속도로 k칸을 지나감.
-    //   바뀐 점수가 아무리 커도 길이가 같고, 왼쪽 자리부터 조금씩 먼저 멈추고 일의 자리가 마지막에 멈춘다.
-    const active = new Map(); // 팀 → 도는 연출
+    // ── 세어 올라가는(내려가는) 연출 ───────────────────────
+    // 보이는 값 u 는 이전 점수에서 새 점수까지 한 방향으로만 움직인다(countLeft: 처음 빠르게 → 끝에서 느리게, 늘 C.spinMs 동안, 끝 무렵 마지막 C.tailSteps 걸음은 한 칸씩 보임).
+    // 자리마다 칸 하나(주행 거리계): 일의 자리는 u 를 따라 연속으로 굴러가고, 윗자리는 아랫자리가 9↔0 으로 넘어가는 순간(u 가 10^r 의 배수를 지나는 한 칸 동안)에만 한 칸 굴러 넘어감.
+    //   바뀌지 않는 자리는 칸 안에 숫자 하나로 가만히 있음(1,200 → 1,300 이면 천의 자리는 그대로). 올릴 때는 숫자가 위로, 내릴 때는 아래로 굴러감(음수 쪽에서는 절댓값 숫자의 차례를 뒤집어 같은 방향으로 보이게).
+    //   자릿수는 u 에 따라 늘고 준다(99 → 100 이면 새 맨 윗자리가 빈칸에서 1 로 굴러 나타남). 글자 크기(--wem)는 연출 내내 가장 긴 자릿수 기준으로 고정.
+    const active = new Map(); // 팀 → 세는 연출
     let raf = 0;
-    const ease = (x) => 1 - Math.pow(1 - x, 3);
-    function snapshot(t) { // 지금 이 팀 점수가 '눈에 보이는' 자리별 숫자(도는 중이면 지금 보이는 숫자 — 새 목표로 이어 돌 때 시작점)
-      const a = active.get(t);
-      if (!a) { const v = S.shown[t] == null ? 0 : S.shown[t]; return { digits: digitsOf(v), len: String(Math.abs(v)).length, neg: v < 0 }; }
-      const digits = [];
-      for (const c of a.cols) digits[c.r] = c.cells[Math.max(0, Math.min(c.k, Math.round(c.pos)))];
-      return { digits, len: a.toLen, neg: a.toNeg };
-    }
+    const curValue = (t) => { const a = active.get(t); return a ? a.u : S.shown[t]; }; // 지금 보이는 값(세는 중이면 중간 값, 소수일 수 있음). 새 목표로 이어서 셀 때의 시작점
+    const shownInt = (t) => { const a = active.get(t); return a ? Math.round(a.u) : S.shown[t]; }; // 지금 보이는 정수 값(시험용)
+    const cellOf = (n, r) => (r === 0 ? String(n % 10) : n === 0 ? '' : String(n % 10)); // r 자리 칸에 n 번째 숫자(맨 윗자리 앞의 0 은 빈칸)
     function startSpin(t, from, to, dir) {
-      const prevAnim = active.get(t);
-      if (prevAnim) active.delete(t);
-      const toD = digitsOf(to);
-      const toLen = toD.length;
-      const m = Math.max(from.len, toLen);
-      const toNeg = to < 0;
-      const signSlot = from.neg || toNeg;
-      const { items, wem } = layout(m, signSlot);
-      const cols = [];
-      for (let r = 0; r < m; r++) {
-        const fd = from.digits[r] == null || r >= from.len ? 0 : from.digits[r];
-        const td = toD[r] == null ? 0 : toD[r];
-        const k = (r <= 1 ? 20 : 10) + mod10(dir === 'up' ? td - fd : fd - td); // 도착까지 지나갈 칸 수(일·십의 자리는 두 바퀴, 나머지는 한 바퀴 + 차이)
-        const cells = [];
-        for (let i = 0; i <= k; i++) cells.push(dir === 'up' ? (fd + i) % 10 : (td + i) % 10); // 올라갈 땐 출발→도착 순서로 위에서 아래로, 내려갈 땐 도착→출발 순서
-        const idx = m - 1 - r; // 왼쪽부터 0
-        cols.push({ r, k, cells, ti: C.spinMs * (0.6 + 0.4 * ((idx + 1) / m)), mode: r >= from.len ? 'in' : r >= toLen ? 'out' : 'keep', pos: dir === 'up' ? 0 : k });
-      }
+      active.delete(t);
+      const D = Math.abs(to - from);
+      const M = lenOf(Math.max(Math.abs(from), Math.abs(to))); // 연출 내내 나올 수 있는 가장 긴 자릿수
+      const signSlot = from < 0 || to < 0;
+      const { items, wem } = layout(M, signSlot);
       const box = el.score[t];
       setWem(box, wem);
       box.dataset.spin = dir;
@@ -462,37 +469,64 @@ window.__scoreAudio = { log: [], muted: false, started: false, state: 'none', cu
       box.classList.add('spinning', dir === 'up' ? 'sp-up' : 'sp-down');
       box.classList.remove(dir === 'up' ? 'sp-down' : 'sp-up');
       box.innerHTML = `<span class="vis" aria-hidden="true">${items.map((it) => {
-        if (it.t === 's') return `<span class="sg" style="opacity:${from.neg ? 1 : 0}">−</span>`;
+        if (it.t === 's') return `<span class="sg" style="opacity:${from < 0 ? 1 : 0}">−</span>`;
         if (it.t === 'c') return '<span class="cm">,</span>';
-        const c = cols[it.r];
-        return `<span class="dg" data-r="${it.r}"><span class="strip">${c.cells.map((d) => `<i>${d}</i>`).join('')}</span></span>`;
+        return `<span class="dg" data-r="${it.r}"><span class="strip"></span></span>`;
       }).join('')}</span>`;
-      for (const c of cols) {
-        c.win = box.querySelector(`.dg[data-r="${c.r}"]`);
-        c.strip = c.win.firstElementChild;
-        c.strip.style.transform = `translate3d(0, ${(-c.pos / (c.k + 1) * 100).toFixed(3)}%, 0)`;
-        if (c.mode === 'in') c.win.style.opacity = '0';
+      const wheels = [];
+      for (let r = 0; r < M; r++) {
+        const win = box.querySelector(`.dg[data-r="${r}"]`);
+        const nx = win.nextElementSibling;
+        wheels.push({ r, win, strip: win.firstElementChild, cm: nx && nx.classList.contains('cm') ? nx : null, vis: true, key: '', roll: false, wk: '1.000' });
       }
-      const sg = box.querySelector('.sg');
-      if (sg) requestAnimationFrame(() => { sg.style.opacity = toNeg ? '1' : '0'; }); // 마이너스 표시는 서서히 나타나거나 사라짐
-      active.set(t, { team: t, dir, to, toLen, toNeg, cols, t0: performance.now() });
+      const a = { team: t, dir, to, from, D, mv: to >= from ? 1 : -1, u: from, wheels, sg: box.querySelector('.sg'), neg: from < 0, box, t0: performance.now() };
+      active.set(t, a);
+      paint(a);
       if (!raf) raf = requestAnimationFrame(frame);
       updateControls();
+    }
+    // 지금 값 a.u 대로 칸마다 숫자·굴러가는 정도를 그린다(바뀐 칸만 건드림)
+    function paint(a) {
+      const m = Math.abs(a.u);
+      const K = lenOf(m); // 지금 보이는 자릿수
+      const rev = a.u < 0; // 음수 쪽: 절댓값이 커지는 쪽이 값이 내려가는 쪽이라, 두 숫자의 위아래 차례를 뒤집어 같은 방향으로 굴러가 보이게
+      for (const c of a.wheels) {
+        const vis = c.r < K;
+        if (vis !== c.vis) { c.vis = vis; c.win.style.display = vis ? '' : 'none'; if (c.cm) c.cm.style.display = vis ? '' : 'none'; }
+        if (!vis) continue;
+        let n, f;
+        if (c.r === 0) { n = Math.floor(m); f = m - n; } // 일의 자리: 연속으로
+        else { const p = Math.pow(10, c.r); n = Math.floor(m / p); f = Math.max(0, m - n * p - (p - 1)); } // 윗자리: 아랫자리가 넘어가는 한 칸 동안에만
+        if (f < 1e-3) f = 0; else if (f > 1 - 1e-3) { n += 1; f = 0; }
+        const d0 = cellOf(n, c.r);
+        const roll = f > 0;
+        const key = roll ? `${rev ? 1 : 0}|${d0}|${cellOf(n + 1, c.r)}` : `r|${d0}`;
+        if (key !== c.key) {
+          c.key = key;
+          c.strip.innerHTML = roll ? (rev ? `<i>${cellOf(n + 1, c.r)}</i><i>${d0}</i>` : `<i>${d0}</i><i>${cellOf(n + 1, c.r)}</i>`) : `<i>${d0}</i>`;
+          c.win.dataset.d = d0;
+        }
+        if (roll !== c.roll) { c.roll = roll; c.win.classList.toggle('roll', roll); if (!roll) c.strip.style.transform = ''; }
+        if (roll) c.strip.style.transform = `translate3d(0, ${(-(rev ? 1 - f : f) * 50).toFixed(3)}%, 0)`; // 칸 두 개 높이 중 지금 어디까지 올라갔나
+        // 맨 윗자리가 빈칸에서 나타나는(또는 사라지는) 동안은 그 칸(과 그 뒤 쉼표)의 너비도 함께 서서히 늘고 줄어, 숫자 줄이 갑자기 옆으로 밀리지 않고 미끄러지듯 자리를 바꿈
+        const grow = c.r === K - 1 && n === 0 && c.r > 0 ? f : 1;
+        const wk = grow.toFixed(3);
+        if (wk !== c.wk) {
+          c.wk = wk;
+          c.win.style.width = grow < 1 ? `${(DW * grow).toFixed(3)}em` : '';
+          if (c.cm) { c.cm.style.opacity = grow < 1 ? (grow * grow).toFixed(3) : ''; c.cm.style.width = grow < 1 ? `${(CW * grow).toFixed(3)}em` : ''; }
+        }
+      }
+      if (a.sg && rev !== a.neg) { a.neg = rev; a.sg.style.opacity = rev ? '1' : '0'; } // 마이너스 표시는 서서히 나타나거나 사라짐
+      a.box.dataset.cur = String(Math.round(a.u));
     }
     function frame(now) {
       raf = 0;
       for (const a of [...active.values()]) {
-        let all = true;
-        for (const c of a.cols) {
-          const x = Math.min(1, Math.max(0, (now - a.t0) / c.ti));
-          const s = ease(x);
-          c.pos = a.dir === 'up' ? c.k * s : c.k * (1 - s);
-          c.strip.style.transform = `translate3d(0, ${(-c.pos / (c.k + 1) * 100).toFixed(3)}%, 0)`;
-          if (c.mode === 'in') c.win.style.opacity = Math.min(1, x * 3).toFixed(2);
-          else if (c.mode === 'out') c.win.style.opacity = Math.max(0, 1 - x * 1.4).toFixed(2);
-          if (x < 1) all = false;
-        }
-        if (all) finishSpin(a);
+        const x = Math.min(1, Math.max(0, (now - a.t0) / C.spinMs));
+        a.u = x >= 1 ? a.to : a.to - a.mv * countLeft(a.D, x);
+        paint(a);
+        if (x >= 1) finishSpin(a);
       }
       if (active.size && !raf) raf = requestAnimationFrame(frame); // 끝난 연출이 다시 맞추려고 새 연출(startSpin)을 시작했으면 그쪽이 이미 루프를 잡아 둠: 둘이 되지 않게
     }
@@ -526,7 +560,7 @@ window.__scoreAudio = { log: [], muted: false, started: false, state: 'none', cu
       setTimeout(() => tag.remove(), C.tagMs);
     }
 
-    // 이 팀의 화면 점수를 value 로 바꾼다(처음이면 바로, 아니면 슬롯 연출). 최종 표시값은 늘 value(서버가 돌려준 값).
+    // 이 팀의 화면 점수를 value 로 바꾼다(처음이면 바로, 아니면 지금 보이는 값에서 value 까지 세어 가는 연출). 최종 표시값은 늘 value(서버가 돌려준 값).
     //   o.sound: 효과음(점수를 준 사람의 화면에서만. 조용히 맞출 때는 안 냄)
     //   o.delta: 내가 방금 보낸 요청이 더한 점수. 있으면 +N 표시·도는 방향·소리를 이 값으로 정하고(다른 곳에서 5초 안에 같은 팀이 바뀌었어도 준 점수 그대로),
     //            요청 전에 화면이 서버와 달랐던 차이는 연출 없이 조용히 먼저 맞춘다. 없으면(폴링·다른 탭) 화면 점수와의 차이를 씀
@@ -534,22 +568,22 @@ window.__scoreAudio = { log: [], muted: false, started: false, state: 'none', cu
       let prev = S.shown[t];
       const given = Number.isInteger(o.delta) && o.delta !== 0 ? o.delta : null;
       if (given === null && prev === value) return false;
-      let from = snapshot(t); // 연출의 시작점(S.shown 을 바꾸기 전에 잡음)
+      let from = curValue(t); // 연출의 시작점: 세는 중이면 지금 보이는 값에서 이어서(S.shown 을 바꾸기 전에 잡음)
       if (given !== null && prev != null && value - given !== prev) { // 화면이 서버와 달랐음(다른 곳에서 바뀐 것): 먼저 조용히 맞춤
         const base = value - given;
         active.delete(t);
         S.shown[t] = base;
         renderStatic(t);
         prev = base;
-        from = snapshot(t);
+        from = base;
       }
       S.shown[t] = value;
       if (prev == null) { renderStatic(t); return true; } // 처음 받은 점수: 연출 없이 바로
       const diff = given !== null ? given : value - prev;
       const dir = diff > 0 ? 'up' : 'down';
       showTag(t, diff);
-      if (o.sound) audio.play(dir, { reduced: reduced() });
-      if (reduced()) { // 움직임 줄이기: 돌지 않고 바로 새 점수(강조는 색만)
+      if (o.sound) audio.play(dir, { reduced: reduced(), dist: Math.abs(value - from) });
+      if (reduced() || Math.abs(value - from) < 1e-6) { // 움직임 줄이기(또는 셀 거리가 없음): 세지 않고 바로 새 점수(강조는 색만)
         active.delete(t);
         renderStatic(t);
         hit(t, dir);
@@ -930,7 +964,8 @@ window.__scoreAudio = { log: [], muted: false, started: false, state: 'none', cu
         sending: S.sending ? Object.freeze({ ...S.sending }) : null,
         verifying: S.verifying ? Object.freeze({ ...S.verifying }) : null, // 저장 응답을 못 받아 서버 점수를 확인하는 중
         team: S.team,
-        shown: Object.freeze({ ...S.shown }), // 화면이 보여 주는(돌아서 가는 중이면 도착할) 점수
+        shown: Object.freeze({ ...S.shown }), // 화면이 보여 주는(세어 가는 중이면 도착할) 점수
+        display: Object.freeze(Object.fromEntries(TEAM_KEYS.map((t) => [t, shownInt(t)]))), // 지금 눈에 보이는 점수(세는 중이면 중간 값). 시험용
         server: S.server ? Object.freeze({ ...S.server }) : null,
         spinning: Object.freeze(Object.fromEntries(TEAM_KEYS.map((t) => [t, active.has(t) ? active.get(t).dir : null]))),
         animating: active.size > 0,

@@ -97,7 +97,8 @@ body.scoreboard { margin: 0; overflow: hidden; display: flex; align-items: cente
 .score .sg { width: .68em; transition: opacity .5s; }
 .score .strip { display: block; will-change: transform; }
 .score .strip i { display: block; height: 1.12em; font-style: normal; }
-.score.spinning .dg { -webkit-mask-image: linear-gradient(transparent, #000 24%, #000 76%, transparent); mask-image: linear-gradient(transparent, #000 24%, #000 76%, transparent); }
+/* 굴러가는 칸(.roll)만 위아래를 살짝 흐리게: 옆 숫자가 반쯤 보일 때 부드럽게 사라지도록. 가만히 있는 칸은 그대로 또렷하게 */
+.score .dg.roll { -webkit-mask-image: linear-gradient(transparent, #000 14%, #000 86%, transparent); mask-image: linear-gradient(transparent, #000 14%, #000 86%, transparent); }
 .score .vis { transition: filter .6s; }
 .score.spinning.sp-up .vis { filter: drop-shadow(0 0 .1em rgb(74 222 128 / .6)); } /* 글자 그림자(text-shadow)는 칸(overflow)에 잘려 네모로 보여서, 칸 바깥에서 번지는 drop-shadow 를 씀 */
 .score.spinning.sp-down .vis { filter: drop-shadow(0 0 .1em rgb(248 113 113 / .55)); }
@@ -106,7 +107,7 @@ body.scoreboard { margin: 0; overflow: hidden; display: flex; align-items: cente
 .score.hit-up .vis { filter: drop-shadow(0 0 .12em rgb(251 191 36 / .95)) drop-shadow(0 0 .3em rgb(251 191 36 / .5)); }
 .score.hit-down { color: #fca5a5; animation: hitDown .9s ease-out; }
 .score.hit-down .vis { filter: drop-shadow(0 0 .1em rgb(127 29 29 / .9)); }
-@keyframes hitUp { 0% { transform: scale(.94); } 45% { transform: scale(1.06); } 100% { transform: none; } } /* 튀어 오를 때도 칸 밖으로 안 나가게: 숫자는 칸 너비의 94%까지만 쓰므로 1.06배(= 99.6%)까지 */
+@keyframes hitUp { 0% { transform: scale(.94); } 45% { transform: scale(1.04); } 100% { transform: none; } } /* 튀어 오를 때도 칸 밖으로 안 나가게: 숫자는 칸 너비의 94%까지만 쓰므로 1.06배까지만 커져야 하는데, 이 움직임 곡선은 끝점을 조금 넘어 튀므로(1.04 → 실제 최대 1.05배쯤 = 98.7%) 끝점을 1.04 로 둠 */
 @keyframes hitDown { 0% { transform: translateY(-.05em) scale(1.04); } 40% { transform: translateY(.06em) scale(.92); } 100% { transform: none; } }
 
 /* 얼마 바뀌었는지(+50, −10): 점수 위에 잠깐 떴다 사라짐 */
@@ -182,7 +183,7 @@ body.scoreboard { margin: 0; overflow: hidden; display: flex; align-items: cente
              font-size: calc(var(--u) * 24); font-weight: 900; color: var(--gold); opacity: .035; transform: rotate(-16deg); }
 .stage[data-mode="practice"] .top { border-bottom-color: var(--gold); }
 
-/* 움직임 줄이기: 돌지 않고 바로 새 점수. 강조는 색만(움직임 없음), +50 표시는 제자리에 잠깐 */
+/* 움직임 줄이기: 세지 않고 바로 새 점수. 강조는 색만(움직임 없음), +50 표시는 제자리에 잠깐 */
 @media (prefers-reduced-motion: reduce) {
   .stage *, .stage *::before, .stage *::after { animation-duration: 1ms !important; animation-delay: 0ms !important; animation-iteration-count: 1 !important; transition: none !important; }
   .score.hit-up, .score.hit-down { animation: none !important; transform: none !important; }
